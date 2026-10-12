@@ -97,6 +97,35 @@ public class AuthService extends Service {
     private Network lastKnownNetwork = null;
     private volatile boolean isSwitchingNetwork = false;
 
+    /** The live link is going through the internet tunnel. */
+    private volatile boolean linkOverInternet = false;
+
+    /** A Wi-Fi hiccup (say, just after the app starts) can move the link to the internet
+     *  tunnel, where it would then stay. While that's so and the phone is on Wi-Fi, check now
+     *  and then whether the computer answers on the network (no token sent), and come back. */
+    private void startWifiReturnWatch() {
+        Thread t = new Thread(() -> {
+            while (isRunning) {
+                try {
+                    Thread.sleep(30000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (!linkOverInternet || !DeviceManager.isWifiActive(this)) continue;
+                PairedDevice active = DeviceManager.getActiveDevice(this);
+                String local = active != null ? active.getLocalUrl() : null;
+                if (local == null || local.isEmpty() || local.startsWith("https://")) continue;
+                if (NetworkUtils.httpGet(local + "/api/info", 1500) != null) {
+                    Log.i(TAG, "Computer reachable on Wi-Fi again: moving the link off the tunnel");
+                    linkOverInternet = false;
+                    abortCurrentConnectionAndWake();
+                }
+            }
+        }, "wifi-return");
+        t.setDaemon(true);
+        t.start();
+    }
+
     private void abortCurrentConnectionAndWake() {
         isSwitchingNetwork = true;
         new Thread(() -> {
@@ -407,6 +436,7 @@ public class AuthService extends Service {
             isRunning = true;
             workerThread = new Thread(this::listenLoop);
             workerThread.start();
+            startWifiReturnWatch();
         }
 
         return START_STICKY;
@@ -513,6 +543,7 @@ public class AuthService extends Service {
                     DeviceManager.setActiveUrl(AuthService.this, targetUrl);
                     active.activeUrl = targetUrl;
 
+                    linkOverInternet = isInternet;
                     broadcastStatus(true, "Orbiting " + active.hostname, isInternet);
                     updateForegroundNotification("Orbiting " + active.hostname + (isInternet ? " · over the internet" : ""));
                     sendPhoneStatusToPc(active);
