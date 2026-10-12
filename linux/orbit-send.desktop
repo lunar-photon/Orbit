@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=all/all;all/allfiles;inode/directory;application/octet-stream;
+Actions=sendWithOrbit;
+X-KDE-Priority=TopLevel
+
+[Desktop Action sendWithOrbit]
+Name=Send to phone (Orbit)
+Icon=@ICON@
+Exec=@BINDIR@/orbit-send %U

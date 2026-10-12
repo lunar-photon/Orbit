@@ -1,0 +1,1284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit main screen: four tabs (Home, Control, Files, Terminal) over a bottom bar,
+     plus two overlays: the laptop switcher sheet and the full-screen login approval. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/o_ground">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <ViewFlipper
+            android:id="@+id/main_view_flipper"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <!-- ============ 0. HOME ============ -->
+            <ScrollView
+                android:id="@+id/scroll_dashboard"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="true"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="24dp">
+
+                    <!-- Top bar -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:src="@mipmap/ic_launcher_round"
+                            android:importantForAccessibility="no" />
+
+                        <TextView
+                            style="@style/Text.Title"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="10dp"
+                            android:text="Orbit" />
+
+                        <Button
+                            android:id="@+id/btn_test_connection"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Ping computer"
+                            android:drawableTop="@drawable/ic_o_activity"
+                            android:drawableTint="@color/o_text_2"
+                            android:paddingTop="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_laptops"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Computers"
+                            android:drawableTop="@drawable/ic_o_laptop"
+                            android:drawableTint="@color/o_text_2"
+                            android:paddingTop="10dp" />
+
+                        <Button
+                            android:id="@+id/btn_settings"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Settings"
+                            android:drawableTop="@drawable/ic_o_settings"
+                            android:drawableTint="@color/o_text_2"
+                            android:paddingTop="10dp" />
+                    </LinearLayout>
+
+                    <!-- Laptop card -->
+                    <LinearLayout
+                        android:id="@+id/layout_laptop_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_card"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tv_status_dot"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="●"
+                                android:textColor="@color/o_text_3"
+                                android:textSize="10sp" />
+
+                            <TextView
+                                android:id="@+id/tv_status_text"
+                                style="@style/Text.Secondary"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="8dp"
+                                android:ellipsize="end"
+                                android:singleLine="true"
+                                android:text="Connecting…" />
+
+                            <TextView
+                                android:id="@+id/tv_pc_lock_badge"
+                                style="@style/Text.Badge"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:drawableStart="@drawable/ic_o_unlock"
+                                android:drawableTint="@color/o_text_2"
+                                android:text="Unlocked" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tv_hostname"
+                            style="@style/Text.Display"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:ellipsize="end"
+                            android:singleLine="true"
+                            android:text="Computer" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:gravity="center_vertical"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tv_active_mode_chip"
+                                style="@style/Text.Caption"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/geist_medium"
+                                android:text="Wi-Fi" />
+
+                            <TextView
+                                android:id="@+id/tv_active_ip"
+                                style="@style/Text.Mono"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="8dp"
+                                android:ellipsize="middle"
+                                android:singleLine="true"
+                                android:text="" />
+                        </LinearLayout>
+
+                        <!-- Metrics -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="18dp"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView android:id="@+id/tv_pc_battery" style="@style/Text.Metric" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" />
+                                <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="11sp" android:text="Battery" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView android:id="@+id/tv_pc_cpu" style="@style/Text.Metric" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" />
+                                <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="11sp" android:text="CPU" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView android:id="@+id/tv_pc_memory" style="@style/Text.Metric" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" />
+                                <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="11sp" android:text="Memory" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView android:id="@+id/tv_pc_storage" style="@style/Text.Metric" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="—" />
+                                <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="11sp" android:text="Free disk" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:gravity="center_vertical"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/tv_pc_uptime"
+                                style="@style/Text.Caption"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="" />
+
+                            <TextView
+                                android:id="@+id/tv_pc_weather"
+                                style="@style/Text.Caption"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="10dp"
+                                android:ellipsize="end"
+                                android:gravity="end"
+                                android:singleLine="true"
+                                android:text="" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="16dp"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <Button
+                                android:id="@+id/btn_lock_laptop_action"
+                                style="@style/Btn.Primary"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:drawableStart="@drawable/ic_o_lock"
+                                android:paddingStart="28dp"
+                                android:paddingEnd="28dp"
+                                android:text="Lock" />
+
+                            <Button
+                                android:id="@+id/btn_ring_pc"
+                                style="@style/Btn.Secondary"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_weight="1"
+                                android:layout_marginStart="8dp"
+                                android:drawableStart="@drawable/ic_o_bell"
+                                android:paddingStart="28dp"
+                                android:paddingEnd="28dp"
+                                android:text="Ring" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- Remote-mode banner -->
+                    <LinearLayout
+                        android:id="@+id/layout_lan_notice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_card"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal"
+                        android:padding="14dp"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:src="@drawable/ic_o_globe"
+                            android:tint="@color/o_remote"
+                            android:importantForAccessibility="no" />
+
+                        <TextView
+                            android:id="@+id/tv_network_mode_badge"
+                            style="@style/Text.Secondary"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="12dp"
+                            android:text="Remote over the internet. Trackpad, typing and camera need Wi-Fi." />
+                    </LinearLayout>
+
+                    <!-- Quick actions -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btn_screenshot_action"
+                            style="@style/Btn.Tile"
+                            android:background="@drawable/btn_tint_sky"
+                            android:drawableTint="@color/o_sky"
+                            android:layout_width="0dp"
+                            android:layout_height="88dp"
+                            android:layout_weight="1"
+                            android:drawableTop="@drawable/ic_o_monitor"
+                            android:text="View screen" />
+
+                        <Button
+                            android:id="@+id/btn_send_clip_to_pc"
+                            style="@style/Btn.Tile"
+                            android:background="@drawable/btn_tint_violet"
+                            android:drawableTint="@color/o_violet"
+                            android:layout_width="0dp"
+                            android:layout_height="88dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:drawableTop="@drawable/ic_o_clipboard"
+                            android:text="Send clipboard" />
+
+                        <Button
+                            android:id="@+id/btn_get_clip_from_pc"
+                            style="@style/Btn.Tile"
+                            android:background="@drawable/btn_tint_mint"
+                            android:drawableTint="@color/o_mint"
+                            android:layout_width="0dp"
+                            android:layout_height="88dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:drawableTop="@drawable/ic_o_copy"
+                            android:text="Get clipboard" />
+                    </LinearLayout>
+
+                    <!-- Campus internet (only when the captive portal feature is on) -->
+                    <LinearLayout
+                        android:id="@+id/layout_captive_portal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_card"
+                        android:orientation="vertical"
+                        android:padding="16dp"
+                        android:visibility="gone">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="20dp"
+                                android:layout_height="20dp"
+                                android:src="@drawable/ic_o_globe"
+                                android:tint="@color/o_text_2"
+                                android:importantForAccessibility="no" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="12dp"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/Text"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:fontFamily="@font/geist_medium"
+                                    android:textSize="14sp"
+                                    android:text="Campus internet" />
+
+                                <TextView
+                                    android:id="@+id/tv_captive_status_badge"
+                                    style="@style/Text.Caption"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="Checking…" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tv_captive_actions_link"
+                                android:layout_width="wrap_content"
+                                android:layout_height="44dp"
+                                android:background="@drawable/btn_ghost"
+                                android:fontFamily="@font/geist_medium"
+                                android:gravity="center"
+                                android:paddingStart="12dp"
+                                android:paddingEnd="12dp"
+                                android:text="More"
+                                android:textColor="@color/o_accent"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+
+                        <Button
+                            android:id="@+id/btn_captive_portal_toggle"
+                            style="@style/Btn.Secondary"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:layout_marginTop="12dp"
+                            android:text="Log in" />
+                    </LinearLayout>
+
+
+                    <!-- Kept for code paths that toggle it; the approval is a full-screen overlay now -->
+                    <LinearLayout
+                        android:id="@+id/layout_idle"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- ============ 1. CONTROL ============ -->
+            <ScrollView
+                android:id="@+id/scroll_control"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="true"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="24dp">
+
+                    <TextView
+                        style="@style/Text.Display"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:gravity="center_vertical"
+                        android:text="Control" />
+
+                    <!-- Media -->
+                    <LinearLayout
+                        android:id="@+id/layout_media"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_card"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal"
+                        android:padding="16dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_vertical"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tv_media_status"
+                                style="@style/Text.Caption"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Nothing playing" />
+
+                            <TextView
+                                android:id="@+id/tv_media_title"
+                                style="@style/Text.Heading"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:ellipsize="end"
+                                android:fontFamily="@font/geist_medium"
+                                android:singleLine="true"
+                                android:text="No media on computer" />
+
+                            <TextView
+                                android:id="@+id/tv_media_artist"
+                                style="@style/Text.Secondary"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:ellipsize="end"
+                                android:singleLine="true"
+                                android:text="" />
+
+                            <!-- Playback -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="16dp"
+                                android:baselineAligned="false"
+                                android:gravity="center"
+                                android:orientation="horizontal">
+                                <Button android:id="@+id/btn_media_prev" style="@style/Btn.Icon" android:contentDescription="Previous" android:layout_width="52dp" android:layout_height="52dp" android:drawableTop="@drawable/ic_o_prev" android:drawableTint="@color/o_text" android:paddingTop="14dp" android:text="" />
+                                <Space android:layout_width="20dp" android:layout_height="1dp" />
+                                <Button android:id="@+id/btn_media_play_pause" style="@style/Btn.Icon" android:contentDescription="Play or pause" android:layout_width="64dp" android:layout_height="64dp" android:background="@drawable/bg_circle_light" android:drawableTop="@drawable/ic_o_play" android:drawableTint="@color/o_on_accent" android:paddingTop="20dp" android:text="" />
+                                <Space android:layout_width="20dp" android:layout_height="1dp" />
+                                <Button android:id="@+id/btn_media_next" style="@style/Btn.Icon" android:contentDescription="Next" android:layout_width="52dp" android:layout_height="52dp" android:drawableTop="@drawable/ic_o_next" android:drawableTint="@color/o_text" android:paddingTop="14dp" android:text="" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- Volume of the app that is playing (system volume when nothing plays): drag up/down -->
+                        <com.lunarphoton.pcauthenticator.VolumePillView
+                            android:id="@+id/vp_media_volume"
+                            android:layout_width="52dp"
+                            android:layout_height="match_parent"
+                            android:layout_marginStart="16dp"
+                            android:minHeight="140dp" />
+                    </LinearLayout>
+
+                    <!-- Tools: a compact 2x2 grid -->
+                    <TextView
+                        style="@style/Text.Overline"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="20dp"
+                        android:layout_marginBottom="8dp"
+                        android:paddingStart="4dp"
+                        android:text="Tools" />
+
+                    <LinearLayout
+                        android:id="@+id/layout_lan_features"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="horizontal">
+                            <Button android:id="@+id/btn_remote_trackpad" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_violet" android:drawableTop="@drawable/ic_o_control" android:drawableTint="@color/o_violet" android:text="Trackpad" />
+                            <Button android:id="@+id/btn_camera_view" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_pink" android:drawableTop="@drawable/ic_o_video" android:drawableTint="@color/o_pink" android:text="Camera" />
+                        </LinearLayout>
+
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:baselineAligned="false" android:orientation="horizontal">
+                            <Button android:id="@+id/btn_task_manager" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_mint" android:drawableTop="@drawable/ic_o_cpu" android:drawableTint="@color/o_mint" android:text="Running apps" />
+                            <Button android:id="@+id/btn_keep_awake" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_amber" android:drawableTop="@drawable/ic_o_coffee" android:drawableTint="@color/o_amber" android:text="Keep awake" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- Power: one row of round buttons -->
+                    <TextView
+                        style="@style/Text.Overline"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="20dp"
+                        android:layout_marginBottom="10dp"
+                        android:paddingStart="4dp"
+                        android:text="Power" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center_horizontal" android:orientation="vertical">
+                            <Button android:id="@+id/btn_power_sleep" style="@style/Btn.Icon" android:layout_width="56dp" android:layout_height="56dp" android:background="@drawable/btn_circle_violet" android:contentDescription="Sleep" android:drawableTop="@drawable/ic_o_moon" android:drawableTint="@color/o_violet" android:paddingTop="16dp" android:text="" />
+                            <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Sleep" />
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center_horizontal" android:orientation="vertical">
+                            <Button android:id="@+id/btn_power_screen_off" style="@style/Btn.Icon" android:layout_width="56dp" android:layout_height="56dp" android:background="@drawable/btn_circle_sky" android:contentDescription="Screen off" android:drawableTop="@drawable/ic_o_monitor" android:drawableTint="@color/o_sky" android:paddingTop="16dp" android:text="" />
+                            <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Screen off" />
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center_horizontal" android:orientation="vertical">
+                            <Button android:id="@+id/btn_power_restart" style="@style/Btn.Icon" android:layout_width="56dp" android:layout_height="56dp" android:background="@drawable/btn_circle_amber" android:contentDescription="Restart" android:drawableTop="@drawable/ic_o_refresh" android:drawableTint="@color/o_amber" android:paddingTop="16dp" android:text="" />
+                            <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Restart" />
+                        </LinearLayout>
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center_horizontal" android:orientation="vertical">
+                            <Button android:id="@+id/btn_power_shutdown" style="@style/Btn.Icon" android:layout_width="56dp" android:layout_height="56dp" android:background="@drawable/btn_circle_coral" android:contentDescription="Shut down" android:drawableTop="@drawable/ic_o_power" android:drawableTint="@color/o_coral" android:paddingTop="16dp" android:text="" />
+                            <TextView style="@style/Text.Caption" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Shut down" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- ============ 2. FILES ============ -->
+            <ScrollView
+                android:id="@+id/scroll_files"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="true"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="24dp">
+
+                    <TextView
+                        style="@style/Text.Display"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:gravity="center_vertical"
+                        android:text="Files" />
+
+                    <Button
+                        android:id="@+id/btn_search_files_action"
+                        style="@style/Btn"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_input"
+                        android:drawableStart="@drawable/ic_o_search"
+                        android:drawableTint="@color/o_text_3"
+                        android:fontFamily="@font/geist_regular"
+                        android:gravity="start|center_vertical"
+                        android:paddingStart="14dp"
+                        android:text="Search computer files"
+                        android:textColor="@color/o_text_3" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btn_send_file_to_pc"
+                            style="@style/Btn.Tile"
+                            android:layout_width="0dp"
+                            android:layout_height="96dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/btn_tile_accent"
+                            android:drawableTop="@drawable/ic_o_upload"
+                            android:drawableTint="@color/o_on_accent"
+                            android:fontFamily="@font/geist_semibold"
+                            android:text="Send a file"
+                            android:textColor="@color/o_on_accent"
+                            android:textSize="14sp" />
+
+                        <Button
+                            android:id="@+id/btn_browse_laptop_action"
+                            style="@style/Btn.Tile"
+                            android:background="@drawable/btn_tint_sky"
+                            android:drawableTint="@color/o_sky"
+                            android:layout_width="0dp"
+                            android:layout_height="96dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="8dp"
+                            android:drawableTop="@drawable/ic_o_folder"
+                            android:text="Browse files"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        style="@style/Text.Overline"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="20dp"
+                        android:layout_marginBottom="8dp"
+                        android:paddingStart="4dp"
+                        android:text="Folders on your computer" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_card"
+                        android:orientation="vertical"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="4dp">
+
+                        <Button android:id="@+id/btn_folder_downloads" style="@style/Btn.Row" android:layout_width="match_parent" android:layout_height="56dp" android:drawableStart="@drawable/ic_o_download" android:drawableEnd="@drawable/ic_o_chevron_right" android:text="Downloads"  android:drawableTint="@color/o_sky"/>
+                        <View style="@style/Divider" android:layout_width="match_parent" android:layout_marginStart="50dp" />
+                        <Button android:id="@+id/btn_folder_documents" style="@style/Btn.Row" android:layout_width="match_parent" android:layout_height="56dp" android:drawableStart="@drawable/ic_o_file" android:drawableEnd="@drawable/ic_o_chevron_right" android:text="Documents"  android:drawableTint="@color/o_violet"/>
+                        <View style="@style/Divider" android:layout_width="match_parent" android:layout_marginStart="50dp" />
+                        <Button android:id="@+id/btn_folder_desktop" style="@style/Btn.Row" android:layout_width="match_parent" android:layout_height="56dp" android:drawableStart="@drawable/ic_o_monitor" android:drawableEnd="@drawable/ic_o_chevron_right" android:text="Desktop"  android:drawableTint="@color/o_amber"/>
+                        <View style="@style/Divider" android:layout_width="match_parent" android:layout_marginStart="50dp" />
+                        <Button android:id="@+id/btn_folder_pictures" style="@style/Btn.Row" android:layout_width="match_parent" android:layout_height="56dp" android:drawableStart="@drawable/ic_o_camera" android:drawableEnd="@drawable/ic_o_chevron_right" android:text="Pictures"  android:drawableTint="@color/o_pink"/>
+                        <View style="@style/Divider" android:layout_width="match_parent" android:layout_marginStart="50dp" />
+                        <Button android:id="@+id/btn_folder_home" style="@style/Btn.Row" android:layout_width="match_parent" android:layout_height="56dp" android:drawableStart="@drawable/ic_o_home" android:drawableEnd="@drawable/ic_o_chevron_right" android:text="Home folder"  android:drawableTint="@color/o_mint"/>
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- ============ 3. TERMINAL ============ -->
+            <LinearLayout
+                android:id="@+id/panel_terminals"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <!-- Session list -->
+                <LinearLayout
+                    android:id="@+id/layout_terminals_list_header"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:gravity="center_vertical"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal"
+                    android:paddingStart="4dp">
+
+                    <TextView
+                        android:id="@+id/tv_terminals_header"
+                        style="@style/Text.Display"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Terminal" />
+
+                    <Button
+                        android:id="@+id/btn_terminals_refresh"
+                        style="@style/Btn.Icon"
+                        android:contentDescription="Refresh"
+                        android:drawableTop="@drawable/ic_o_refresh"
+                        android:drawableTint="@color/o_text_2"
+                        android:paddingTop="10dp"
+                        android:text="" />
+
+                    <Button
+                        android:autoSizeTextType="none"
+                        android:id="@+id/btn_terminals_new"
+                        style="@style/Btn.Secondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="4dp"
+                        android:drawableStart="@drawable/ic_o_plus"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="14dp"
+                        android:text="New"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <HorizontalScrollView
+                    android:id="@+id/scroll_term_chips"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:overScrollMode="never"
+                    android:scrollbars="none"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/layout_term_chips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
+
+                <ScrollView
+                    android:id="@+id/scroll_term_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:layout_marginTop="8dp"
+                    android:overScrollMode="never"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:id="@+id/container_terminals_list"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+
+                        <LinearLayout
+                            android:id="@+id/layout_terminals_empty"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_horizontal"
+                            android:orientation="vertical"
+                            android:paddingTop="64dp"
+                            android:visibility="gone">
+
+                            <ImageView
+                                android:layout_width="56dp"
+                                android:layout_height="56dp"
+                                android:background="@drawable/bg_icon_tile"
+                                android:padding="16dp"
+                                android:src="@drawable/ic_o_terminal"
+                                android:tint="@color/o_text_2"
+                                android:importantForAccessibility="no" />
+
+                            <TextView
+                                style="@style/Text.Heading"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="16dp"
+                                android:text="No open terminals" />
+
+                            <TextView
+                                style="@style/Text.Secondary"
+                                android:layout_width="260dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:gravity="center"
+                                android:text="Open Konsole on your computer, or tap New to start a session." />
+                        </LinearLayout>
+                    </LinearLayout>
+                </ScrollView>
+
+                <!-- Live session -->
+                <LinearLayout
+                    android:id="@+id/layout_terminal_interactive"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btn_interactive_back"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Back to sessions"
+                            android:drawableTop="@drawable/ic_o_chevron_left"
+                            android:drawableTint="@color/o_text"
+                            android:paddingTop="10dp"
+                            android:text="" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tv_interactive_title"
+                                style="@style/Text.Heading"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:singleLine="true"
+                                android:text="Terminal" />
+
+                            <TextView
+                                android:id="@+id/tv_interactive_cwd"
+                                style="@style/Text.Mono"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:ellipsize="start"
+                                android:singleLine="true"
+                                android:textSize="11sp"
+                                android:text="" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tv_interactive_status"
+                            style="@style/Text.Badge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:text="Live" />
+
+                        <Button
+                            android:id="@+id/btn_term_wrap"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Wrap long lines"
+                            android:drawableTop="@drawable/ic_o_wrap"
+                            android:drawableTint="@color/o_text_2"
+                            android:paddingTop="10dp"
+                            android:text="" />
+
+                        <Button
+                            android:id="@+id/btn_term_rotate"
+                            style="@style/Btn.Icon"
+                            android:contentDescription="Rotate"
+                            android:drawableTop="@drawable/ic_o_rotate"
+                            android:drawableTint="@color/o_text_2"
+                            android:paddingTop="10dp"
+                            android:text="" />
+                    </LinearLayout>
+
+                    <!-- Terminal screen, with "load earlier" floating over its top edge -->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:layout_marginTop="2dp">
+
+                    <com.lunarphoton.pcauthenticator.TerminalScrollView
+                        android:id="@+id/scroll_term_screen"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/term_screen_bg"
+                        android:fadeScrollbars="true"
+                        android:fillViewport="true"
+                        android:minHeight="120dp"
+                        android:overScrollMode="never"
+                        android:scrollbarStyle="insideOverlay"
+                        android:scrollbars="vertical">
+
+                        <com.lunarphoton.pcauthenticator.TerminalHorizontalScrollView
+                            android:id="@+id/hscroll_term_screen"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:fillViewport="true"
+                            android:overScrollMode="never"
+                            android:scrollbars="horizontal">
+
+                            <TextView
+                                android:id="@+id/tv_term_screen"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/term_mono_regular"
+                                android:lineSpacingExtra="3dp"
+                                android:paddingStart="14dp"
+                                android:paddingTop="12dp"
+                                android:paddingEnd="14dp"
+                                android:paddingBottom="14dp"
+                                android:text="Connecting…"
+                                android:textColor="@color/o_text"
+                                android:textColorHighlight="#558EA8FF"
+                                android:textIsSelectable="true"
+                                android:textSize="12sp" />
+                        </com.lunarphoton.pcauthenticator.TerminalHorizontalScrollView>
+                    </com.lunarphoton.pcauthenticator.TerminalScrollView>
+
+                    <!-- Shown only when scrolled to the top and there's more history -->
+                    <Button
+                        android:id="@+id/btn_term_load_earlier"
+                        style="@style/Btn"
+                        android:autoSizeTextType="none"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:minHeight="34dp"
+                        android:layout_gravity="top|center_horizontal"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/badge_wifi"
+                        android:drawableStart="@drawable/ic_o_chevron_up"
+                        android:drawableTint="@color/o_accent"
+                        android:elevation="6dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="14dp"
+                        android:text="Load earlier"
+                        android:textColor="@color/o_accent"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+                    </FrameLayout>
+
+                    <!-- Keys: modifiers on the left, arrow cluster on the right (portrait).
+                         In landscape the keys move into the input row to leave room for the screen. -->
+                    <!-- One row of keys the phone keyboard lacks -->
+                    <LinearLayout
+                        android:id="@+id/layout_term_keys"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+                        <Button android:id="@+id/btn_key_esc" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="esc" />
+                        <Space android:layout_width="5dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_tab" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="tab" />
+                        <Space android:layout_width="5dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_ctrl" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:text="ctrl" />
+                        <Space android:layout_width="12dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_left" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:contentDescription="Left" android:text="←" />
+                        <Space android:layout_width="5dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_up" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:contentDescription="Up" android:text="↑" />
+                        <Space android:layout_width="5dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_down" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:contentDescription="Down" android:text="↓" />
+                        <Space android:layout_width="5dp" android:layout_height="1dp" />
+                        <Button android:id="@+id/btn_key_right" style="@style/Btn.Key" android:paddingStart="2dp" android:paddingEnd="2dp" android:minWidth="0dp" android:singleLine="true" android:layout_width="0dp" android:layout_height="36dp" android:layout_weight="1" android:contentDescription="Right" android:text="→" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/layout_term_input_row"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_input"
+                            android:gravity="center_vertical"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="8dp">
+
+                            <TextView
+                                android:id="@+id/tv_term_prompt"
+                                android:layout_width="wrap_content"
+                                android:layout_height="match_parent"
+                                android:layout_marginStart="-14dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="Edit the line typed on the computer"
+                                android:gravity="center"
+                                android:paddingStart="14dp"
+                                android:paddingEnd="6dp"
+                                android:fontFamily="@font/geist_mono_medium"
+                                android:text="❯"
+                                android:textColor="@color/o_accent"
+                                android:textSize="14sp" />
+
+                            <com.lunarphoton.pcauthenticator.TermInputEditText
+                                android:id="@+id/et_term_input"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:layout_marginStart="8dp"
+                                android:background="@null"
+                                android:fontFamily="@font/geist_mono_regular"
+                                android:imeOptions="actionSend"
+                                android:inputType="text|textNoSuggestions"
+                                android:singleLine="true"
+                                android:textColor="@color/o_text"
+                                android:textColorHint="@color/o_text_3"
+                                android:textSize="14sp" />
+                        </LinearLayout>
+
+                        <Button
+                            android:id="@+id/btn_term_send"
+                            style="@style/Btn.Primary"
+                            android:layout_width="44dp"
+                            android:layout_height="44dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="Send"
+                            android:drawableTop="@drawable/ic_o_send"
+                            android:paddingStart="0dp"
+                            android:paddingEnd="0dp"
+                            android:paddingTop="12dp"
+                            android:text="" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </ViewFlipper>
+
+        <!-- Bottom navigation (id kept: hidden in landscape terminal) -->
+        <LinearLayout
+            android:id="@+id/layout_top_tabs"
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:background="@drawable/bg_tab_bar"
+            android:baselineAligned="false"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="8dp">
+
+            <TextView android:id="@+id/tab_btn_dashboard" style="@style/Text.Tab" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/btn_ghost" android:drawableTop="@drawable/ic_o_home" android:drawablePadding="4dp" android:paddingTop="8dp" android:text="Home" />
+            <TextView android:id="@+id/tab_btn_control" style="@style/Text.Tab" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/btn_ghost" android:drawableTop="@drawable/ic_o_control" android:drawablePadding="4dp" android:paddingTop="8dp" android:text="Control" />
+            <TextView android:id="@+id/tab_btn_files" style="@style/Text.Tab" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/btn_ghost" android:drawableTop="@drawable/ic_o_folder" android:drawablePadding="4dp" android:paddingTop="8dp" android:text="Files" />
+            <TextView android:id="@+id/tab_btn_terminals" style="@style/Text.Tab" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/btn_ghost" android:drawableTop="@drawable/ic_o_terminal" android:drawablePadding="4dp" android:paddingTop="8dp" android:text="Terminal" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ============ Laptop switcher sheet ============ -->
+    <FrameLayout
+        android:id="@+id/layout_devices_sheet"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#B3000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/bg_dialog"
+            android:clickable="true"
+            android:focusable="true"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/Text.Title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Computers" />
+
+                <TextView
+                    android:id="@+id/tv_device_count"
+                    style="@style/Text.Caption"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="" />
+
+                <Button
+                    android:id="@+id/btn_close_devices"
+                    style="@style/Btn.Icon"
+                    android:layout_marginStart="4dp"
+                    android:contentDescription="Close"
+                    android:drawableTop="@drawable/ic_o_x"
+                    android:drawableTint="@color/o_text_2"
+                    android:paddingTop="10dp"
+                    android:text="" />
+            </LinearLayout>
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:overScrollMode="never"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/container_devices"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+
+            <TextView
+                android:id="@+id/tv_scan_status"
+                style="@style/Text.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Looking for computers on this Wi-Fi…"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_scan_network"
+                    style="@style/Btn.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:drawableStart="@drawable/ic_o_wifi"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="Scan Wi-Fi" />
+
+                <Button
+                    android:id="@+id/btn_add_manual"
+                    style="@style/Btn.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:drawableStart="@drawable/ic_o_plus"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="Add manually" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- ============ Login approval (full screen) ============ -->
+    <LinearLayout
+        android:id="@+id/layout_challenge"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/o_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="24dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:gravity="center_vertical"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="●"
+                android:textColor="@color/o_accent"
+                android:textSize="10sp" />
+
+            <TextView
+                style="@style/Text.Secondary"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Login request" />
+
+            <TextView
+                android:id="@+id/tv_timer"
+                style="@style/Text.Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/o_text_2"
+                android:textSize="14sp"
+                android:text="0:35" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:layout_width="156dp"
+                android:layout_height="156dp"
+                android:background="@drawable/bg_ring_halo">
+
+                <ImageView
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_o_fingerprint"
+                    android:tint="@color/o_accent"
+                    android:importantForAccessibility="no" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/tv_challenge_message"
+                style="@style/Text.Display"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:gravity="center"
+                android:lineSpacingExtra="4dp"
+                android:text="Approve sign-in?" />
+
+            <TextView
+                style="@style/Text.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:text="Only approve if you are signing in yourself." />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_approve_challenge"
+            style="@style/Btn.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:drawableStart="@drawable/ic_o_fingerprint"
+            android:text="Approve"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_deny_challenge"
+            style="@style/Btn.Danger"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:text="Deny" />
+    </LinearLayout>
+</FrameLayout>

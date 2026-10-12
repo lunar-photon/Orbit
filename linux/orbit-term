@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""orbit-term: run a shell in a terminal the Orbit phone app can follow.
+
+    orbit-term [command ...]        (default: $SHELL)
+
+Like `script`, it sits between the terminal app and the shell: everything the shell prints
+goes to the terminal unchanged and is also recorded (in `script`'s "advanced" format) to
+~/.cache/orbit/term/<pid>.{log,timing}, which the Orbit service replays for the phone.
+Unlike `script`, it also takes input from the phone through a socket next to the recording
+(<pid>.sock, only this user can open it), so typing from the phone works in any terminal
+app, not only Konsole. Started by the shell's own startup file, it replaces that shell
+(exec), so the terminal app sees this process where the shell was.
+"""
+import errno
+import fcntl
+import json
+import os
+import select
+import signal
+import socket
+import struct
+import sys
+import termios
+import time
+import tty
+
+REC_DIR = os.path.expanduser('~/.cache/orbit/term')
+
+
+def winsize(fd):
+    try:
+        rows, cols, _, _ = struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))
+        return rows, cols
+    except OSError:
+        return 24, 80
+
+
+def set_winsize(fd, rows, cols):
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+    except OSError:
+        pass
+
+
+def write_all(fd, data):
+    while data:
+        try:
+            n = os.write(fd, data)
+        except InterruptedError:
+            continue
+        data = data[n:]
+
+
+def main():
+    cmd = sys.argv[1:] or [os.environ.get('SHELL') or '/bin/sh']
+    if not os.isatty(0) or not os.isatty(1):
+        os.execvp(cmd[0], cmd)                    # nothing to sit between: just run it
+
+    os.makedirs(REC_DIR, mode=0o700, exist_ok=True)
+    base = os.path.join(REC_DIR, str(os.getpid()))
+    rows, cols = winsize(0)
+
+    master, slave = os.openpty()
+    set_winsize(slave, rows, cols)                # before the shell starts, so it sees the right size
+    attrs = termios.tcgetattr(0)
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+
+    child = os.fork()
+    if child == 0:
+        os.close(master)
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        for fd in (0, 1, 2):
+            os.dup2(slave, fd)
+        if slave > 2:
+            os.close(slave)
+        os.environ['ORBIT_RECORDING'] = base
+        try:
+            os.execvp(cmd[0], cmd)
+        finally:
+            os._exit(127)
+    os.close(slave)
+
+    log = open(base + '.log', 'wb', buffering=0)
+    timing = open(base + '.timing', 'w', buffering=1)
+    os.chmod(base + '.log', 0o600)
+    os.chmod(base + '.timing', 0o600)
+    timing.write(f'H 0.000000 COLUMNS {cols}\nH 0.000000 LINES {rows}\n')
+    meta = {'pid': os.getpid(), 'shell_pid': child, 'command': cmd,
+            'app': os.environ.get('TERM_PROGRAM') or ('konsole' if os.environ.get('KONSOLE_VERSION') else ''),
+            'tty': os.ttyname(0), 'started': time.time()}
+    with open(base + '.json', 'w') as f:
+        json.dump(meta, f)
+    os.chmod(base + '.json', 0o600)
+
+    # input from the phone
+    sock_path = base + '.sock'
+    try:
+        os.unlink(sock_path)
+    except OSError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old_umask = os.umask(0o177)
+    server.bind(sock_path)
+    os.umask(old_umask)
+    server.listen(4)
+    server.setblocking(False)
+    clients = []
+
+    last = time.monotonic()
+    flags = {'resized': False, 'stop': 0}
+    # Signals only set flags; a self-pipe wakes select() (Python retries select after a
+    # signal, so without it a resize would wait for the next keypress)
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_r, False)
+    os.set_blocking(wake_w, False)
+    signal.set_wakeup_fd(wake_w)
+    signal.signal(signal.SIGWINCH, lambda *a: flags.__setitem__('resized', True))
+    for sig in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, lambda signum, frame: flags.__setitem__('stop', signum))
+
+    def stamp():
+        nonlocal last
+        now = time.monotonic()
+        d, last = now - last, now
+        return f'{d:.6f}'
+
+    # Input for the shell is queued and written only when the pty takes it: a big paste
+    # from the phone must not block us, or we'd stop reading the shell's output and both
+    # would wait on each other forever
+    os.set_blocking(master, False)
+    pending = bytearray()
+
+    old_tty = termios.tcgetattr(0)
+    tty.setraw(0)
+    status = 0
+    try:
+        while not flags['stop']:
+            if flags['resized']:
+                flags['resized'] = False
+                rows, cols = winsize(0)
+                set_winsize(master, rows, cols)      # the shell gets SIGWINCH from the pty
+                timing.write(f'S {stamp()} SIGWINCH ROWS={rows} COLS={cols}\n')
+            readers = [wake_r, master, server] + clients
+            if len(pending) < 1 << 20:               # stop taking input while 1 MB waits
+                readers.append(0)
+            try:
+                ready, writable, _ = select.select(readers, [master] if pending else [], [])
+            except InterruptedError:
+                continue
+            if wake_r in ready:
+                try:
+                    os.read(wake_r, 512)
+                except OSError:
+                    pass
+            if master in writable and pending:
+                try:
+                    n = os.write(master, pending[:65536])
+                    del pending[:n]
+                except BlockingIOError:
+                    pass
+            if master in ready:
+                try:
+                    data = os.read(master, 65536)
+                except BlockingIOError:
+                    data = None
+                except OSError as e:
+                    if e.errno != errno.EIO:
+                        raise
+                    data = b''
+                if data == b'':
+                    break                            # the shell is gone
+                if data:
+                    write_all(1, data)
+                    log.write(data)
+                    timing.write(f'O {stamp()} {len(data)}\n')
+            if 0 in ready:
+                try:
+                    data = os.read(0, 65536)
+                except OSError:
+                    data = b''
+                if not data:
+                    break                            # the terminal is gone
+                pending += data
+            if server in ready:
+                try:
+                    conn, _ = server.accept()
+                    conn.setblocking(False)
+                    clients.append(conn)
+                except OSError:
+                    pass
+            for conn in [c for c in clients if c in ready]:
+                try:
+                    data = conn.recv(65536)
+                except OSError:
+                    data = b''
+                if data:
+                    pending += data
+                else:
+                    clients.remove(conn)
+                    conn.close()
+    finally:
+        try:
+            termios.tcsetattr(0, termios.TCSAFLUSH, old_tty)
+        except termios.error:
+            pass                                     # the terminal itself hung up
+        for c in clients:
+            c.close()
+        server.close()
+        for suffix in ('.sock', '.json'):
+            try:
+                os.unlink(base + suffix)
+            except OSError:
+                pass
+        # hang up the shell's terminal so it (and what runs in it) exits, as closing a tab would
+        try:
+            os.close(master)
+        except OSError:
+            pass
+        try:
+            os.killpg(child, signal.SIGHUP)
+        except OSError:
+            pass
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                done, st = os.waitpid(child, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if done:
+                status = os.waitstatus_to_exitcode(st)
+                break
+            if time.monotonic() > deadline:
+                try:
+                    os.killpg(child, signal.SIGKILL)
+                except OSError:
+                    pass
+                deadline = time.monotonic() + 3600
+            time.sleep(0.05)
+    if flags['stop']:
+        status = 128 + flags['stop']
+    sys.exit(status if status >= 0 else 128 - status)
+
+if __name__ == '__main__':
+    main()

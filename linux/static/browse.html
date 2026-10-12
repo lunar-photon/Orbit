@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PC Connect - Phone File Explorer</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0ea5e9;
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; user-select: none; }
+    header { background: #1e293b; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.15rem; }
+    .status-badge { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; padding: 4px 12px; background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 9999px; color: #4ade80; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .main-layout { display: flex; flex: 1; overflow: hidden; }
+    aside { width: 250px; background: rgba(15, 23, 42, 0.6); border-right: 1px solid var(--border); padding: 18px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .sidebar-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; padding: 8px 12px; letter-spacing: 0.05em; }
+    .nav-btn { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; color: var(--text); text-decoration: none; border: none; background: transparent; cursor: pointer; font-size: 0.9rem; text-align: left; transition: all 0.2s; }
+    .nav-btn:hover { background: rgba(255, 255, 255, 0.06); }
+    .nav-btn.active { background: rgba(56, 189, 248, 0.15); color: var(--accent); font-weight: 600; }
+    .content { flex: 1; display: flex; flex-direction: column; padding: 20px; overflow-y: auto; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .breadcrumbs { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; flex-wrap: wrap; }
+    .crumb { color: var(--accent); cursor: pointer; text-decoration: none; }
+    .crumb:hover { text-decoration: underline; }
+    .actions { display: flex; gap: 10px; align-items: center; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; font-size: 0.85rem; font-weight: 500; transition: all 0.2s; }
+    .btn:hover { background: rgba(255, 255, 255, 0.12); }
+    .btn-primary { background: var(--accent); color: #000; border-color: transparent; font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .hint-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; margin-bottom: 12px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; font-size: 0.85rem; color: #7dd3fc; }
+    .drop-zone { border: 2px dashed rgba(56, 189, 248, 0.35); border-radius: 12px; padding: 12px; text-align: center; margin-bottom: 16px; background: rgba(56, 189, 248, 0.03); transition: all 0.2s; font-size: 0.9rem; color: var(--text-muted); cursor: pointer; }
+    .drop-zone.dragover { border-color: var(--accent); background: rgba(56, 189, 248, 0.12); }
+    .file-table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+    .file-table th, .file-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    .file-table th { background: rgba(0, 0, 0, 0.2); color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .file-table tr { cursor: pointer; transition: background 0.15s; }
+    .file-table tr:hover td { background: rgba(255, 255, 255, 0.04); }
+    .file-table tr.selected td { background: rgba(56, 189, 248, 0.16) !important; color: #bae6fd; }
+    .item-link { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+    .item-link:hover { color: var(--accent); }
+    .action-icons { display: flex; gap: 8px; }
+    .action-btn { background: transparent; border: none; cursor: pointer; padding: 4px; border-radius: 4px; color: var(--text-muted); font-size: 1rem; transition: color 0.2s; }
+    .action-btn:hover { color: var(--text); }
+    .action-btn.del:hover { color: var(--red); }
+    .empty-state { text-align: center; padding: 48px; color: var(--text-muted); }
+
+    /* Custom Right Click Context Menu */
+    .context-menu {
+      position: fixed;
+      display: none;
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+      z-index: 1000;
+      min-width: 190px;
+      padding: 6px 0;
+    }
+    .context-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      color: var(--text);
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .context-menu-item:hover {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+    }
+    .context-menu-item.danger:hover {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--red);
+    }
+    .context-menu-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 4px 0;
+    }
+
+    /* Modal Preview Overlay */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+      padding: 20px;
+    }
+    .modal-box {
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 960px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+    }
+    .modal-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(15, 23, 42, 0.8);
+    }
+    .modal-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .modal-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .modal-body {
+      padding: 20px;
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 250px;
+      background: #090d16;
+    }
+    .preview-img {
+      max-width: 100%;
+      max-height: 75vh;
+      object-fit: contain;
+      border-radius: 6px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .preview-video {
+      max-width: 100%;
+      max-height: 75vh;
+      border-radius: 6px;
+      outline: none;
+    }
+    .preview-code {
+      width: 100%;
+      height: 75vh;
+      background: #0d1117;
+      color: #e6edf3;
+      padding: 16px;
+      border-radius: 6px;
+      font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      overflow: auto;
+      white-space: pre;
+      user-select: text;
+    }
+    .preview-frame {
+      width: 100%;
+      height: 75vh;
+      border: none;
+      border-radius: 6px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span>📱</span>
+      <span>PC Connect • Phone Explorer</span>
+    </div>
+    <div style="display: flex; gap: 16px; align-items: center;">
+      <div id="statusBadge" class="status-badge">
+        <span class="dot"></span>
+        <span id="phoneNameText">Connecting to Phone...</span>
+      </div>
+      <button class="btn" onclick="ringPhone()">🔔 Ring Phone</button>
+      <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <aside>
+      <div class="sidebar-title">Shortcuts</div>
+      <button class="nav-btn active" onclick="loadPath('/storage/emulated/0')">📱 Internal Storage</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/DCIM')">📷 Camera &amp; Photos</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/Download')">📥 Downloads</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/Documents')">📄 Documents</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/Pictures')">🖼️ Pictures</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/Music')">🎵 Music</button>
+      <button class="nav-btn" onclick="loadPath('/storage/emulated/0/Movies')">🎬 Movies</button>
+      
+      <div class="sidebar-title" style="margin-top: 16px;">Quick Actions</div>
+      <button class="nav-btn" onclick="syncClipboard()">📋 Sync Clipboard</button>
+      <button class="nav-btn" onclick="lockPC()">🔒 Lock PC</button>
+    </aside>
+
+    <main class="content">
+      <div class="toolbar">
+        <div id="breadcrumbs" class="breadcrumbs">
+          <span class="crumb" onclick="loadPath('/storage/emulated/0')">Storage</span>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="navigateUp()">⬆️ Up</button>
+          <button class="btn" onclick="promptMkdir()">📁 New Folder</button>
+          <label class="btn btn-primary" style="margin: 0; cursor: pointer;">
+            📤 Upload to Phone
+            <input type="file" id="fileUploadInput" multiple style="display: none;" onchange="handleFileInput(this.files)">
+          </label>
+        </div>
+      </div>
+
+      <div class="hint-bar">
+        <span>💡</span>
+        <span><b>Pro Tip:</b> Double-click any file to preview it temporarily. Right-click to download to your PC.</span>
+      </div>
+
+      <div id="dropZone" class="drop-zone" onclick="document.getElementById('fileUploadInput').click()">
+        📥 Drag and drop files here to upload to this folder on your phone
+      </div>
+
+      <table class="file-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Size</th>
+            <th>Modified</th>
+            <th style="width: 90px; text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="fileListBody">
+          <tr>
+            <td colspan="4" class="empty-state">Loading phone files...</td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
+  </div>
+
+  <!-- Custom Right-Click Context Menu -->
+  <div id="contextMenu" class="context-menu">
+    <div class="context-menu-item" id="cmDownload">
+      <span>📥</span>
+      <span>Download to PC</span>
+    </div>
+    <div class="context-menu-item" id="cmPreview">
+      <span>👁️</span>
+      <span>Preview Temporarily</span>
+    </div>
+    <div class="context-menu-item" id="cmCopyPath">
+      <span>📋</span>
+      <span>Copy Phone Path</span>
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger" id="cmDelete">
+      <span>🗑️</span>
+      <span>Delete File</span>
+    </div>
+  </div>
+
+  <!-- Preview Modal Backdrop -->
+  <div id="previewModal" class="modal-backdrop" onclick="onModalBackdropClick(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title" id="previewTitle">
+          <span>👁️</span>
+          <span id="previewFileName">File Preview</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="previewDownloadBtn">📥 Download</button>
+          <button class="btn" onclick="closePreview()">✕ Close</button>
+        </div>
+      </div>
+      <div class="modal-body" id="previewBody">
+        <div style="color: var(--text-muted);">Loading preview...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentPath = '/storage/emulated/0';
+    let contextTargetFile = null;
+
+    async function checkStatus() {
+      try {
+        const res = await fetch('/api/phone/status');
+        const data = await res.json();
+        const p = data.phone || {};
+        let text = p.client_name || "Phone";
+        if (p.battery_level !== undefined && p.battery_level !== null) {
+          text += ` (${p.battery_level}%${p.is_charging ? ' ⚡' : ''})`;
+        }
+        document.getElementById('phoneNameText').innerText = text;
+      } catch (e) {
+        document.getElementById('phoneNameText').innerText = "Phone Unreachable";
+      }
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function formatDate(ts) {
+      if (!ts) return '-';
+      const d = new Date(ts * 1000);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    }
+
+    function getFileIcon(name, isDir) {
+      if (isDir) return '📁';
+      const ext = name.split('.').pop().toLowerCase();
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'svg', 'bmp'].includes(ext)) return '🖼️';
+      if (['mp4', 'mkv', 'webm', 'mov', 'avi', '3gp'].includes(ext)) return '🎬';
+      if (['mp3', 'm4a', 'flac', 'wav', 'aac', 'ogg'].includes(ext)) return '🎵';
+      if (['pdf'].includes(ext)) return '📕';
+      if (['zip', 'tar', 'gz', 'apk', 'rar', '7z'].includes(ext)) return '📦';
+      if (['txt', 'log', 'md', 'json', 'py', 'java', 'xml', 'html', 'css', 'js', 'sh'].includes(ext)) return '📄';
+      return '📄';
+    }
+
+    async function loadPath(path) {
+      currentPath = path;
+      updateBreadcrumbs();
+      const tbody = document.getElementById('fileListBody');
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Loading files from phone...</td></tr>';
+      try {
+        const res = await fetch(`/api/phone/files/list?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error("Could not access path");
+        const files = await res.json();
+        renderFiles(files);
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-state" style="color: var(--red);">❌ Error: ${esc(err.message)}. Is Phone File Server running?</td></tr>`;
+      }
+    }
+
+    function renderFiles(files) {
+      const tbody = document.getElementById('fileListBody');
+      if (!files || files.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">This folder is empty</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      files.forEach(f => {
+        const tr = document.createElement('tr');
+        const icon = getFileIcon(f.name, f.is_dir);
+
+        // Click selection and double-click actions
+        tr.onclick = (e) => {
+          document.querySelectorAll('.file-table tr').forEach(r => r.classList.remove('selected'));
+          tr.classList.add('selected');
+        };
+
+        tr.ondblclick = (e) => {
+          e.preventDefault();
+          if (f.is_dir) {
+            loadPath(f.path);
+          } else {
+            previewFile(f.path, f.name, f.size);
+          }
+        };
+
+        // Right-click context menu
+        tr.oncontextmenu = (e) => {
+          e.preventDefault();
+          document.querySelectorAll('.file-table tr').forEach(r => r.classList.remove('selected'));
+          tr.classList.add('selected');
+          showContextMenu(e.clientX, e.clientY, f);
+        };
+
+        tr.innerHTML = `
+          <td>
+            <div class="item-link">
+              <span>${icon}</span>
+              <span>${esc(f.name)}</span>
+            </div>
+          </td>
+          <td>${f.is_dir ? '-' : formatBytes(f.size)}</td>
+          <td>${formatDate(f.mtime)}</td>
+          <td style="text-align: right;">
+            <div class="action-icons" style="justify-content: flex-end;">
+              ${!f.is_dir ? `<button class="action-btn b-dl" title="Download to PC">📥</button>` : ''}
+              ${!f.is_dir ? `<button class="action-btn b-pv" title="Preview">👁️</button>` : ''}
+              <button class="action-btn del b-del" title="Delete">🗑️</button>
+            </div>
+          </td>
+        `;
+        // handlers attached here, not written into the HTML: file names come from the phone
+        const on = (sel, fn) => { const b = tr.querySelector(sel); if (b) b.addEventListener('click', e => { e.stopPropagation(); fn(); }); };
+        on('.b-dl', () => downloadFile(f.path));
+        on('.b-pv', () => previewFile(f.path, f.name, f.size));
+        on('.b-del', () => deleteItem(f.path));
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateBreadcrumbs() {
+      const el = document.getElementById('breadcrumbs');
+      el.innerHTML = '';
+      const parts = currentPath.split('/').filter(Boolean);
+      let accum = '';
+      
+      const homeSpan = document.createElement('span');
+      homeSpan.className = 'crumb';
+      homeSpan.innerText = '📱 Root';
+      homeSpan.onclick = () => loadPath('/storage/emulated/0');
+      el.appendChild(homeSpan);
+
+      parts.forEach((p, idx) => {
+        accum += '/' + p;
+        const target = accum;
+        const sep = document.createElement('span');
+        sep.innerText = ' / ';
+        sep.style.color = 'var(--text-muted)';
+        el.appendChild(sep);
+
+        const crumb = document.createElement('span');
+        crumb.className = 'crumb';
+        crumb.innerText = p;
+        crumb.onclick = () => loadPath(target);
+        el.appendChild(crumb);
+      });
+    }
+
+    function navigateUp() {
+      if (currentPath === '/storage/emulated/0' || currentPath === '/' || !currentPath.includes('/')) return;
+      const idx = currentPath.lastIndexOf('/');
+      const parent = currentPath.substring(0, idx) || '/storage/emulated/0';
+      loadPath(parent);
+    }
+
+    function downloadFile(filePath) {
+      window.location.href = `/api/phone/files/download?path=${encodeURIComponent(filePath)}`;
+    }
+
+    function esc(text) {
+      return String(text ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    }
+
+    async function previewFile(filePath, fileName, fileSize) {
+      const modal = document.getElementById('previewModal');
+      const body = document.getElementById('previewBody');
+      const title = document.getElementById('previewFileName');
+      const dlBtn = document.getElementById('previewDownloadBtn');
+
+      title.innerText = `${fileName} (${formatBytes(fileSize)})`;
+      dlBtn.onclick = () => downloadFile(filePath);
+      body.innerHTML = '<div style="color: var(--text-muted);">⏳ Loading preview from phone...</div>';
+      modal.style.display = 'flex';
+
+      const ext = (fileName || '').split('.').pop().toLowerCase();
+      const previewUrl = `/api/phone/files/preview?path=${encodeURIComponent(filePath)}`;
+
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) {
+        body.innerHTML = `<img src="${previewUrl}" class="preview-img" alt="${esc(fileName)}">`;
+      } else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+        body.innerHTML = `<video controls autoplay class="preview-video" src="${previewUrl}"></video>`;
+      } else if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)) {
+        body.innerHTML = `
+          <div style="text-align: center; padding: 30px;">
+            <div style="font-size: 3rem; margin-bottom: 16px;">🎵</div>
+            <div style="font-weight: 600; margin-bottom: 20px;">${esc(fileName)}</div>
+            <audio controls autoplay src="${previewUrl}"></audio>
+          </div>
+        `;
+      } else if (ext === 'pdf') {
+        body.innerHTML = `<iframe src="${previewUrl}" class="preview-frame"></iframe>`;
+      } else if (['txt', 'log', 'md', 'json', 'py', 'java', 'xml', 'html', 'css', 'js', 'sh', 'yml', 'yaml', 'c', 'cpp', 'rs', 'go'].includes(ext)) {
+        try {
+          const res = await fetch(previewUrl);
+          const text = await res.text();
+          const pre = document.createElement('pre');
+          pre.className = 'preview-code';
+          pre.textContent = text;
+          body.innerHTML = '';
+          body.appendChild(pre);
+        } catch (e) {
+          body.innerHTML = `<div style="color: var(--red);">Error loading text preview: ${esc(e.message)}</div>`;
+        }
+      } else {
+        body.innerHTML = `
+          <div style="text-align: center; padding: 40px;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">📦</div>
+            <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">${esc(fileName)}</div>
+            <div style="color: var(--text-muted); margin-bottom: 20px;">Direct browser preview not supported for this file type.</div>
+            <button class="btn btn-primary" id="previewOnlyDownload">📥 Download to PC</button>
+          </div>
+        `;
+        document.getElementById('previewOnlyDownload').addEventListener('click', () => downloadFile(filePath));
+      }
+    }
+
+    function closePreview() {
+      const modal = document.getElementById('previewModal');
+      const body = document.getElementById('previewBody');
+      // Stop video/audio playback immediately
+      body.innerHTML = '';
+      modal.style.display = 'none';
+    }
+
+    function onModalBackdropClick(e) {
+      if (e.target.id === 'previewModal') {
+        closePreview();
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closePreview();
+        hideContextMenu();
+      }
+    });
+
+    // Right-click context menu logic
+    const contextMenu = document.getElementById('contextMenu');
+
+    function showContextMenu(x, y, file) {
+      contextTargetFile = file;
+      contextMenu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
+      contextMenu.style.top = `${Math.min(y, window.innerHeight - 200)}px`;
+      
+      const cmPreview = document.getElementById('cmPreview');
+      const cmDownload = document.getElementById('cmDownload');
+      if (file.is_dir) {
+        cmPreview.style.display = 'none';
+        cmDownload.style.display = 'none';
+      } else {
+        cmPreview.style.display = 'flex';
+        cmDownload.style.display = 'flex';
+      }
+
+      contextMenu.style.display = 'block';
+    }
+
+    function hideContextMenu() {
+      contextMenu.style.display = 'none';
+    }
+
+    document.addEventListener('click', () => hideContextMenu());
+
+    document.getElementById('cmDownload').onclick = () => {
+      if (contextTargetFile && !contextTargetFile.is_dir) {
+        downloadFile(contextTargetFile.path);
+      }
+      hideContextMenu();
+    };
+
+    document.getElementById('cmPreview').onclick = () => {
+      if (contextTargetFile && !contextTargetFile.is_dir) {
+        previewFile(contextTargetFile.path, contextTargetFile.name, contextTargetFile.size);
+      }
+      hideContextMenu();
+    };
+
+    document.getElementById('cmCopyPath').onclick = () => {
+      if (contextTargetFile) {
+        navigator.clipboard.writeText(contextTargetFile.path);
+      }
+      hideContextMenu();
+    };
+
+    document.getElementById('cmDelete').onclick = () => {
+      if (contextTargetFile) {
+        deleteItem(contextTargetFile.path);
+      }
+      hideContextMenu();
+    };
+
+    async function deleteItem(path) {
+      if (!confirm(`Are you sure you want to delete:\n${path}?`)) return;
+      try {
+        const res = await fetch(`/api/phone/files/delete?path=${encodeURIComponent(path)}`, { method: 'POST' });
+        if (res.ok) {
+          loadPath(currentPath);
+        } else {
+          alert("Failed to delete file.");
+        }
+      } catch (e) {
+        alert("Delete failed: " + e.message);
+      }
+    }
+
+    async function promptMkdir() {
+      const name = prompt("Enter new folder name:");
+      if (!name) return;
+      try {
+        await fetch(`/api/phone/files/mkdir?path=${encodeURIComponent(currentPath)}&name=${encodeURIComponent(name)}`, { method: 'POST' });
+        loadPath(currentPath);
+      } catch (e) {
+        alert("Failed to create folder: " + e.message);
+      }
+    }
+
+    async function handleFileInput(files) {
+      if (!files || files.length === 0) return;
+      for (let file of files) {
+        const drop = document.getElementById('dropZone');
+        drop.innerText = `⏳ Uploading ${file.name} to phone...`;
+        try {
+          await fetch(`/api/phone/files/upload?path=${encodeURIComponent(currentPath)}`, {
+            method: 'POST',
+            headers: {
+              'X-Filename': encodeURIComponent(file.name),
+              'Content-Type': file.type || 'application/octet-stream'
+            },
+            body: file
+          });
+        } catch (e) {
+          alert(`Failed to upload ${file.name}: ${e.message}`);
+        }
+      }
+      document.getElementById('dropZone').innerText = "📥 Drag and drop files here to upload to this folder on your phone";
+      loadPath(currentPath);
+    }
+
+    async function ringPhone() {
+      await fetch('/api/ring', { method: 'POST' });
+      alert("Sent ring command to phone!");
+    }
+
+    async function syncClipboard() {
+      const text = prompt("Enter text to send to phone clipboard (or leave blank to fetch from PC):");
+      if (text !== null) {
+        await fetch('/api/clipboard', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text: text})
+        });
+        alert("Clipboard sent!");
+      }
+    }
+
+    async function lockPC() {
+      await fetch('/api/action', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'lock'})
+      });
+    }
+
+    function refreshFiles() {
+      checkStatus();
+      loadPath(currentPath);
+    }
+
+    // Drag and drop handling
+    const dz = document.getElementById('dropZone');
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFileInput(e.dataTransfer.files);
+      }
+    });
+
+    setInterval(checkStatus, 5000);
+    checkStatus();
+    loadPath(currentPath);
+  </script>
+</body>
+</html>

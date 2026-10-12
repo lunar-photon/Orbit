@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Orbit
+GenericName=Phone companion
+Comment=Browse, send and ring your phone from this computer
+Exec=orbit-tray
+Icon=orbit
+Terminal=false
+Categories=Utility;Network;
+Keywords=phone;android;files;send;ring;clipboard;
+StartupWMClass=orbit-tray
+X-KDE-autostart-after=panel
+X-GNOME-Autostart-enabled=true
+Actions=browse;
+
+[Desktop Action browse]
+Name=Browse phone files
+Exec=orbit-tray --browse

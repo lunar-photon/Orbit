@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+import os
+import sys
+import glob
+import json
+import time
+import urllib.request
+import urllib.error
+
+PASSWORDLESS = "--passwordless" in sys.argv
+# Exit code for "this module does not handle this login". In the passwordless
+# stacks the module line is [success=done default=ignore], so exit 0 would mean
+# "logged in"; there "not handled" must be non-zero so PAM falls through to the
+# password. In the 2FA stacks the line is `required` after the password check,
+# so 0 just skips the second factor.
+NOT_HANDLED = 1 if PASSWORDLESS else 0
+
+USER = os.environ.get('PAM_USER', '')
+if not USER or USER == 'root':
+    sys.exit(NOT_HANDLED)
+
+try:
+    import pwd
+    pw = pwd.getpwnam(USER)
+except KeyError:
+    sys.exit(NOT_HANDLED)
+if pw.pw_uid < 1000:
+    sys.exit(NOT_HANDLED)
+
+HOME = pw.pw_dir
+CONFIG_PATHS = [
+    os.path.join(HOME, ".config/orbit/config.json"),
+    "/etc/orbit/config.json",
+    os.path.join(HOME, ".config/pc-authenticator/config.json"),
+    "/etc/pc-auth/config.json"
+]
+
+def load_config():
+    for p in CONFIG_PATHS:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {
+        "web_port": 1760,
+        "auth_timeout_seconds": 35,
+        "failmode": "secure",
+        "allowed_usb_serials": []
+    }
+
+def check_usb_presence(allowed_serials):
+    if not allowed_serials:
+        return False
+    
+    for dev_path in glob.glob('/sys/bus/usb/devices/*'):
+        serial_file = os.path.join(dev_path, 'serial')
+        if os.path.exists(serial_file):
+            try:
+                with open(serial_file, 'r', errors='ignore') as f:
+                    s = f.read().strip()
+                if s and s in allowed_serials:
+                    return True
+            except Exception:
+                pass
+    return False
+
+def listener_uid(port):
+    """uid of the process listening on localhost:port, from /proc/net/tcp{,6}."""
+    for table in ('/proc/net/tcp', '/proc/net/tcp6'):
+        try:
+            with open(table) as f:
+                next(f)
+                for line in f:
+                    parts = line.split()
+                    local, state, uid = parts[1], parts[3], parts[7]
+                    if state == '0A' and int(local.rsplit(':', 1)[1], 16) == port:
+                        return int(uid)
+        except (OSError, ValueError, IndexError):
+            continue
+    return None
+
+def get_entered_password():
+    try:
+        if not sys.stdin.isatty():
+            data = sys.stdin.buffer.read()
+            if data:
+                return data.rstrip(b'\x00\r\n').decode('utf-8', errors='ignore')
+    except Exception:
+        pass
+    return ""
+
+def main():
+    cfg = load_config()
+    allowed_serials = cfg.get("allowed_usb_serials", [])
+    port = cfg.get("web_port", 1760)
+    failmode = cfg.get("failmode", "secure")
+
+    # In passwordless mode: if the user typed their password, skip phone check
+    # and immediately let PAM's standard unix password module verify it.
+    if "--passwordless" in sys.argv:
+        entered_pwd = get_entered_password()
+        if entered_pwd:
+            sys.exit(1)
+
+    # 1. Check USB Hardware Presence (Smart Dual Mode)
+    if check_usb_presence(allowed_serials):
+        # USB phone detected! Instant unlock
+        sys.exit(0)
+
+    # 2. Check Wireless Push Approval via Daemon
+    base_url = f"http://127.0.0.1:{port}"
+    daemon_ready = False
+    # Retry up to 10 seconds (20 iterations * 0.5s) to guarantee cold boot readiness
+    for _ in range(20):
+        try:
+            req = urllib.request.Request(f"{base_url}/api/info")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    daemon_ready = True
+                    break
+        except Exception:
+            time.sleep(0.5)
+
+    # Only trust a daemon run by the account being unlocked; anyone else could
+    # bind the port (e.g. at the login screen) and answer "approved".
+    if daemon_ready and listener_uid(port) != pw.pw_uid:
+        daemon_ready = False
+        failmode = "secure"
+
+    if not daemon_ready:
+        # Daemon is not running or unreachable. "safe" falls back to the
+        # password; it must never count as a successful phone approval.
+        if failmode == "safe":
+            sys.exit(NOT_HANDLED)
+        else:
+            sys.exit(1)
+
+    # Request challenge
+    try:
+        req_data = json.dumps({"user": USER}).encode('utf-8')
+        req = urllib.request.Request(
+            f"{base_url}/api/request_auth",
+            data=req_data,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            challenge = json.loads(resp.read().decode('utf-8'))
+            session_id = challenge.get("session_id")
+        
+        if not session_id:
+            if failmode == "safe":
+                sys.exit(NOT_HANDLED)
+            sys.exit(1)
+
+        # Wait for phone approval
+        wait_req = urllib.request.Request(f"{base_url}/api/wait_auth?session_id={session_id}")
+        # Allow extra 5 seconds on top of timeout
+        with urllib.request.urlopen(wait_req, timeout=cfg.get("auth_timeout_seconds", 35) + 5) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            status = result.get("status")
+            if status == "approved":
+                sys.exit(0)
+            else:
+                sys.exit(1)
+
+    except Exception:
+        if failmode == "safe":
+            sys.exit(NOT_HANDLED)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

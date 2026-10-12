@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit: one running terminal session -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="12dp"
+    android:background="@drawable/bg_card"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_icon_tile"
+            android:importantForAccessibility="no"
+            android:padding="8dp"
+            android:src="@drawable/ic_o_terminal"
+            android:tint="@color/o_text_2" />
+
+        <TextView
+            android:id="@+id/tv_term_title"
+            style="@style/Text.Heading"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:text="Terminal" />
+
+        <TextView
+            android:id="@+id/tv_term_badge"
+            style="@style/Text.Badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:fontFamily="@font/geist_mono_regular"
+            android:maxWidth="140dp"
+            android:text="bash (pts/0)"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_term_cwd"
+        style="@style/Text.Mono"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:ellipsize="middle"
+        android:singleLine="true"
+        android:text="/home/user/project" />
+
+    <TextView
+        android:id="@+id/tv_term_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/term_preview_bg"
+        android:ellipsize="end"
+        android:fontFamily="@font/term_mono_regular"
+        android:lineSpacingExtra="3dp"
+        android:maxLines="3"
+        android:paddingStart="12dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="10dp"
+        android:text="terminal output"
+        android:textColor="@color/o_text_2"
+        android:textSize="11sp" />
+
+    <Button
+        android:id="@+id/btn_term_open"
+        style="@style/Btn.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="12dp"
+        android:drawableEnd="@drawable/ic_o_chevron_right"
+        android:text="Open terminal" />
+</LinearLayout>

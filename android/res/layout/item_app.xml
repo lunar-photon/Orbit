@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One running program in the task manager -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/btn_tile"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:minHeight="64dp"
+    android:orientation="horizontal"
+    android:paddingStart="14dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="14dp"
+    android:paddingBottom="10dp">
+
+    <TextView
+        android:id="@+id/tv_app_letter"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/bg_tint_mint"
+        android:fontFamily="@font/geist_semibold"
+        android:gravity="center"
+        android:text="A"
+        android:textColor="@color/o_mint"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="14dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_app_name"
+            style="@style/Text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="@font/geist_medium"
+            android:singleLine="true"
+            android:text="App"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_app_details"
+            style="@style/Text.Caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:singleLine="true"
+            android:text="" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_app_cpu"
+        style="@style/Text.Metric"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:fontFamily="@font/geist_mono_medium"
+        android:text="0%"
+        android:textSize="15sp" />
+</LinearLayout>

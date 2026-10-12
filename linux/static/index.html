@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>PC Authenticator</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#06b6d4">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      background-color: #0b1329;
+      color: #f8fafc;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px;
+    }
+    .header {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(30, 41, 59, 0.7);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .device-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 2s infinite;
+    }
+    .status-dot.disconnected {
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444;
+      animation: none;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.2); }
+    }
+    .hostname {
+      font-weight: 600;
+      font-size: 15px;
+      color: #e2e8f0;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(6, 182, 212, 0.15);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .install-banner {
+      width: 100%;
+      max-width: 440px;
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(59, 130, 246, 0.2));
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-radius: 12px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .install-btn {
+      background: #06b6d4;
+      color: #0b1329;
+      font-weight: 700;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .main-container {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      margin: 24px 0;
+    }
+    .idle-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      animation: fadeIn 0.4s ease;
+    }
+    .shield-icon {
+      width: 100px;
+      height: 100px;
+      margin-bottom: 20px;
+      filter: drop-shadow(0 0 20px rgba(6, 182, 212, 0.4));
+    }
+    .idle-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #f1f5f9;
+    }
+    .idle-desc {
+      font-size: 14px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin-bottom: 24px;
+      max-width: 320px;
+    }
+    .features-card {
+      width: 100%;
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 16px;
+      text-align: left;
+    }
+    .feature-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .feature-item:last-child {
+      margin-bottom: 0;
+    }
+    .feature-icon {
+      font-size: 18px;
+      margin-top: 1px;
+    }
+    .feature-text h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+    .feature-text p {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    /* Auth Challenge View */
+    .auth-view {
+      display: none;
+      width: 100%;
+      flex-direction: column;
+      align-items: center;
+      animation: bounceIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .auth-card {
+      width: 100%;
+      background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+      border: 2px solid #06b6d4;
+      box-shadow: 0 0 35px rgba(6, 182, 212, 0.3);
+      border-radius: 24px;
+      padding: 24px 20px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .auth-badge {
+      display: inline-block;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      color: #f87171;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .auth-title {
+      font-size: 22px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .auth-sub {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 20px;
+    }
+    .auth-details {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      padding: 4px 0;
+    }
+    .detail-label {
+      color: #64748b;
+    }
+    .detail-value {
+      color: #f1f5f9;
+      font-weight: 600;
+      font-family: monospace;
+    }
+    .progress-bar-container {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 100%;
+      background: #06b6d4;
+      border-radius: 3px;
+      transition: width 0.1s linear;
+    }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+    }
+    .btn-approve {
+      width: 100%;
+      padding: 18px;
+      font-size: 17px;
+      font-weight: 800;
+      border-radius: 16px;
+      border: none;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #ffffff;
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.35);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: transform 0.1s active;
+    }
+    .btn-approve:active {
+      transform: scale(0.98);
+    }
+    .btn-deny {
+      width: 100%;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      border-radius: 14px;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      background: rgba(239, 68, 68, 0.1);
+      color: #f87171;
+      cursor: pointer;
+    }
+    .btn-deny:active {
+      background: rgba(239, 68, 68, 0.2);
+    }
+
+    /* Result Toast */
+    .result-view {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+    }
+    .result-icon {
+      font-size: 64px;
+      margin-bottom: 12px;
+    }
+    .result-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 6px;
+    }
+    .result-msg {
+      font-size: 14px;
+      color: #94a3b8;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes bounceIn {
+      from { opacity: 0; transform: scale(0.92); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .footer {
+      font-size: 12px;
+      color: #475569;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <div class="header">
+    <div class="device-info">
+      <div id="statusDot" class="status-dot"></div>
+      <span class="hostname" id="pcHostname">cachyos-x8664</span>
+    </div>
+    <div class="badge">Smart Dual 2FA</div>
+  </div>
+
+  <!-- PWA Install Banner -->
+  <div id="installBanner" class="install-banner">
+    <span style="font-size: 13px; color: #e2e8f0;">📲 Install as Android App</span>
+    <button id="installBtn" class="install-btn">Install</button>
+  </div>
+
+  <!-- Main View Area -->
+  <div class="main-container">
+    
+    <!-- State 1: Idle -->
+    <div id="idleView" class="idle-view">
+      <img src="/icon-192.png" alt="Shield" class="shield-icon">
+      <h2 class="idle-title">Authenticator Ready</h2>
+      <p class="idle-desc">Lock your PC and enter your password. An approval prompt will pop up here instantly.</p>
+      
+      <div class="features-card">
+        <div class="feature-item">
+          <div class="feature-icon">⚡</div>
+          <div class="feature-text">
+            <h4>USB Cable Presence</h4>
+            <p>Plug in your phone via USB for instant automatic unlock without tapping.</p>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">📶</div>
+          <div class="feature-text">
+            <h4>Wireless Prompt</h4>
+            <p>Keep your phone in your pocket or desk to approve login requests over Wi-Fi.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 2: Active Challenge -->
+    <div id="authView" class="auth-view">
+      <div class="auth-card">
+        <div class="auth-badge">⚠️ Login Attempt</div>
+        <h2 class="auth-title">Approve Unlock?</h2>
+        <p class="auth-sub">Someone entered your password on your PC</p>
+
+        <div class="auth-details">
+          <div class="detail-row">
+            <span class="detail-label">Computer:</span>
+            <span class="detail-value" id="authHost">cachyos-x8664</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">User:</span>
+            <span class="detail-value" id="authUser">lunarphoton</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Expires in:</span>
+            <span class="detail-value" id="timerLabel">35s</span>
+          </div>
+        </div>
+
+        <div class="progress-bar-container">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+        <div class="actions">
+          <button id="btnApprove" class="btn-approve">
+            <span>✅</span>
+            <span>Approve & Unlock</span>
+          </button>
+          <button id="btnDeny" class="btn-deny">
+            <span>❌ Deny Request</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 3: Result -->
+    <div id="resultView" class="result-view">
+      <div id="resultIcon" class="result-icon">✅</div>
+      <h2 id="resultTitle" class="result-title">Approved!</h2>
+      <p id="resultMsg" class="result-msg">PC screen unlocked.</p>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    PC Authenticator • CachyOS Linux
+  </div>
+
+  <script>
+    // PWA Service Worker Registration
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(err => console.log(err));
+    }
+
+    // Android Install Prompt Handler
+    let deferredPrompt;
+    const installBanner = document.getElementById('installBanner');
+    const installBtn = document.getElementById('installBtn');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBanner.style.display = 'flex';
+    });
+
+    installBtn.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          installBanner.style.display = 'none';
+        }
+        deferredPrompt = null;
+      }
+    });
+
+    // Sound synth for alert
+    function playAlertChime() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.exponentialRampToValueAtTime(880.00, audioCtx.currentTime + 0.15); // A5
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      } catch (e) {
+        console.log('Audio not allowed yet:', e);
+      }
+    }
+
+    // Vibration helper
+    function vibratePhone() {
+      if (navigator.vibrate) {
+        navigator.vibrate([200, 100, 200, 100, 400]);
+      }
+    }
+
+    // State Elements
+    const idleView = document.getElementById('idleView');
+    const authView = document.getElementById('authView');
+    const resultView = document.getElementById('resultView');
+    const statusDot = document.getElementById('statusDot');
+    const pcHostname = document.getElementById('pcHostname');
+    const authHost = document.getElementById('authHost');
+    const authUser = document.getElementById('authUser');
+    const timerLabel = document.getElementById('timerLabel');
+    const progressBar = document.getElementById('progressBar');
+    const btnApprove = document.getElementById('btnApprove');
+    const btnDeny = document.getElementById('btnDeny');
+    const resultIcon = document.getElementById('resultIcon');
+    const resultTitle = document.getElementById('resultTitle');
+    const resultMsg = document.getElementById('resultMsg');
+
+    let currentSessionId = null;
+    let timerInterval = null;
+
+    function showIdle() {
+      idleView.style.display = 'flex';
+      authView.style.display = 'none';
+      resultView.style.display = 'none';
+      currentSessionId = null;
+      if (timerInterval) clearInterval(timerInterval);
+    }
+
+    function showChallenge(req) {
+      currentSessionId = req.session_id;
+      authHost.innerText = req.hostname || 'cachyos-x8664';
+      authUser.innerText = req.user || 'lunarphoton';
+      idleView.style.display = 'none';
+      authView.style.display = 'flex';
+      resultView.style.display = 'none';
+
+      playAlertChime();
+      vibratePhone();
+
+      const duration = req.duration || 35;
+      const endTime = Date.now() + (duration * 1000);
+
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+        timerLabel.innerText = remaining + 's';
+        const pct = (remaining / duration) * 100;
+        progressBar.style.width = pct + '%';
+        if (remaining <= 0) {
+          clearInterval(timerInterval);
+          showResult(false, 'Request Expired', 'Login attempt timed out.');
+        }
+      }, 100);
+    }
+
+    function showResult(success, title, msg) {
+      if (timerInterval) clearInterval(timerInterval);
+      authView.style.display = 'none';
+      idleView.style.display = 'none';
+      resultView.style.display = 'flex';
+      resultIcon.innerText = success ? '✅' : '❌';
+      resultTitle.innerText = title;
+      resultMsg.innerText = msg;
+
+      setTimeout(() => {
+        showIdle();
+      }, 3500);
+    }
+
+    btnApprove.addEventListener('click', async () => {
+      if (!currentSessionId) return;
+      btnApprove.disabled = true;
+      try {
+        const res = await fetch('/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: currentSessionId })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showResult(true, 'Approved!', 'PC screen unlocked successfully.');
+        } else {
+          showResult(false, 'Failed', 'Approval rejected by server.');
+        }
+      } catch (err) {
+        showResult(false, 'Network Error', 'Could not reach PC.');
+      } finally {
+        btnApprove.disabled = false;
+      }
+    });
+
+    btnDeny.addEventListener('click', async () => {
+      if (!currentSessionId) return;
+      btnDeny.disabled = true;
+      try {
+        await fetch('/api/deny', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: currentSessionId })
+        });
+        showResult(false, 'Denied', 'Login request was rejected.');
+      } catch (err) {
+        showResult(false, 'Network Error', 'Could not reach PC.');
+      } finally {
+        btnDeny.disabled = false;
+      }
+    });
+
+    // Real-Time Event Stream (SSE)
+    let evtSource = null;
+
+    function connectSSE() {
+      evtSource = new EventSource('/api/events');
+      
+      evtSource.onopen = () => {
+        statusDot.classList.remove('disconnected');
+      };
+
+      evtSource.onerror = () => {
+        statusDot.classList.add('disconnected');
+        evtSource.close();
+        setTimeout(connectSSE, 3000);
+      };
+
+      evtSource.addEventListener('auth_request', (e) => {
+        const req = JSON.parse(e.data);
+        showChallenge(req);
+      });
+
+      evtSource.addEventListener('auth_cancelled', () => {
+        showIdle();
+      });
+
+      evtSource.addEventListener('info', (e) => {
+        const info = JSON.parse(e.data);
+        if (info.hostname) {
+          pcHostname.innerText = info.hostname;
+        }
+      });
+    }
+
+    connectSSE();
+  </script>
+</body>
+</html>

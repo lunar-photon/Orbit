@@ -1,0 +1,21 @@
+# Private Configuration & Paired Keys
+linux/config.json
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Android Build Outputs (Keep root Orbit.apk)
+android/build/
+android/dist/
+*.keystore
+
+# Editor & System files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.bak*

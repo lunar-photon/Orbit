@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit: one folder or file in the browser -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="6dp"
+    android:background="@drawable/btn_row"
+    android:gravity="center_vertical"
+    android:minHeight="60dp"
+    android:baselineAligned="false"
+    android:orientation="horizontal"
+    android:paddingStart="10dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:id="@+id/tv_browse_item_icon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/bg_icon_tile"
+        android:drawableTop="@drawable/ic_o_folder"
+        android:drawableTint="@color/o_text_2"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:text=""
+        android:textColor="@color/o_text_2"
+        android:textSize="1sp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="8dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_browse_item_name"
+            style="@style/Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="middle"
+            android:fontFamily="@font/geist_medium"
+            android:maxLines="1"
+            android:text="Folder name"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tv_browse_item_details"
+            style="@style/Text.Caption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Folder" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <Button
+            android:autoSizeTextType="none"
+            android:id="@+id/btn_browse_item_action"
+            style="@style/Btn.Secondary"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:minHeight="40dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="Open"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btn_browse_item_download"
+            style="@style/Btn.Icon"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/btn_tonal"
+            android:contentDescription="Download"
+            android:drawableTop="@drawable/ic_o_download"
+            android:drawableTint="@color/o_text_2"
+            android:paddingTop="10dp"
+            android:text=""
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>

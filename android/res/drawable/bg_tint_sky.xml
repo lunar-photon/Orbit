@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icon tile tinted with the sky feature colour -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle"><solid android:color="@color/o_sky_tint"/><corners android:radius="12dp"/></shape>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Spacing scale -->
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_sm">8dp</dimen>
+    <dimen name="space_md">12dp</dimen>
+    <dimen name="space_lg">16dp</dimen>
+    <dimen name="space_xl">24dp</dimen>
+
+    <!-- Radii -->
+    <dimen name="radius_sm">8dp</dimen>
+    <dimen name="radius_md">12dp</dimen>
+    <dimen name="radius_lg">16dp</dimen>
+
+    <!-- Controls -->
+    <dimen name="touch_target">44dp</dimen>
+    <dimen name="button_height">44dp</dimen>
+    <dimen name="button_height_lg">52dp</dimen>
+    <dimen name="keycap_height">36dp</dimen>
+
+    <!-- Type scale -->
+    <dimen name="text_display">22sp</dimen>
+    <dimen name="text_title">18sp</dimen>
+    <dimen name="text_heading">16sp</dimen>
+    <dimen name="text_body">14sp</dimen>
+    <dimen name="text_label">13sp</dimen>
+    <dimen name="text_caption">12sp</dimen>
+    <dimen name="text_overline">11sp</dimen>
+    <dimen name="text_terminal">12.5sp</dimen>
+</resources>

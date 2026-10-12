@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Orbit design tokens -->
+    <color name="o_ground">#0D0F12</color>
+    <color name="o_surface">#15181D</color>
+    <color name="o_raised">#1D2128</color>
+    <color name="o_pressed">#242932</color>
+    <color name="o_hairline">#262B33</color>
+    <color name="o_stroke">#2E343E</color>
+    <color name="o_screen">#090B0E</color>
+
+    <color name="o_text">#ECEEF1</color>
+    <color name="o_text_2">#A6AEBB</color>
+    <color name="o_text_3">#7D8593</color>
+    <color name="o_on_accent">#0D0F12</color>
+
+    <color name="o_accent">#8EA8FF</color>
+    <color name="o_accent_pressed">#7A93EA</color>
+    <color name="o_accent_tint">#1F2740</color>
+    <color name="o_online">#46D39A</color>
+    <color name="o_remote">#F2C14E</color>
+    <color name="o_danger">#FF7A7A</color>
+    <color name="o_danger_tint">#2E1A1C</color>
+
+    <!-- Feature tints: one per area, used on icons and tinted tiles -->
+    <color name="o_sky">#7DD3FC</color>
+    <color name="o_violet">#C4B5FD</color>
+    <color name="o_amber">#FDBA74</color>
+    <color name="o_pink">#F9A8D4</color>
+    <color name="o_mint">#86EFAC</color>
+    <color name="o_coral">#FCA5A5</color>
+    <color name="o_sky_tint">#1A7DD3FC</color>
+    <color name="o_violet_tint">#1AC4B5FD</color>
+    <color name="o_amber_tint">#1AFDBA74</color>
+    <color name="o_pink_tint">#1AF9A8D4</color>
+    <color name="o_mint_tint">#1A86EFAC</color>
+    <color name="o_coral_tint">#1AFCA5A5</color>
+    <color name="o_accent_tint_soft">#1A8EA8FF</color>
+
+    <color name="o_ripple">#1FFFFFFF</color>
+    <color name="o_ripple_dark">#260D0F12</color>
+
+    <!-- Legacy names still referenced by older code/layouts, mapped onto Orbit -->
+    <color name="bg_dark">@color/o_ground</color>
+    <color name="bg_surface">@color/o_ground</color>
+    <color name="card_bg">@color/o_surface</color>
+    <color name="card_bg_dark">@color/o_surface</color>
+    <color name="card_elevated">@color/o_raised</color>
+    <color name="card_pressed">@color/o_pressed</color>
+    <color name="card_border">@color/o_hairline</color>
+    <color name="card_border_strong">@color/o_stroke</color>
+    <color name="accent_cyan">@color/o_accent</color>
+    <color name="accent_cyan_deep">@color/o_accent_pressed</color>
+    <color name="accent_cyan_tint">@color/o_accent_tint</color>
+    <color name="accent_cyan_line">@color/o_stroke</color>
+    <color name="accent_violet">@color/o_accent</color>
+    <color name="accent_violet_deep">@color/o_accent_pressed</color>
+    <color name="accent_violet_tint">@color/o_accent_tint</color>
+    <color name="accent_violet_line">@color/o_stroke</color>
+    <color name="text_white">@color/o_text</color>
+    <color name="text_secondary">@color/o_text_2</color>
+    <color name="text_muted">@color/o_text_3</color>
+    <color name="text_faint">@color/o_text_3</color>
+    <color name="status_green">@color/o_online</color>
+    <color name="status_green_tint">@color/o_raised</color>
+    <color name="status_green_line">@color/o_stroke</color>
+    <color name="status_red">@color/o_danger</color>
+    <color name="status_red_tint">@color/o_danger_tint</color>
+    <color name="status_yellow">@color/o_remote</color>
+    <color name="btn_approve">@color/o_accent</color>
+    <color name="btn_approve_end">@color/o_accent</color>
+    <color name="btn_deny">@color/o_danger</color>
+    <color name="btn_deny_end">@color/o_danger</color>
+    <color name="ripple_light">@color/o_ripple</color>
+    <color name="ripple_accent">@color/o_ripple</color>
+    <color name="term_bg">@color/o_screen</color>
+    <color name="term_border">@color/o_raised</color>
+    <color name="term_fg">@color/o_text</color>
+    <color name="term_header">@color/o_ground</color>
+
+    <color name="ic_launcher_background">#15181D</color>
+</resources>

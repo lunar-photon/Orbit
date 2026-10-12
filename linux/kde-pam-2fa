@@ -1,0 +1,8 @@
+#%PAM-1.0
+# Orbit - Strict 2FA (Password + Mobile Biometric Approval)
+# Requires entering your password, followed by fingerprint approval on your phone.
+auth       include                     system-local-login
+auth       required                    pam_exec.so quiet /usr/local/bin/orbit-auth-check
+account    include                     system-local-login
+password   include                     system-local-login
+session    include                     system-local-login

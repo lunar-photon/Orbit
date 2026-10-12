@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+from urllib.parse import quote, unquote, urlparse
+import subprocess
+import time
+
+
+# The daemon only trusts local tools that present this user's key (a 0600 file it
+# rewrites on each start). Attach it to requests for the local daemon, never others.
+def local_token():
+    for path in ('~/.config/orbit/local_token', '~/.config/pc-authenticator/local_token'):
+        try:
+            with open(os.path.expanduser(path)) as f:
+                return f.read().strip()
+        except OSError:
+            continue
+    return ''
+
+class _LocalTokenHandler(urllib.request.BaseHandler):
+    def http_request(self, req):
+        if req.host.split(':')[0] in ('127.0.0.1', 'localhost'):
+            req.add_header('X-Local-Token', local_token())
+        return req
+
+urllib.request.install_opener(urllib.request.build_opener(_LocalTokenHandler))
+
+DAEMON_URL = "http://127.0.0.1:1760"
+
+def notify(title, msg, icon="smartphone", urgency="normal"):
+    try:
+        subprocess.Popen(['notify-send', '-i', icon, '-a', 'Orbit', '-u', urgency, title, msg], stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def get_phone_status():
+    try:
+        req = urllib.request.Request(f"{DAEMON_URL}/api/phone/status")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+def choose_device_gui(devices):
+    if not devices:
+        return None
+    if len(devices) == 1:
+        return devices[0]
+
+    # Multiple devices: prompt user with native kdialog
+    try:
+        args = ["kdialog", "--title", "Orbit", "--radiolist", "Send to which phone?"]
+        for idx, dev in enumerate(devices):
+            tag = str(idx)
+            name = f"{dev.get('client_name', 'Android Phone')} ({dev.get('ip', 'Unknown IP')})"
+            status = "on" if idx == 0 else "off"
+            args.extend([tag, name, status])
+        res = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        if res.returncode == 0 and res.stdout.strip():
+            sel_idx = int(res.stdout.strip())
+            return devices[sel_idx]
+        return None
+    except Exception:
+        return devices[0]
+
+def get_device_token(client_id=None, ip=None):
+    try:
+        cfg_file = os.path.expanduser('~/.config/orbit/config.json')
+        if not os.path.exists(cfg_file):
+            cfg_file = os.path.expanduser('~/.config/pc-authenticator/config.json')
+        if os.path.exists(cfg_file):
+            with open(cfg_file, 'r') as f:
+                cfg = json.load(f)
+            paired = cfg.get('paired_clients', {})
+            for token, client in paired.items():
+                if client_id and client.get('client_id') == client_id:
+                    return token
+                if ip and client.get('ip') == ip:
+                    return token
+            if paired:
+                return next(iter(paired.keys()))
+    except Exception:
+        pass
+    return None
+
+def check_stage_status(token):
+    try:
+        req = urllib.request.Request(f"{DAEMON_URL}/api/files/stage/status?token={quote(token)}")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+def send_file(filepath, phone_ip, phone_port=1761, auth_token=None):
+    fn = os.path.basename(filepath)
+    size = os.path.getsize(filepath)
+
+    # 1. Try direct HTTP upload to phone file server if IP is known
+    if phone_ip:
+        try:
+            url = f"http://{phone_ip}:{phone_port}/api/files/upload?path={quote('/storage/emulated/0/Download')}"
+            with open(filepath, 'rb') as f:
+                data = f.read()
+            headers = {
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': str(size),
+                'X-Filename': quote(fn)
+            }
+            if auth_token:
+                headers['Authorization'] = f'Bearer {auth_token}'
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers=headers,
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status == 200:
+                    return "sent"
+        except Exception:
+            pass
+
+    # 2. Try the local daemon upload proxy (computer -> daemon -> phone)
+    try:
+        url = f"{DAEMON_URL}/api/phone/files/upload?path={quote('/storage/emulated/0/Download')}"
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': str(size),
+                'X-Filename': quote(fn)
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status == 200:
+                return "sent"
+    except Exception:
+        pass
+
+    # 3. Fallback to staging download URL pushed via NDJSON
+    try:
+        res = stage_file_fallback(filepath)
+        if res.get('status') == 'ok':
+            token = res.get('token')
+            phone_connected = res.get('phone_connected', False)
+            if not phone_connected or not token:
+                return "queued"
+
+            # Phone has an active listener. Poll status for up to 10s to verify receipt
+            for _ in range(20):
+                time.sleep(0.5)
+                status_res = check_stage_status(token)
+                if status_res and status_res.get('downloaded'):
+                    return "sent"
+                if status_res and not status_res.get('phone_connected', True):
+                    return "queued"
+            return "queued"
+    except Exception:
+        pass
+
+    return "failed"
+
+def stage_file_fallback(filepath):
+    req_data = json.dumps({"filepath": os.path.abspath(filepath)}).encode('utf-8')
+    req = urllib.request.Request(
+        f"{DAEMON_URL}/api/files/stage",
+        data=req_data,
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode('utf-8'))
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: orbit-send [--device <name_or_id>] <file> [file...]")
+        sys.exit(1)
+
+    specified_device = None
+    args = sys.argv[1:]
+    if '--device' in args:
+        dev_idx = args.index('--device')
+        if dev_idx + 1 < len(args):
+            specified_device = args[dev_idx + 1]
+            args = args[:dev_idx] + args[dev_idx + 2:]
+
+    files = []
+    for arg in args:
+        p = arg.strip()
+        if p.startswith('file://'):
+            p = unquote(urlparse(p).path)
+        p = os.path.realpath(os.path.expanduser(p))
+        if os.path.exists(p):
+            files.append(p)
+
+    if not files:
+        notify("Orbit", "No files to send", icon="dialog-warning")
+        sys.exit(1)
+
+    st = get_phone_status()
+    if not st:
+        notify("Orbit", "The Orbit service is not running on this computer.", icon="dialog-error", urgency="critical")
+        sys.exit(1)
+
+    devices = st.get('devices', [])
+    target_device = None
+
+    if specified_device:
+        for d in devices:
+            if specified_device in (d.get('client_id'), d.get('token'), d.get('client_name'), d.get('ip')):
+                target_device = d
+                break
+
+    # If only 1 device is paired, it just sends without any prompt
+    if not target_device:
+        if len(devices) > 1:
+            target_device = choose_device_gui(devices)
+            if not target_device:
+                # User canceled device selection
+                sys.exit(0)
+        elif len(devices) == 1:
+            target_device = devices[0]
+
+    phone = st.get('phone', {})
+    phone_ip = target_device.get('ip') if target_device else phone.get('ip')
+    phone_port = phone.get('port') or 1761
+    phone_name = target_device.get('client_name') if target_device else phone.get('client_name', 'Android Phone')
+    target_cid = target_device.get('client_id') if target_device else None
+    auth_token = get_device_token(target_cid, phone_ip)
+
+    total = len(files)
+    sent_count = 0
+    queued_count = 0
+    failed_count = 0
+
+    for idx, f in enumerate(files, 1):
+        fn = os.path.basename(f)
+        notify("Orbit", f"Sending {fn} to {phone_name} ({idx}/{total})", icon="network-transmit")
+        status = send_file(f, phone_ip, phone_port, auth_token)
+        if status == "sent":
+            sent_count += 1
+        elif status == "queued":
+            queued_count += 1
+        else:
+            failed_count += 1
+
+    if sent_count == total:
+        if total == 1:
+            notify("Sent", f"Sent {os.path.basename(files[0])} to {phone_name}", icon="document-save")
+        else:
+            notify("Sent", f"Sent {total} files to {phone_name}", icon="document-save")
+    elif queued_count > 0 and failed_count == 0 and sent_count == 0:
+        if total == 1:
+            notify("Queued", f"{os.path.basename(files[0])} will go to {phone_name} when it connects.", icon="document-save")
+        else:
+            notify("Queued", f"{total} files will go to {phone_name} when it connects.", icon="document-save")
+    elif queued_count > 0:
+        notify("Partly sent", f"{sent_count} sent, {queued_count} queued for {phone_name}, {failed_count} failed", icon="dialog-information")
+    else:
+        notify("Send failed", f"Could not send {failed_count}/{total} files to {phone_name}", icon="dialog-warning")
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit: browse the laptop's storage -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@null"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <TextView
+            style="@style/Text.Title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Browse computer" />
+
+        <TextView
+            android:id="@+id/tv_browser_storage"
+            style="@style/Text.Badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="Loading…" />
+    </LinearLayout>
+
+    <!-- Path bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="16dp"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_browse_home"
+            style="@style/Btn.Icon"
+            android:background="@drawable/btn_tonal"
+            android:contentDescription="Drives and shortcuts"
+            android:drawableTop="@drawable/ic_o_home"
+            android:drawableTint="@color/o_text_2"
+            android:paddingTop="10dp"
+            android:text="" />
+
+        <Button
+            android:id="@+id/btn_browse_up"
+            style="@style/Btn.Icon"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_tonal"
+            android:contentDescription="Up one folder"
+            android:drawableTop="@drawable/ic_o_arrow_up"
+            android:drawableTint="@color/o_text_2"
+            android:paddingTop="10dp"
+            android:text="" />
+
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_input"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+
+            <TextView
+                android:id="@+id/tv_browse_path"
+                style="@style/Text.Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:singleLine="true"
+                android:text="~"
+                android:textColor="@color/o_text" />
+        </HorizontalScrollView>
+
+        <Button
+            android:id="@+id/btn_browse_hidden"
+            style="@style/Btn.Icon"
+            android:background="@drawable/btn_tonal"
+            android:contentDescription="Show hidden files"
+            android:drawableTop="@drawable/ic_o_eye"
+            android:drawableTint="@color/o_text_2"
+            android:paddingTop="10dp"
+            android:text="" />
+
+        <Button
+            android:id="@+id/btn_browse_refresh"
+            style="@style/Btn.Icon"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_tonal"
+            android:contentDescription="Refresh"
+            android:drawableTop="@drawable/ic_o_refresh"
+            android:drawableTint="@color/o_text_2"
+            android:paddingTop="10dp"
+            android:text="" />
+    </LinearLayout>
+
+    <!-- Shortcuts -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="10dp"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_drives"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="6dp"
+                android:drawableStart="@drawable/ic_o_laptop"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Drives"
+                android:textSize="13sp" />
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_downloads"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="6dp"
+                android:drawableStart="@drawable/ic_o_download"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Downloads"
+                android:textSize="13sp" />
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_documents"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="6dp"
+                android:drawableStart="@drawable/ic_o_file"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Documents"
+                android:textSize="13sp" />
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_pictures"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="6dp"
+                android:drawableStart="@drawable/ic_o_camera"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Pictures"
+                android:textSize="13sp" />
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_videos"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="6dp"
+                android:drawableStart="@drawable/ic_o_video"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Videos"
+                android:textSize="13sp" />
+
+            <Button
+                android:autoSizeTextType="none"
+                android:id="@+id/btn_shortcut_desktop"
+                style="@style/Btn.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="0dp"
+                android:drawableStart="@drawable/ic_o_monitor"
+                android:drawablePadding="6dp"
+                android:drawableTint="@color/o_text_2"
+                android:minHeight="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="Desktop"
+                android:textSize="13sp" />
+
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- Items -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="12dp">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/container_browse_items"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+
+        <ProgressBar
+            android:id="@+id/pb_browse_loading"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:indeterminateTint="@color/o_accent"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tv_browse_empty"
+            style="@style/Text.Secondary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:drawableTop="@drawable/ic_o_folder"
+            android:drawablePadding="10dp"
+            android:drawableTint="@color/o_text_3"
+            android:gravity="center"
+            android:text="This folder is empty"
+            android:visibility="gone" />
+    </FrameLayout>
+</LinearLayout>

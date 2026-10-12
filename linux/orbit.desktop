@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Orbit
+GenericName=Phone Files
+Comment=Browse and send files between your phone and this computer
+Exec=@BINDIR@/orbit browse
+Icon=@ICON@
+Terminal=false
+Categories=Utility;Network;FileTransfer;
+Keywords=orbit;kdeconnect;phone;transfer;browse;share;

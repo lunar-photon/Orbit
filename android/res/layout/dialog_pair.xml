@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit: enter the 6-digit pairing PIN shown on the laptop -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@null"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_icon_tile"
+            android:importantForAccessibility="no"
+            android:padding="9dp"
+            android:src="@drawable/ic_o_lock"
+            android:tint="@color/o_accent" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/Text.Title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pair securely" />
+
+            <TextView
+                android:id="@+id/tv_pair_target"
+                style="@style/Text.Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="computer"
+                android:textColor="@color/o_text_2" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        style="@style/Text.Secondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:lineSpacingExtra="3dp"
+        android:text="A 6-digit PIN is showing on your computer. Enter it to authorise this phone." />
+
+    <EditText
+        android:id="@+id/et_pair_pin"
+        style="@style/Input"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginTop="20dp"
+        android:fontFamily="@font/geist_mono_medium"
+        android:gravity="center"
+        android:hint="000000"
+        android:inputType="number"
+        android:letterSpacing="0.3"
+        android:maxLength="6"
+        android:singleLine="true"
+        android:textColor="@color/o_text"
+        android:textSize="28sp" />
+
+    <TextView
+        android:id="@+id/tv_pair_status"
+        style="@style/Text.Caption"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:text="Waiting for PIN" />
+
+    <Button
+        android:autoSizeTextType="none"
+        android:id="@+id/btn_pair_resend"
+        style="@style/Btn.Ghost"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:drawableStart="@drawable/ic_o_refresh"
+        android:text="Send a new PIN"
+        android:textSize="14sp" />
+
+</LinearLayout>

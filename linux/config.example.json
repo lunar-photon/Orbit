@@ -1,0 +1,7 @@
+{
+  "web_port": 1760,
+  "auth_timeout_seconds": 35,
+  "failmode": "secure",
+  "allowed_usb_serials": [],
+  "paired_clients": {}
+}

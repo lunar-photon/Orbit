@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+import sys
+import os
+import json
+import urllib.request
+import urllib.error
+import subprocess
+
+
+# The daemon only trusts local tools that present this user's key (a 0600 file it
+# rewrites on each start). Attach it to requests for the local daemon, never others.
+def local_token():
+    for path in ('~/.config/orbit/local_token', '~/.config/pc-authenticator/local_token'):
+        try:
+            with open(os.path.expanduser(path)) as f:
+                return f.read().strip()
+        except OSError:
+            continue
+    return ''
+
+class _LocalTokenHandler(urllib.request.BaseHandler):
+    def http_request(self, req):
+        if req.host.split(':')[0] in ('127.0.0.1', 'localhost'):
+            req.add_header('X-Local-Token', local_token())
+        return req
+
+urllib.request.install_opener(urllib.request.build_opener(_LocalTokenHandler))
+
+DAEMON_URL = "http://127.0.0.1:1760"
+
+def get_json(endpoint):
+    try:
+        req = urllib.request.Request(f"{DAEMON_URL}{endpoint}")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return {"error": str(e)}
+
+def post_json(endpoint, data=None):
+    try:
+        req_data = json.dumps(data or {}).encode('utf-8')
+        req = urllib.request.Request(f"{DAEMON_URL}{endpoint}", data=req_data, headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return {"error": str(e)}
+
+def print_help():
+    print("""Orbit - phone and computer, connected
+
+Usage:
+  orbit status                  Show phone connection and battery
+  orbit browse [--web]          Open the phone file browser
+  orbit send <file> [file...]   Send files to the phone
+  orbit ring [stop]             Ring the phone (find my phone)
+  orbit unring                  Silence a ringing phone
+  orbit ping                    Play a chime on this computer
+  orbit clip [text]             Push the clipboard (or some text) to the phone
+  orbit media [command]         Media control: play, pause, toggle, next, prev, volup, voldown
+  orbit lock                    Lock this computer
+  orbit pair                    Show a pairing PIN for a new phone
+  orbit usb                     Enroll a USB cable unlock token
+  orbit tray                    Start the tray app
+""")
+
+def cmd_status():
+    st = get_json("/api/phone/status")
+    if "error" in st:
+        print(f"Orbit service is not reachable: {st['error']}")
+        print("Check it with: systemctl --user status orbit.service")
+        return
+    phone = st.get("phone", {})
+    connected = st.get("connected", False)
+    conn_str = "Connected" if connected else "Offline"
+    print("==================================================")
+    print("  Orbit")
+    print("==================================================")
+    print(f"  Phone Name:  {phone.get('client_name', 'Unknown')}")
+    print(f"  Status:      {conn_str}")
+    print(f"  IP Address:  {phone.get('ip', 'Not detected')}")
+    if phone.get('battery_level') is not None:
+        charging = " (charging)" if phone.get('is_charging') else ""
+        print(f"  Battery:     {phone.get('battery_level')}%{charging}")
+    print(f"  Paired:      {st.get('clients_count', 0)} phone(s)")
+    print("==================================================")
+
+def tray_script():
+    for name in ("orbit-tray", "pc-connect-tray.py"):
+        path = os.path.expanduser(f"~/.local/bin/{name}")
+        if os.path.exists(path):
+            return path
+    return None
+
+def cmd_browse(args):
+    gui_script = tray_script()
+    if "--web" in args or not gui_script:
+        url = f"{DAEMON_URL}/browse?ltok={local_token()}"
+        print(f"Opening the phone browser in your web browser: {DAEMON_URL}/browse")
+        subprocess.Popen(["xdg-open", url])
+    else:
+        subprocess.Popen(["python3", gui_script, "--browse"])
+
+def cmd_ring(args=None):
+    if args and args[0] in ('stop', 'off', 'cancel'):
+        cmd_unring()
+        return
+    res = post_json("/api/ring")
+    print("Ringing the phone.")
+    print("Run 'orbit unring' to stop it from here, or tap Dismiss on the phone.")
+
+def cmd_unring():
+    res = post_json("/api/unring")
+    print("Told the phone to stop ringing.")
+
+def cmd_ping():
+    res = post_json("/api/ping")
+    print("Played a chime on this computer.")
+
+def cmd_clip(args):
+    if args:
+        text = " ".join(args)
+        res = post_json("/api/clipboard", {"text": text})
+        print("Sent the text to the phone clipboard.")
+    else:
+        # Push the computer's current clipboard to the phone
+        st = get_json("/api/clipboard")
+        text = st.get("text", "")
+        if text:
+            post_json("/api/clipboard", {"text": text})
+            print(f"Sent the clipboard ({len(text)} chars) to the phone.")
+        else:
+            print("The clipboard on this computer is empty.")
+
+def cmd_media(args):
+    if not args:
+        st = get_json("/api/media/status")
+        if not st.get("has_player"):
+            print("No media player is active.")
+            return
+        status = "Playing" if st.get("status") == "Playing" else "Paused"
+        print(f"{status}: {st.get('title')} - {st.get('artist')}")
+        return
+
+    sub = args[0].lower()
+    mapping = {
+        "play": "Play",
+        "pause": "Pause",
+        "toggle": "PlayPause",
+        "playpause": "PlayPause",
+        "next": "Next",
+        "prev": "Previous",
+        "previous": "Previous",
+        "stop": "Stop",
+        "volup": "VolumeUp",
+        "voldown": "VolumeDown"
+    }
+    cmd = mapping.get(sub, "PlayPause")
+    res = post_json("/api/media/command", {"command": cmd})
+    print(f"Media: {cmd}")
+
+def cmd_lock():
+    post_json("/api/action", {"action": "lock"})
+    print("Locked this computer.")
+
+def cmd_tray():
+    gui_script = tray_script()
+    if gui_script:
+        subprocess.Popen(["python3", gui_script])
+    else:
+        print("orbit-tray is not installed. Run linux/install.sh.")
+
+def cmd_usb():
+    script = os.path.expanduser("~/.local/share/orbit/enroll-usb.py")
+    if os.path.exists(script):
+        sys.exit(subprocess.run(["python3", script]).returncode)
+    print("enroll-usb.py is not installed. Run linux/install.sh.")
+
+def main():
+    if len(sys.argv) < 2:
+        print_help()
+        sys.exit(0)
+
+    cmd = sys.argv[1].lower()
+    args = sys.argv[2:]
+
+    if cmd in ("status", "-s", "--status"):
+        cmd_status()
+    elif cmd in ("browse", "files", "explorer"):
+        cmd_browse(args)
+    elif cmd in ("send", "upload", "share"):
+        send_bin = os.path.expanduser("~/.local/bin/orbit-send")
+        if not os.path.exists(send_bin):
+            send_bin = os.path.expanduser("~/.local/bin/pc-connect-send")
+        if os.path.exists(send_bin):
+            sys.exit(subprocess.run([send_bin] + args).returncode)
+        else:
+            print("orbit-send is not installed. Run linux/install.sh.")
+    elif cmd in ("ring", "find"):
+        cmd_ring(args)
+    elif cmd in ("unring", "silence", "stop-ring"):
+        cmd_unring()
+    elif cmd in ("ping",):
+        cmd_ping()
+    elif cmd in ("clip", "clipboard", "copy"):
+        cmd_clip(args)
+    elif cmd in ("media", "player", "music"):
+        cmd_media(args)
+    elif cmd in ("lock",):
+        cmd_lock()
+    elif cmd in ("pair",):
+        post_json("/api/pair/request", {"client_name": "Terminal CLI"})
+        print("Pairing PIN requested. It appears as a notification on this computer.")
+    elif cmd in ("tray",):
+        cmd_tray()
+    elif cmd in ("usb", "enroll-usb"):
+        cmd_usb()
+    elif cmd in ("help", "-h", "--help"):
+        print_help()
+    else:
+        print(f"Unknown command: {cmd}")
+        print_help()
+
+if __name__ == '__main__':
+    main()

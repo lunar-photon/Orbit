@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit: add a laptop by address -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@null"
+    android:padding="24dp">
+
+    <TextView
+        style="@style/Text.Title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Add a computer" />
+
+    <TextView
+        style="@style/Text.Secondary"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:lineSpacingExtra="3dp"
+        android:text="Enter the address of a computer running Orbit." />
+
+    <TextView
+        style="@style/Text.Overline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="IP address" />
+
+    <EditText
+        android:id="@+id/et_dialog_ip"
+        style="@style/Input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:fontFamily="@font/geist_mono_regular"
+        android:hint="192.168.1.20"
+        android:inputType="text"
+        android:singleLine="true" />
+
+    <TextView
+        style="@style/Text.Overline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="Port" />
+
+    <EditText
+        android:id="@+id/et_dialog_port"
+        style="@style/Input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:fontFamily="@font/geist_mono_regular"
+        android:hint="1760"
+        android:inputType="number"
+        android:singleLine="true"
+        android:text="1760" />
+
+    <TextView
+        android:id="@+id/tv_dialog_error"
+        style="@style/Text.Caption"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:drawableStart="@drawable/ic_o_x"
+        android:drawablePadding="6dp"
+        android:drawableTint="@color/o_danger"
+        android:gravity="center_vertical"
+        android:text=""
+        android:textColor="@color/o_danger"
+        android:visibility="gone" />
+
+</LinearLayout>

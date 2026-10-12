@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="shield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+    <linearGradient id="lock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)" />
+
+  <!-- Outer Shield Outline -->
+  <path d="M256 64 L384 120 C384 260 256 360 256 440 C256 360 128 260 128 120 Z" 
+        fill="none" stroke="url(#shield)" stroke-width="14" stroke-linejoin="round" opacity="0.4" />
+
+  <!-- Inner Shield -->
+  <path d="M256 90 L360 136 C360 250 256 335 256 405 C256 335 152 250 152 136 Z" 
+        fill="url(#shield)" opacity="0.15" filter="url(#glow)" />
+
+  <!-- Padlock Shackle -->
+  <path d="M210 230 V195 C210 168 231 146 256 146 C281 146 302 168 302 195 V230" 
+        fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="round" />
+
+  <!-- Padlock Body -->
+  <rect x="186" y="226" width="140" height="110" rx="24" fill="url(#lock)" filter="url(#glow)" />
+
+  <!-- Keyhole -->
+  <circle cx="256" cy="270" r="12" fill="#0f172a" />
+  <polygon points="250,274 262,274 266,298 246,298" fill="#0f172a" />
+  
+  <!-- Pulse Accent Rings -->
+  <circle cx="256" cy="256" r="210" fill="none" stroke="#06b6d4" stroke-width="3" stroke-dasharray="8 12" opacity="0.3" />
+</svg>
