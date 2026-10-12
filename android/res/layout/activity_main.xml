@@ -398,13 +398,15 @@
                                 android:text="Checking…" />
                         </LinearLayout>
 
+                        <!-- no autosize: it can't size a wrap_content button, and cut "Log out" to "Log…" -->
                         <Button
                             android:id="@+id/btn_captive_portal_toggle"
                             style="@style/Btn.Secondary"
                             android:layout_width="wrap_content"
                             android:layout_height="36dp"
                             android:layout_marginStart="8dp"
-                            android:minWidth="0dp"
+                            android:autoSizeTextType="none"
+                            android:minWidth="88dp"
                             android:paddingStart="14dp"
                             android:paddingEnd="14dp"
                             android:text="Log in"

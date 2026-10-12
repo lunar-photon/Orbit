@@ -79,6 +79,7 @@
 
         <Button
             android:id="@+id/btn_campus_detect"
+            android:autoSizeTextType="none"
             style="@style/Btn.Secondary"
             android:layout_width="wrap_content"
             android:layout_height="48dp"

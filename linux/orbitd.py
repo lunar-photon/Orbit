@@ -1319,9 +1319,12 @@ def _sgr_for(attrs):
 
 def _render_row(line, width):
     """One pyte line -> (plain text, text with ANSI colours), trailing blanks dropped.
-    One pass over the cells that were actually written."""
+    One pass over the cells that were actually written. Blanks that only carry a background
+    colour are dropped too, all but one: apps pad highlighted lines (Claude Code's own
+    messages) out to the computer's full width, and on the narrower phone that padding
+    wraps into empty coloured rows."""
     cols = min(max(line.keys(), default=-1) + 1, width)
-    out, plain, current, last_text, last_plain = [], [], None, 0, 0
+    out, plain, current, last_text, last_plain, pad_end = [], [], None, 0, 0, 0
     for x in range(cols):
         ch = line[x]
         data = ch.data
@@ -1335,9 +1338,11 @@ def _render_row(line, width):
         plain.append(data)
         if data != ' ':
             last_plain = len(plain)
-        if data != ' ' or attrs[1] != 'default' or ch.reverse:
-            last_text = len(out)
-    text = ''.join(out[:last_text])
+        if data != ' ' or ch.reverse:          # a reverse-video blank is a cursor: keep it
+            last_text = pad_end = len(out)
+        elif attrs[1] != 'default' and pad_end == last_text:
+            pad_end = len(out)                  # the one coloured blank kept after the text
+    text = ''.join(out[:max(last_text, pad_end)])
     return ''.join(plain[:last_plain]), (text + '\x1b[0m' if '\x1b[' in text else text)
 
 
