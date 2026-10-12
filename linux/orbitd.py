@@ -1462,6 +1462,27 @@ def _merge_frames(old, new):
     return old + list(new), n_old              # nothing in common: genuinely new screen
 
 
+# The key hints a menu or picker shows at its bottom (Claude Code's resume list, a dialog):
+# a screen that goes away. Capitalised: in the conversation itself, Claude Code's status lines
+# say "esc to cancel" in lower case, and those must stay
+_MENU_HINT = re.compile(r'(^|·)\s*Esc to (cancel|go back|close|exit)\b')
+# Claude Code's "Resume session" over "Resuming conversation…", which has no hint
+_MENU_TITLE = re.compile(r'^\s*Resume session\s*$')
+
+def _replaced_screen(old_screen, new):
+    """Did the app swap its screen for another instead of scrolling it? Called when nothing
+    lined up. Yes when the top stayed and only the layout below changed (a list appearing
+    under the same banner), or when the old screen was a menu that has now closed: then it
+    goes, as on the computer, instead of staying in the history above what replaced it."""
+    def top(rows):
+        return [plain for plain, _ in rows if plain.strip()][:3]
+    if len(top(old_screen)) == 3 and top(old_screen) == top(new):
+        return True
+    shown = [plain for plain, _ in old_screen if plain.strip()]
+    return (any(_MENU_HINT.search(plain) for plain in shown[-3:])
+            or any(_MENU_TITLE.match(plain) for plain in shown[:8]))
+
+
 def _collapse_blank(items):
     """(plain, ansi) lines with each run of blank lines cut down to one."""
     out, blank = [], True          # True also drops blank lines at the very top
@@ -1664,6 +1685,10 @@ class TermRecording:
                     and self.alt_frames[-len(prev):] == prev and _same_layout(prev, body)):
                 # nothing lined up, but it's the same screen with new values: update in place
                 pos = len(self.alt_frames) - len(prev)
+                merged = self.alt_frames[:pos] + body
+            elif (self.alt_frames and pos == len(self.alt_frames)
+                    and _replaced_screen(self.alt_frames[self.alt_pos:], body)):
+                pos = self.alt_pos
                 merged = self.alt_frames[:pos] + body
             cut = max(0, len(merged) - ALT_HISTORY_MAX)
             self.alt_frames = merged[cut:]
