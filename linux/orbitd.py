@@ -1036,6 +1036,7 @@ def send_mpris_command(command):
 
 _last_pc_clipboard = ""
 _last_phone_clipboard = ""
+_last_phone_clipboard_at = 0.0
 _clipboard_lock = threading.Lock()
 
 def get_kde_clipboard():
@@ -2663,10 +2664,15 @@ def start_clipboard_monitor(auth_mgr):
                 curr = get_kde_clipboard()
                 if curr:
                     with _clipboard_lock:
-                        if curr != _last_pc_clipboard and curr != _last_phone_clipboard:
-                            # Only noted: the phone gets the computer's clipboard when you send
-                            # it ("Send clipboard to phone"), not every time something is copied
+                        if curr != _last_pc_clipboard:
                             _last_pc_clipboard = curr
+                            # Something new was copied on the computer: sync it to the phone.
+                            # Not what the phone itself just sent (it can come back with a
+                            # trailing newline), so the phone's own text never bounces back.
+                            from_phone = (curr.strip() == _last_phone_clipboard.strip()
+                                          or time.time() - _last_phone_clipboard_at < 3)
+                            if not from_phone:
+                                auth_mgr.broadcast_ndjson(json.dumps({"event": "clipboard", "text": curr}) + "\n")
             except Exception:
                 pass
 
@@ -4798,7 +4804,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             if not client_info:
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
-            global _last_phone_clipboard, _last_pc_clipboard
+            global _last_phone_clipboard, _last_pc_clipboard, _last_phone_clipboard_at
             text = body.get('text', '')
             is_local = client_info.get('local', False)
             if not text and is_local:
@@ -4810,6 +4816,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             elif text:
                 with _clipboard_lock:
                     _last_phone_clipboard = text
+                    _last_phone_clipboard_at = time.time()
                     _last_pc_clipboard = text
                 set_kde_clipboard(text)
                 # If triggered from local PC, broadcast to phone

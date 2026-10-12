@@ -972,32 +972,21 @@ public class AuthService extends Service {
         }).start();
     }
 
-    /** The computer sent its clipboard: offer it, don't overwrite the phone's clipboard. */
+    /** The computer's clipboard changed: copy it here too, unless it's what this phone just
+     *  sent (that would only bounce back). */
     private void handleClipboardEvent(JSONObject json) {
         String text = json.optString("text", "");
-        if (text.isEmpty()) return;
-        try {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) return;
-            Intent copy = new Intent(this, ActionReceiver.class);
-            copy.setAction(ActionReceiver.ACTION_COPY_CLIPBOARD);
-            copy.putExtra("text", text);
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
-            PendingIntent pi = PendingIntent.getBroadcast(this, 4100, copy, flags);
-            String preview = text.length() > 300 ? text.substring(0, 300) + "…" : text;
-            Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    ? new Notification.Builder(this, FileServer.CHANNEL_FILE) : new Notification.Builder(this);
-            b.setSmallIcon(R.drawable.ic_o_clipboard)
-                    .setContentTitle("Clipboard from computer")
-                    .setContentText(preview.replace('\n', ' '))
-                    .setStyle(new Notification.BigTextStyle().bigText(preview))
-                    .setContentIntent(pi)                      // tapping it copies too
-                    .addAction(new Notification.Action.Builder(null, "Copy", pi).build())
-                    .setAutoCancel(true);
-            nm.notify(ActionReceiver.CLIPBOARD_NOTIF_ID, b.build());
-        } catch (Exception e) {
-            Log.w(TAG, "Clipboard notification error: " + e.getMessage());
-        }
+        if (text.isEmpty() || text.trim().equals(lastSyncedClipboard == null ? "" : lastSyncedClipboard.trim())) return;
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    lastSyncedClipboard = text;          // don't send it straight back
+                    cm.setPrimaryClip(ClipData.newPlainText("Orbit", text));
+                    Toast.makeText(AuthService.this, "Clipboard from computer", Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private void handleIncomingFileEvent(JSONObject json) {
