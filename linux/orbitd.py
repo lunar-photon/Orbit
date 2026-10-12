@@ -1357,7 +1357,150 @@ def _render_line(line, width):
     return _render_row(line, width)[1]
 
 
+ALT_FRAME_INTERVAL = 0.3      # seconds of recorded time between snapshots of a full-screen app
+ALT_HISTORY_MAX = 5000
+
+
+_ANSI_SGR = re.compile(r'\x1b\[[0-9;:]*m')
 _RULE_LINE = re.compile(r'^\s*─{20,}')
+
+
+def _split_footer(frame):
+    """Split a full-screen app's frame into (body, footer). The footer is fixed chrome at the
+    bottom between rules, like Claude Code's input box and status bar; it must not pile up in
+    the history, so only the current one is shown, once, at the end."""
+    rules = [i for i, (plain, _) in enumerate(frame) if _RULE_LINE.match(plain)]
+    bottom = [i for i in rules if i >= len(frame) - 14]
+    if len(bottom) >= 2:
+        return frame[:bottom[-2]], frame[bottom[-2]:]
+    return frame, []
+
+
+_VOLATILE = re.compile(r'[0-9|█▉▊▋▌▍▎▏▓▒░#=*.\-:/%]+')
+
+
+def _same_layout(a, b):
+    """Do two frames show the same screen with values updated (a dashboard like htop)?
+    Compares lines with numbers and bar characters masked out."""
+    if not a or not b or abs(len(a) - len(b)) > 3:
+        return False
+    same = sum(1 for x, y in zip(a, b) if _VOLATILE.sub('#', x[0]) == _VOLATILE.sub('#', y[0]))
+    return same * 5 >= max(len(a), len(b)) * 3          # 60% of lines
+
+
+_STATUS_MAX = 6
+# Hints an app shows while you've scrolled back inside it (Claude Code's fullscreen view)
+_SCROLLED_HINT = re.compile(r'jump to bottom|ctrl\+end\b', re.I)
+
+def _scrolled_back(rows):
+    """Does the bottom of the screen (just above the app's own input/status area) show it?"""
+    end = len(rows)
+    while end and not rows[end - 1][0].strip():
+        end -= 1
+    return any(_SCROLLED_HINT.search(plain) for plain, _ in rows[max(0, end - 12):end])
+_STATUS_CONFIRM = 3     # scrolls a row must stay pinned through to count as status
+
+def _status_mask(plain):
+    """A row with its moving parts masked: numbers, bars, a leading spinner glyph and the
+    spinner's word ("Misting…", "Swooping…")."""
+    t = re.sub(r'^\W+', '', _VOLATILE.sub('#', plain.strip()))
+    t = re.sub(r'^[\w-]+…', '…', t)
+    # a progress row ("Misting… (1m 5s · ↓ 4k tokens · …)") is one kind, whatever its details say
+    return '…(' if t.startswith('… (') else t
+
+def _pinned_rows(prev, body):
+    """How many rows at the bottom of a full-screen frame stayed put while the content above
+    scrolled up between two frames (0 if it didn't scroll)."""
+    if not prev or not body:
+        return 0
+    def bottom_same(n):
+        # exactly the same: a log's "line 41" / "line 42" only differ in numbers, and that's content
+        return n <= min(len(prev), len(body)) and all(body[-1 - j][0] == prev[-1 - j][0] for j in range(n))
+    upper = len(body) - _STATUS_MAX
+    scrolled = False
+    for d in range(1, min(40, len(prev))):
+        pairs = [(body[i][0], prev[i + d][0]) for i in range(max(0, upper)) if i + d < len(prev) and body[i][0].strip()]
+        hits = sum(1 for a, b in pairs if a == b)
+        if hits >= 3 and hits * 2 >= len(pairs):
+            scrolled = True
+            break
+    if not scrolled:
+        return 0
+    n = 0
+    while n < min(_STATUS_MAX, len(body) - 1, len(prev) - 1) and bottom_same(n + 1):
+        n += 1
+    return n
+
+def _merge_frames(old, new):
+    """Stitch a full-screen app's new frame body onto the history so far. Items are
+    (plain, ansi) lines; matching uses the plain text. The frame is placed where its lines
+    best line up anywhere in the history (counting matches, so a ticking timer doesn't break
+    it): content that scrolled up stays, a redraw replaces what it covers, and a view of an
+    older part updates that part without cutting off what came after it.
+    Returns (history, index where the new frame starts)."""
+    if not old:
+        return list(new), 0
+    if not new:
+        return list(old), len(old)
+    ok, nk = [o[0] for o in old], [n[0] for n in new]
+    n_old, n_new = len(ok), len(nk)
+    anchors = [j for j, line in enumerate(nk) if line.strip()][:4]
+    best_s, best_score = None, 0
+    for j in anchors:
+        hits = 0
+        for p in range(n_old - 1, -1, -1):      # newest first; a few candidates per anchor
+            if ok[p] != nk[j]:
+                continue
+            hits += 1
+            s = p - j
+            if s >= 0:
+                overlap = min(n_new, n_old - s)
+                score = sum(1 for k in range(overlap) if ok[s + k] == nk[k] and nk[k].strip())
+                if score > best_score or (score == best_score and best_s is not None and s > best_s):
+                    best_s, best_score = s, score
+            if hits >= 6:
+                break
+    if best_s is not None:
+        overlap = min(n_new, n_old - best_s)
+        content = sum(1 for k in range(overlap) if nk[k].strip())
+        if best_score >= 2 and best_score * 3 >= content:
+            end = best_s + n_new
+            return old[:best_s] + list(new) + (old[end:] if end < n_old else []), best_s
+    return old + list(new), n_old              # nothing in common: genuinely new screen
+
+
+# The key hints a menu or picker shows at its bottom (Claude Code's resume list, a dialog):
+# a screen that goes away. Capitalised: in the conversation itself, Claude Code's status lines
+# say "esc to cancel" in lower case, and those must stay
+_MENU_HINT = re.compile(r'(^|·)\s*Esc to (cancel|go back|close|exit)\b')
+# Claude Code's "Resume session" over "Resuming conversation…", which has no hint
+_MENU_TITLE = re.compile(r'^\s*Resume session\s*$')
+
+def _replaced_screen(old_screen, new):
+    """Did the app swap its screen for another instead of scrolling it? Called when nothing
+    lined up. Yes when the top stayed and only the layout below changed (a list appearing
+    under the same banner), or when the old screen was a menu that has now closed: then it
+    goes, as on the computer, instead of staying in the history above what replaced it."""
+    def top(rows):
+        return [plain for plain, _ in rows if plain.strip()][:3]
+    if len(top(old_screen)) == 3 and top(old_screen) == top(new):
+        return True
+    shown = [plain for plain, _ in old_screen if plain.strip()]
+    return (any(_MENU_HINT.search(plain) for plain in shown[-3:])
+            or any(_MENU_TITLE.match(plain) for plain in shown[:8]))
+
+
+def _collapse_blank(items):
+    """(plain, ansi) lines with each run of blank lines cut down to one."""
+    out, blank = [], True          # True also drops blank lines at the very top
+    for item in items:
+        if item[0].strip():
+            out.append(item)
+            blank = False
+        elif not blank:
+            out.append(item)
+            blank = True
+    return out
 
 
 class TermRecording:
@@ -1368,8 +1511,26 @@ class TermRecording:
         self.timing_pos = self.log_pos = 0
         self.size = [0, 0]           # columns, lines from the header
         self.main = self.alt = None
+        self.alt_frames = []         # stitched history of the current full-screen app
+        self.alt_footer = []         # its fixed bottom chrome (input box), shown once at the end
+        self.alt_prev_body = []      # last frame body, to spot in-place redraws
+        self.alt_pos = 0             # index in alt_frames where the current screen starts
+        self.view, self.views = 'main', {}   # apps with several views (Claude Code agents): a history each
+        self.alt_prev_raw = []        # last full frame body, to see which rows stay put
+        self.alt_rows_src = None      # the screen alt_rows was rendered from
+        self.main_tui = False         # an app redraws the normal screen in place (see _tui)
+        self.main_homes = 0           # jumps to the top seen since text last scrolled
+        self.main_hist_len = 0
+        self.alt_latest_rows = []     # the last screen showing the latest part (not scrolled back)
+        self.alt_scrolled = False     # the app shows an older part (you scrolled back on the computer)
+        self.alt_last_seen = []       # the previous screen's body, scrolled or not
+        self.input_marks = False      # the recording notes scroll inputs (orbit-term)
+        self.scroll_input_until = -1.0   # recorded time until which a redraw follows a scroll input
+        self.alt_status_seen = {}     # masked row -> scrolls it stayed pinned through
+        self.alt_rows, self.alt_rows_width = None, 0   # rendered rows of the current screen
         self.revision = 0            # bumps whenever the screen may have changed
         self._render_cache = (None, None)
+        self.clock = self.last_snap = 0.0
         self.carry = ''
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.lock = threading.Lock()          # guards the screens
@@ -1390,16 +1551,184 @@ class TermRecording:
         for m in _ALT_SCREEN.finditer(text):
             self._feed_plain(text[pos:m.start()])
             # Full-screen apps (Claude Code, vim) draw on a separate screen with no scrollback;
-            # the phone gets that screen exactly as it is, like tmux would show it
-            self.alt = self._new_screen(False) if m.group(1) == 'h' else None
+            # we rebuild one by stitching its frames together (see _snapshot_alt)
+            if m.group(1) == 'h':
+                self._snapshot_alt()
+                self.alt = self._new_screen(False)
+                self._reset_stitching()
+            else:
+                self.alt = None
+                if self.main_tui:
+                    self._reset_stitching()
             pos = m.end()
         self._feed_plain(text[pos:])
+
+    def _reset_stitching(self):
+        self.alt_frames, self.alt_footer, self.alt_prev_body, self.alt_pos = [], [], [], 0
+        self.alt_latest_rows = []
+        self.alt_scrolled = False
+        self.alt_last_seen = []
+        self.view, self.views = 'main', {}
+        self.alt_prev_raw, self.alt_status_seen = [], {}
+        self.alt_rows = None
+
+    def _tui(self):
+        """The screen a full-screen app draws on: the alternate screen, or the normal one when
+        the app redraws it in place (Claude Code does this after /resume: it jumps to the top
+        and rewrites everything, so nothing ever scrolls into history)."""
+        if self.alt:
+            return self.alt
+        return self.main if self.main_tui else None
+
+    def _watch_main_redraws(self, text):
+        """Notice an app redrawing the normal screen in place, and notice it stop (text scrolls
+        normally again, e.g. back at the shell prompt)."""
+        scr = self.main[0]
+        hist = len(scr.history.top)
+        if hist != self.main_hist_len:
+            self.main_hist_len = hist
+            if self.main_tui:
+                self.main_tui = False            # lines scroll into history: ordinary output again
+                self._reset_stitching()
+            self.main_homes = 0
+            return
+        self.main_homes += text.count('\x1b[H')
+        if not self.main_tui and self.main_homes >= 3:
+            rows = [_render_row(scr.buffer[y], scr.columns) for y in range(scr.lines)]
+            while rows and not rows[-1][0].strip():
+                rows.pop()
+            if _split_footer(rows)[1]:           # an input box between rules at the bottom
+                self.main_tui = True
+                self._reset_stitching()
+            else:
+                self.main_homes = 0
+
+    def _alt_rows(self):
+        """(plain, ansi) for every row of the full-screen app; only rows that changed since
+        last time are re-rendered (pyte tracks them in `dirty`)."""
+        scr = self._tui()[0]
+        if (self.alt_rows is None or len(self.alt_rows) != scr.lines or self.alt_rows_width != scr.columns
+                or self.alt_rows_src is not scr):
+            self.alt_rows_src = scr
+            self.alt_rows, self.alt_rows_width = [None] * scr.lines, scr.columns
+            self.alt_rows, self.alt_rows_width = [None] * scr.lines, scr.columns
+            dirty = range(scr.lines)
+        else:
+            dirty = [y for y in scr.dirty if 0 <= y < scr.lines]
+        for y in dirty:
+            self.alt_rows[y] = _render_row(scr.buffer[y], scr.columns)
+        scr.dirty.clear()
+        return self.alt_rows
+
+    def _snapshot_alt(self):
+        if not self._tui():
+            return
+        frame = list(self._alt_rows())
+        while frame and not frame[-1][0]:
+            frame.pop()
+        if frame and _scrolled_back(frame):
+            # You're reading further up inside the app (it shows "Jump to bottom"): that's an
+            # old part of the conversation, not new content. Leave the history alone; the
+            # phone keeps showing the latest screen until you're back at the bottom.
+            self.last_snap = self.clock
+            return
+        if frame:
+            body, self.alt_footer = _split_footer(frame)
+            # Rows pinned to the bottom (a spinner, "Auto-update failed") aren't content: like a
+            # real terminal's scrollback, history only gets lines that scroll up, so leave them out
+            # (they still show once, in the live screen)
+            raw_body = body
+            # a row counts as status once it has stayed put through a few scrolls
+            for plain, _ in raw_body[len(raw_body) - _pinned_rows(self.alt_prev_raw, raw_body):]:
+                m = _status_mask(plain)
+                if len(m) >= 6 or m == '…(':
+                    self.alt_status_seen[m] = self.alt_status_seen.pop(m, 0) + 1
+            while len(self.alt_status_seen) > 200:
+                self.alt_status_seen.pop(next(iter(self.alt_status_seen)))
+            n = seen = 0
+            while n < min(_STATUS_MAX, len(raw_body) - 1):
+                plain = raw_body[-1 - n][0]
+                if plain.strip():
+                    if self.alt_status_seen.get(_status_mask(plain), 0) < _STATUS_CONFIRM:
+                        break
+                    seen = n + 1
+                n += 1
+            if seen:
+                body = body[:len(body) - seen]
+            self.alt_prev_raw = raw_body
+            view = self._view_of(self.alt_footer)
+            if view != self.view:
+                # The app shows another view (e.g. an agent's transcript): park this history
+                # and continue the other one, so the phone shows only what the computer does
+                self.views[self.view] = (self.alt_frames, self.alt_pos, self.alt_prev_body)
+                self.alt_frames, self.alt_pos, self.alt_prev_body = self.views.pop(view, ([], 0, []))
+                self.view = view
+            merged, pos = _merge_frames(self.alt_frames, body)
+            # Scrolling moves a few lines at a time, so the screen shares most lines with the one
+            # just before it; a view switch (a panel, and back) replaces it all at once
+            seen = {plain for plain, _ in self.alt_last_seen if plain.strip()}
+            shown = [plain for plain, _ in body if plain.strip()]
+            continuous = bool(shown) and sum(1 for p in shown if p in seen) * 3 >= len(shown)
+            self.alt_last_seen = body
+            nothing_new = (bool(self.alt_frames) and pos < self.alt_pos and len(merged) == len(self.alt_frames)
+                           and sum(1 for a, b in zip(merged, self.alt_frames) if a != b) <= 2)
+            if self.input_marks:
+                # The recording says when you scrolled: an older part after a scroll input (or
+                # while still scrolled back) is scrolling; otherwise follow the screen as it is
+                scrolling = nothing_new and (self.clock <= self.scroll_input_until or self.alt_scrolled)
+            else:
+                scrolling = nothing_new and continuous      # older recordings: judge by the screens
+            if scrolling:
+                # Everything on screen is already in the history, and it's an older part than
+                # the latest: you're scrolling back in the app on the computer, nothing new was
+                # printed. Change nothing, so the phone doesn't move; new lines resume it.
+                self.alt_scrolled = True
+                self.last_snap = self.clock
+                return
+            self.alt_scrolled = False
+            self.alt_latest_rows = frame
+            prev = self.alt_prev_body
+            if (len(merged) == len(self.alt_frames) + len(body) and prev
+                    and self.alt_frames[-len(prev):] == prev and _same_layout(prev, body)):
+                # nothing lined up, but it's the same screen with new values: update in place
+                pos = len(self.alt_frames) - len(prev)
+                merged = self.alt_frames[:pos] + body
+            elif (self.alt_frames and pos == len(self.alt_frames)
+                    and _replaced_screen(self.alt_frames[self.alt_pos:], body)):
+                pos = self.alt_pos
+                merged = self.alt_frames[:pos] + body
+            cut = max(0, len(merged) - ALT_HISTORY_MAX)
+            self.alt_frames = merged[cut:]
+            self.alt_pos = max(0, pos - cut)       # where the current screen sits in the history
+            self.alt_prev_body = body
+        self.last_snap = self.clock
+
+    def _view_of(self, footer):
+        """Which view a full-screen app shows, from its input box: Claude Code's agent view
+        says "Message @agent…", its views list marks the open one with ●, and the main
+        conversation has a plain prompt. Unknown (e.g. while typing): the current one."""
+        text = '\n'.join(plain for plain, _ in footer)
+        if not text:
+            return self.view
+        m = _VIEW_AGENT.search(text)
+        if m:
+            return m.group(1)
+        if '◯' in text:
+            for plain, _ in footer:
+                m = _VIEW_LISTED.match(plain)
+                if m:
+                    return m.group(1)
+        if '❯' in text and self._input_line() == '':
+            return 'main'
+        return self.view
 
     def _feed_plain(self, text):
         text = _PRIVATE_CSI.sub('', text)
         if text:
             self.revision += 1
             (self.alt or self.main)[1].feed(text)
+            if not self.alt:
+                self._watch_main_redraws(text)
 
     def update(self):
         """Read whatever the tab printed since last time. Returns False if the files are gone."""
@@ -1427,8 +1756,22 @@ class TermRecording:
                     kind = parts[0]
                     if kind == 'H' and len(parts) >= 4 and parts[2] in ('COLUMNS', 'LINES'):
                         self.size[0 if parts[2] == 'COLUMNS' else 1] = int(parts[3])
+                    elif kind == 'H' and len(parts) >= 3 and parts[2] == 'ORBIT_INPUT_MARKS':
+                        self.input_marks = True          # orbit-term notes scroll inputs (below)
+                    elif kind == 'X' and len(parts) >= 4 and parts[2] == 'SCROLL':
+                        # you scrolled the app's view (wheel, Page Up/Down, Ctrl+Home/End): what
+                        # it redraws next is an older part, not new output
+                        try:
+                            self.clock += float(parts[1])
+                        except ValueError:
+                            pass
+                        self.scroll_input_until = self.clock + 1.0
                     elif kind == 'O' and len(parts) >= 3:
                         n = int(parts[2])
+                        try:
+                            self.clock += float(parts[1])
+                        except ValueError:
+                            pass
                         lf.seek(self.log_pos)
                         data = lf.read(n)
                         if len(data) < n:     # log not flushed yet: retry this entry next time
@@ -1438,6 +1781,8 @@ class TermRecording:
                             if self.main is None:
                                 self.main = self._new_screen(True)
                             self._feed_text(self.decoder.decode(data))
+                            if self._tui() and self.clock - self.last_snap >= ALT_FRAME_INTERVAL:
+                                self._snapshot_alt()
                     elif kind == 'S' and len(parts) >= 5 and parts[2] == 'SIGWINCH':
                         dims = dict(p.split('=', 1) for p in parts[3:] if '=' in p)
                         rows, cols = int(dims.get('ROWS', 0)), int(dims.get('COLS', 0))
@@ -1449,6 +1794,9 @@ class TermRecording:
                                         scr[0].resize(lines=rows, columns=cols)
                     consumed += len(raw) + 1
                 self.timing_pos += consumed
+                if consumed and self._tui():
+                    with self.lock:
+                        self._snapshot_alt()
             return True
         except FileNotFoundError:
             return False
@@ -1517,7 +1865,7 @@ class TermRecording:
         """(lines, total, has_more) for the newest max_lines lines, as ANSI text. With `join`,
         rows that a long line wrapped onto are joined back into it."""
         with self.lock:
-            key = (self.revision, max_lines, join)
+            key = (self.revision, max_lines, len(self.alt_frames), join)
             if self._render_cache[0] == key:
                 return self._render_cache[1]
             result = self._render(max_lines, join)
@@ -1527,6 +1875,31 @@ class TermRecording:
     def _render(self, max_lines, join=False):
         if self.main is None:
             return [], 0, False
+        if self._tui():
+            # The bottom is always the app's current screen, read live; above it, what has
+            # scrolled off (stitched history). If the app shows an older part, newer lines
+            # stay hidden until it comes back, as on the real terminal.
+            rows = self._alt_rows()
+            if (self.alt_scrolled or _scrolled_back(rows)) and self.alt_latest_rows:
+                rows = self.alt_latest_rows        # scrolled back on the computer: keep the latest
+            end = len(rows)
+            while end and not rows[end - 1][0]:
+                end -= 1
+            # The app's screen is a fixed-size canvas, so it has blank stretches (above the
+            # input box, an empty start screen) that stitching piles up; on the phone they're
+            # wasted space, so any run of blank lines shows as one.
+            above = self.alt_frames[:self.alt_pos]
+            known = {m for m, c in self.alt_status_seen.items() if c >= _STATUS_CONFIRM}
+            if known:
+                # status rows that got into the history before they were recognised as status
+                above = [f for f in above if not (f[0].strip() and _status_mask(f[0]) in known)]
+            frames = [ansi for _, ansi in _collapse_blank(above + rows[:end])]
+            if not self.alt:
+                # redrawing the normal screen: what the shell printed before it is still above
+                width = self.main[0].columns
+                frames = [_render_line(l, width) for l in list(self.main[0].history.top)[-2000:]] + frames
+            take = frames[-max_lines:]
+            return take, len(frames), len(frames) > len(take)
         screen = (self.alt or self.main)[0]
         width = screen.columns
         history = list(screen.history.top) if hasattr(screen, 'history') else []
@@ -1556,7 +1929,9 @@ class TermRecording:
         return out, total, total > len(take)
 
 
-_PROMPT_MARKS = ('❯', '➜', '›', '»', '$', '%', '#', '>', '', '', '\ue285', '\ueab6')
+_PROMPT_MARKS = ('❯', '➜', '›', '»', '$', '%', '#', '>')
+_VIEW_AGENT = re.compile(r'Message @([\w.-]+)')
+_VIEW_LISTED = re.compile(r'^\s*(?:❯\s*)?●\s+([\w.-]+)')
 
 
 def _prompt_end(line, limit):
@@ -1928,36 +2303,29 @@ def read_tmux_session(session, max_lines):
         hist, height = (int(x) for x in info.stdout.strip().split('|~|'))
     except ValueError:
         hist, height = 0, 0
-    total = hist + height
-    history_lines = max(0, max_lines - height)
-    start_arg = f'-{min(hist, history_lines)}' if hist > 0 else '0'
-
-    # -E - ensures the capture ALWAYS ends at the bottom of the active pane (latest prompt),
-    # completely independent of whether the laptop user is scrolled up in copy-mode
-    cap = _tmux('capture-pane', '-p', '-e', '-J', '-S', start_arg, '-E', '-', '-t', target)
+    start = max(0, max_lines - height)
+    cap = _tmux('capture-pane', '-p', '-e', '-J', '-S', f'-{start}', '-t', target)
     if not cap or cap.returncode != 0:
         return None
     lines = cap.stdout.split('\n')
     while lines and not re.sub(r'\x1b\[[0-9;:]*m', '', lines[-1]).strip():
         lines.pop()
-    take = lines[-max_lines:] if len(lines) > max_lines else lines
+    # history_size counts wrapped rows while -J joins them, so only report a
+    # larger total when there really is unread history above
+    total = hist + height if start < hist else len(lines)
     return {
-        'text': '\n'.join(take),
+        'text': '\n'.join(lines),
         'total_lines': total,
-        'returned_lines': len(take),
-        'has_more': min(hist, history_lines) < hist,
+        'returned_lines': len(lines),
+        'has_more': start < hist,
         'ansi': True,
     }
 
 def write_tmux_session(session, text):
-    target = f'={session}:'
-    mode = _tmux('display-message', '-p', '-t', target, '#{pane_in_mode}')
-    if mode and mode.stdout.strip() == '1':
-        _tmux('send-keys', '-t', target, '-X', 'cancel')
     data = text.encode('utf-8')
     for i in range(0, len(data), 512):
         chunk = data[i:i + 512]
-        res = _tmux('send-keys', '-t', target, '-H', *[f'{b:02x}' for b in chunk])
+        res = _tmux('send-keys', '-t', f'={session}:', '-H', *[f'{b:02x}' for b in chunk])
         if not res or res.returncode != 0:
             return {'status': 'error', 'message': (res.stderr.strip() if res else 'tmux not available')}
     return {'status': 'ok'}
@@ -2007,7 +2375,7 @@ def _recorded_reply(term_id, title, rec, max_lines, join):
     return {'status': 'ok', 'id': term_id, 'title': title, 'text': '\n'.join(lines),
             'total_lines': total, 'returned_lines': len(lines), 'has_more': more, 'ansi': True,
             'columns': rec.size[0] or None, 'lines_independent': True,
-            'fullscreen': rec.alt is not None}   # an app like Claude Code: its bottom is the screen's bottom
+            'fullscreen': rec._tui() is not None}   # an app like Claude Code: its bottom is the screen's bottom
 
 def read_terminal(term_id, max_lines=35, join=False):
     if term_id.startswith('rec:'):
@@ -2022,16 +2390,19 @@ def read_terminal(term_id, max_lines=35, join=False):
         session = term_id[len('tmux:'):]
         res = read_tmux_session(session, max_lines)
         if res:
-            pane = next((p for p in tmux_list_sessions() if p['name'] == session), None)
-            title = session
-            if pane and pane['command']:
-                title = f"{os.path.basename(pane['cwd'].rstrip('/')) or '/'} : {pane['command']}"
-            return {'status': 'ok', 'id': term_id, 'title': title, **res}
+            return {'status': 'ok', 'id': term_id, 'title': session, **res}
         return {'status': 'error', 'message': 'tmux session not found'}
     if ':' in term_id and 'org.kde.konsole' in term_id:
         svc, sid = term_id.split(':', 1)
         spath = f'/Sessions/{sid}'
         title, sh = konsole_session_info(svc, sid)
+
+        # Recorded tab: full scrollback from its `script` recording
+        rec = recording_for(int(sh)) if sh.isdigit() else None
+        if rec is not None:
+            reply = _recorded_reply(term_id, title, rec, max_lines, join)
+            if reply:
+                return reply
 
         # Konsole tab running tmux: read exact scrollback from tmux
         session = tmux_client_sessions().get(konsole_session_tty(svc, sid))
@@ -2042,13 +2413,6 @@ def read_terminal(term_id, max_lines=35, join=False):
                 if pane and pane['command']:
                     title = f"{os.path.basename(pane['cwd'].rstrip('/')) or '/'} : {pane['command']}"
                 return {'status': 'ok', 'id': term_id, 'title': title, **res}
-
-        # Recorded tab: full scrollback from its `script` recording
-        rec = recording_for(int(sh)) if sh.isdigit() else None
-        if rec is not None:
-            reply = _recorded_reply(term_id, title, rec, max_lines, join)
-            if reply:
-                return reply
 
         return {'status': 'error', 'message': 'This tab started before Orbit could follow it. Open a new tab.'}
     return {'status': 'error', 'message': 'Terminal not found or inaccessible'}
@@ -2197,29 +2561,6 @@ def _send_to_recorder(pid, text):
 
 def terminal_input_line(term_id):
     """What is typed at the terminal's prompt right now, so the phone can edit it."""
-    session = None
-    if term_id.startswith('tmux:'):
-        session = term_id[len('tmux:'):]
-    elif ':' in term_id and 'org.kde.konsole' in term_id:
-        svc, sid = term_id.split(':', 1)
-        session = tmux_client_sessions().get(konsole_session_tty(svc, sid))
-    if session:
-        target = f'={session}:'
-        info = _tmux('display-message', '-p', '-t', target, '#{cursor_x}|~|#{cursor_y}')
-        if info and info.returncode == 0 and '|~|' in info.stdout:
-            try:
-                cx, cy = (int(x) for x in info.stdout.strip().split('|~|'))
-                cap = _tmux('capture-pane', '-p', '-t', target, '-S', '0', '-E', '-').stdout.splitlines()
-                if cy < len(cap):
-                    line = cap[cy]
-                    limit = min(cx, len(line))
-                    end = _prompt_end(line, limit)
-                    if end is not None and end >= 0:
-                        return {'status': 'ok', 'text': line[end:limit]}
-            except Exception:
-                pass
-        return {'status': 'error', 'message': 'No prompt on screen'}
-
     rec = _recording_for_term(term_id)
     if rec is None:
         return {'status': 'error', 'message': 'Only recorded Konsole tabs can share their input line'}
@@ -2238,8 +2579,8 @@ def replace_terminal_input(term_id, count):
     if res['status'] != 'ok':
         return res
     rec = _recording_for_term(term_id)
-    if (rec is not None and rec.alt is None) or rec is None:
-        # a shell's line editor (or tmux) takes a burst of backspaces fine
+    if rec is not None and rec.alt is None:
+        # a shell's line editor takes a burst of backspaces fine
         return _send_to_terminal(term_id, '\x7f' * count)
     # full-screen apps (Claude Code) would read a burst as a paste: one keypress at a time
     for _ in range(count):
@@ -2287,11 +2628,6 @@ def write_terminal(term_id, text):
 def _send_to_terminal(term_id, text):
     if term_id.startswith('tmux:'):
         return write_tmux_session(term_id[len('tmux:'):], text)
-    if ':' in term_id and 'org.kde.konsole' in term_id:
-        svc, sid = term_id.split(':', 1)
-        session = tmux_client_sessions().get(konsole_session_tty(svc, sid))
-        if session:
-            return write_tmux_session(session, text)
     pid = _recorder_pid(term_id)
     if pid:
         res = _send_to_recorder(pid, text)
