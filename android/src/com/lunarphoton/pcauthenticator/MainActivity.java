@@ -549,10 +549,11 @@ public class MainActivity extends Activity {
             });
         }
         if (tvCaptiveActionsLink != null) {
-            tvCaptiveActionsLink.setOnClickListener(v -> showCaptivePortalActionsDialog());
+            tvCaptiveActionsLink.setOnClickListener(v -> showCaptivePortalConfigDialog(null));
         }
         if (layoutCaptivePortal != null) {
-            layoutCaptivePortal.setOnClickListener(v -> showCaptivePortalActionsDialog());   // the card opens its options
+            // the button logs in and out; the card opens the setup (login page, details, auto login)
+            layoutCaptivePortal.setOnClickListener(v -> showCaptivePortalConfigDialog(null));
         }
         updateCaptivePortalButton();
         updateConnectionStatus(AuthService.isConnectedToLaptop(), AuthService.getLastStatusText());
@@ -1490,22 +1491,14 @@ public class MainActivity extends Activity {
 
         Switch switchCaptive = dialogView.findViewById(R.id.switch_dialog_captive);
         TextView tvCaptiveDesc = dialogView.findViewById(R.id.tv_dialog_captive_desc);
-        View layoutCaptiveConfig = dialogView.findViewById(R.id.layout_dialog_captive_config);
-        Button btnConfigCaptive = dialogView.findViewById(R.id.btn_dialog_config_captive);
-        Button btnToggleCaptive = dialogView.findViewById(R.id.btn_dialog_toggle_captive);
 
         Runnable updateCaptiveDesc = () -> {
             boolean enabled = CaptivePortalManager.isEnabled(MainActivity.this);
             if (switchCaptive != null) switchCaptive.setChecked(enabled);
-            if (layoutCaptiveConfig != null) layoutCaptiveConfig.setVisibility(enabled ? View.VISIBLE : View.GONE);
             if (tvCaptiveDesc != null) {
                 String u = CaptivePortalManager.getUsername(MainActivity.this);
                 String last = CaptivePortalManager.getLastStatus(MainActivity.this);
                 tvCaptiveDesc.setText(enabled ? (u.isEmpty() ? "Add your login details" : ("Logs in as " + u + " · last: " + last)) : "Logs you in to the campus Wi-Fi");
-            }
-            if (btnToggleCaptive != null) {
-                btnToggleCaptive.setText(isCaptiveLive ? "Log out" : "Log in");
-                setButtonPrimary(btnToggleCaptive, !isCaptiveLive);
             }
         };
         updateCaptiveDesc.run();
@@ -1521,19 +1514,6 @@ public class MainActivity extends Activity {
             });
         }
 
-        if (btnToggleCaptive != null) {
-            btnToggleCaptive.setOnClickListener(v -> {
-                if (isCaptiveLive) {
-                    handleCaptiveLogoutClick();
-                } else {
-                    handleCaptiveLoginClick();
-                }
-                updateCaptiveDesc.run();
-            });
-        }
-        if (btnConfigCaptive != null) {
-            btnConfigCaptive.setOnClickListener(v -> showCaptivePortalConfigDialog(updateCaptiveDesc));
-        }
 
         createPage(dialogView, true).show();
     }
@@ -1740,45 +1720,6 @@ public class MainActivity extends Activity {
                 }
             });
         }).start();
-    }
-
-    private void showCaptivePortalActionsDialog() {
-        String[] options = new String[]{
-                "Log in now",
-                "Log out",
-                "Find the login page",
-                "Login details"
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Campus internet")
-                .setItems(options, (dialog, which) -> {
-                    if (which == 0) {
-                        handleCaptiveLoginClick();
-                    } else if (which == 1) {
-                        handleCaptiveLogoutClick();
-                    } else if (which == 2) {
-                        Toast.makeText(this, "Looking for the campus login page…", Toast.LENGTH_SHORT).show();
-                        new Thread(() -> {
-                            String detected = CaptivePortalManager.detectGatewayUrl(MainActivity.this);
-                            runOnUiThread(() -> {
-                                if (detected != null && !detected.isEmpty()) {
-                                    CaptivePortalManager.saveConfig(MainActivity.this, true, detected,
-                                            CaptivePortalManager.getUsername(MainActivity.this),
-                                            CaptivePortalManager.getPassword(MainActivity.this),
-                                            CaptivePortalManager.isAutoLoginOnWifi(MainActivity.this));
-                                    updateCaptivePortalButton();
-                                    Toast.makeText(MainActivity.this, "Found and saved the login page", Toast.LENGTH_SHORT).show();
-                                } else {
-                                    Toast.makeText(MainActivity.this, "No login page on this Wi-Fi", Toast.LENGTH_SHORT).show();
-                                }
-                            });
-                        }).start();
-                    } else if (which == 3) {
-                        showCaptivePortalConfigDialog(null);
-                    }
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
     }
 
     private void showCaptivePortalConfigDialog(Runnable onUpdated) {

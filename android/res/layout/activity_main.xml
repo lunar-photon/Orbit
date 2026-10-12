@@ -346,7 +346,7 @@
                     </LinearLayout>
 
                     <!-- Campus internet (only when the captive portal feature is on): one row, the globe's
-                         colour says the state; tap the card for more options -->
+                         colour says the state; the button logs in or out, the card opens the setup -->
                     <LinearLayout
                         android:id="@+id/layout_captive_portal"
                         android:layout_width="match_parent"
