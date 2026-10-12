@@ -10,12 +10,29 @@ import android.os.Vibrator;
 import android.widget.Toast;
 
 public class ActionReceiver extends BroadcastReceiver {
+    public static final String ACTION_COPY_CLIPBOARD = "com.lunarphoton.pcauthenticator.COPY_CLIPBOARD";
+    public static final int CLIPBOARD_NOTIF_ID = 4100;
     public static final String ACTION_APPROVE = "com.lunarphoton.pcauthenticator.ACTION_APPROVE";
     public static final String ACTION_DENY = "com.lunarphoton.pcauthenticator.ACTION_DENY";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
+        if (ACTION_COPY_CLIPBOARD.equals(action)) {
+            // the computer's clipboard, copied only now that you asked for it
+            String text = intent.getStringExtra("text");
+            if (text != null) {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    AuthService.lastSyncedClipboard = text;      // don't send it straight back
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Orbit", text));
+                    android.widget.Toast.makeText(context, "Copied", android.widget.Toast.LENGTH_SHORT).show();
+                }
+            }
+            android.app.NotificationManager nm = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(CLIPBOARD_NOTIF_ID);
+            return;
+        }
         if (RingManager.ACTION_STOP_ALARM.equals(action)) {
             RingManager.stopAlarm(context);
             return;

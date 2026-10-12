@@ -537,7 +537,6 @@ public class MainActivity extends Activity {
         }
         layoutCaptivePortal = findViewById(R.id.layout_captive_portal);
         tvCaptiveStatusBadge = findViewById(R.id.tv_captive_status_badge);
-        tvCaptiveActionsLink = findViewById(R.id.tv_captive_actions_link);
         btnCaptivePortalToggle = findViewById(R.id.btn_captive_portal_toggle);
 
         if (btnCaptivePortalToggle != null) {
@@ -551,6 +550,9 @@ public class MainActivity extends Activity {
         }
         if (tvCaptiveActionsLink != null) {
             tvCaptiveActionsLink.setOnClickListener(v -> showCaptivePortalActionsDialog());
+        }
+        if (layoutCaptivePortal != null) {
+            layoutCaptivePortal.setOnClickListener(v -> showCaptivePortalActionsDialog());   // the card opens its options
         }
         updateCaptivePortalButton();
         updateConnectionStatus(AuthService.isConnectedToLaptop(), AuthService.getLastStatusText());
@@ -1288,10 +1290,9 @@ public class MainActivity extends Activity {
 
     private void updateConnectionStatus(boolean connected, String text, boolean isInternet) {
         isPcConnected = connected;
-        if (btnLockLaptopAction != null) {
-            // Lock / Unlock only means something while the computer is reachable
-            btnLockLaptopAction.setAlpha(connected ? 1f : 0.4f);
-        }
+        // Lock / Unlock and Ring only mean something while the computer is reachable
+        if (btnLockLaptopAction != null) btnLockLaptopAction.setAlpha(connected ? 1f : 0.4f);
+        if (btnRingPc != null) btnRingPc.setAlpha(connected ? 1f : 0.4f);
         if (connected) {
             tvStatusDot.setTextColor(getColor(R.color.o_online));
             tvStatusText.setText(text);
@@ -1500,7 +1501,7 @@ public class MainActivity extends Activity {
             if (tvCaptiveDesc != null) {
                 String u = CaptivePortalManager.getUsername(MainActivity.this);
                 String last = CaptivePortalManager.getLastStatus(MainActivity.this);
-                tvCaptiveDesc.setText(enabled ? ("Status: " + last + " (" + (u.isEmpty() ? "No user" : u) + ")") : "Captive Portal Auto-Login");
+                tvCaptiveDesc.setText(enabled ? (u.isEmpty() ? "Add your login details" : ("Logs in as " + u + " · last: " + last)) : "Logs you in to the campus Wi-Fi");
             }
             if (btnToggleCaptive != null) {
                 btnToggleCaptive.setText(isCaptiveLive ? "Log out" : "Log in");
@@ -1537,6 +1538,13 @@ public class MainActivity extends Activity {
         createPage(dialogView, true).show();
     }
 
+    /** The globe carries the campus internet state (green in, red out); the text stays quiet. */
+    private void tintCaptiveState(int color) {
+        android.widget.ImageView icon = findViewById(R.id.iv_captive_icon);
+        if (icon != null) icon.setImageTintList(android.content.res.ColorStateList.valueOf(color));
+        if (tvCaptiveStatusBadge != null) tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_text_3));
+    }
+
     private void updateCaptivePortalButton() {
         boolean enabled = CaptivePortalManager.isEnabled(this);
         if (layoutCaptivePortal != null) {
@@ -1546,18 +1554,18 @@ public class MainActivity extends Activity {
 
         boolean wifiActive = DeviceManager.isWifiActive(this);
         String user = CaptivePortalManager.getUsername(this);
-        String userLabel = user.isEmpty() ? "Portal" : user;
+        String userLabel = user.isEmpty() ? "no account set" : user;
         boolean explicitlyLoggedOut = CaptivePortalManager.isExplicitlyLoggedOut(this);
 
         if (!wifiActive) {
             isCaptiveLive = false;
             if (tvCaptiveStatusBadge != null) {
                 tvCaptiveStatusBadge.setText("Wi-Fi is off");
-                tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                tintCaptiveState(getColor(R.color.o_danger));
             }
             if (btnCaptivePortalToggle != null) {
                 btnCaptivePortalToggle.setEnabled(false);
-                btnCaptivePortalToggle.setText("Connect to Wi-Fi first");
+                btnCaptivePortalToggle.setText("Log in");
                 setButtonPrimary(btnCaptivePortalToggle, false);
             }
             return;
@@ -1567,11 +1575,11 @@ public class MainActivity extends Activity {
             isCaptiveLive = false;
             if (tvCaptiveStatusBadge != null) {
                 tvCaptiveStatusBadge.setText("Logged out · " + userLabel);
-                tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                tintCaptiveState(getColor(R.color.o_danger));
             }
             if (btnCaptivePortalToggle != null) {
                 btnCaptivePortalToggle.setEnabled(true);
-                btnCaptivePortalToggle.setText("Log in as " + userLabel);
+                btnCaptivePortalToggle.setText("Log in");
                 setButtonPrimary(btnCaptivePortalToggle, true);
             }
             return;
@@ -1580,11 +1588,11 @@ public class MainActivity extends Activity {
         // Apply local immediate state
         if (tvCaptiveStatusBadge != null) {
             if (isCaptiveLive) {
-                tvCaptiveStatusBadge.setText("Online · " + userLabel);
-                tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_online));
+                tvCaptiveStatusBadge.setText("Logged in · " + userLabel);
+                tintCaptiveState(getColor(R.color.o_online));
             } else {
-                tvCaptiveStatusBadge.setText("Offline · " + userLabel);
-                tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                tvCaptiveStatusBadge.setText("No internet · " + userLabel);
+                tintCaptiveState(getColor(R.color.o_danger));
             }
         }
         if (btnCaptivePortalToggle != null) {
@@ -1593,7 +1601,7 @@ public class MainActivity extends Activity {
                 btnCaptivePortalToggle.setText("Log out");
                 setButtonPrimary(btnCaptivePortalToggle, false);
             } else {
-                btnCaptivePortalToggle.setText("Log in as " + userLabel);
+                btnCaptivePortalToggle.setText("Log in");
                 setButtonPrimary(btnCaptivePortalToggle, true);
             }
         }
@@ -1608,11 +1616,11 @@ public class MainActivity extends Activity {
                     isCaptiveLive = false;
                     if (tvCaptiveStatusBadge != null) {
                         tvCaptiveStatusBadge.setText("Wi-Fi is off");
-                        tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                        tintCaptiveState(getColor(R.color.o_danger));
                     }
                     if (btnCaptivePortalToggle != null) {
                         btnCaptivePortalToggle.setEnabled(false);
-                        btnCaptivePortalToggle.setText("Connect to Wi-Fi first");
+                        btnCaptivePortalToggle.setText("Log in");
                         setButtonPrimary(btnCaptivePortalToggle, false);
                     }
                     return;
@@ -1622,11 +1630,11 @@ public class MainActivity extends Activity {
                     isCaptiveLive = false;
                     if (tvCaptiveStatusBadge != null) {
                         tvCaptiveStatusBadge.setText("Logged out · " + userLabel);
-                        tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                        tintCaptiveState(getColor(R.color.o_danger));
                     }
                     if (btnCaptivePortalToggle != null) {
                         btnCaptivePortalToggle.setEnabled(true);
-                        btnCaptivePortalToggle.setText("Log in as " + userLabel);
+                        btnCaptivePortalToggle.setText("Log in");
                         setButtonPrimary(btnCaptivePortalToggle, true);
                     }
                     return;
@@ -1634,11 +1642,11 @@ public class MainActivity extends Activity {
 
                 if (tvCaptiveStatusBadge != null) {
                     if (live) {
-                        tvCaptiveStatusBadge.setText("Online · " + userLabel);
-                        tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_online));
+                        tvCaptiveStatusBadge.setText("Logged in · " + userLabel);
+                        tintCaptiveState(getColor(R.color.o_online));
                     } else {
-                        tvCaptiveStatusBadge.setText("Offline · " + userLabel);
-                        tvCaptiveStatusBadge.setTextColor(getColor(R.color.o_danger));
+                        tvCaptiveStatusBadge.setText("No internet · " + userLabel);
+                        tintCaptiveState(getColor(R.color.o_danger));
                     }
                 }
                 if (btnCaptivePortalToggle != null) {
@@ -1647,7 +1655,7 @@ public class MainActivity extends Activity {
                         btnCaptivePortalToggle.setText("Log out");
                         setButtonPrimary(btnCaptivePortalToggle, false);
                     } else {
-                        btnCaptivePortalToggle.setText("Log in as " + userLabel);
+                        btnCaptivePortalToggle.setText("Log in");
                         setButtonPrimary(btnCaptivePortalToggle, true);
                     }
                 }
@@ -1664,7 +1672,7 @@ public class MainActivity extends Activity {
         String user = CaptivePortalManager.getUsername(this);
         String pass = CaptivePortalManager.getPassword(this);
         if (user.isEmpty() || pass.isEmpty()) {
-            Toast.makeText(this, "Please configure your portal credentials first", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Add your campus login details first", Toast.LENGTH_SHORT).show();
             showCaptivePortalConfigDialog(null);
             return;
         }
@@ -1737,19 +1745,19 @@ public class MainActivity extends Activity {
     private void showCaptivePortalActionsDialog() {
         String[] options = new String[]{
                 "Log in now",
-                "Log out now",
-                "Detect the gateway",
-                "Credentials and settings"
+                "Log out",
+                "Find the login page",
+                "Login details"
         };
         new AlertDialog.Builder(this)
-                .setTitle("Captive Portal & Internet")
+                .setTitle("Campus internet")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) {
                         handleCaptiveLoginClick();
                     } else if (which == 1) {
                         handleCaptiveLogoutClick();
                     } else if (which == 2) {
-                        Toast.makeText(this, "Auto-detecting captive gateway on current network...", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "Looking for the campus login page…", Toast.LENGTH_SHORT).show();
                         new Thread(() -> {
                             String detected = CaptivePortalManager.detectGatewayUrl(MainActivity.this);
                             runOnUiThread(() -> {
@@ -1759,9 +1767,9 @@ public class MainActivity extends Activity {
                                             CaptivePortalManager.getPassword(MainActivity.this),
                                             CaptivePortalManager.isAutoLoginOnWifi(MainActivity.this));
                                     updateCaptivePortalButton();
-                                    Toast.makeText(MainActivity.this, "Detected & saved: " + detected, Toast.LENGTH_LONG).show();
+                                    Toast.makeText(MainActivity.this, "Found and saved the login page", Toast.LENGTH_SHORT).show();
                                 } else {
-                                    Toast.makeText(MainActivity.this, "No captive portal detected on current network", Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(MainActivity.this, "No login page on this Wi-Fi", Toast.LENGTH_SHORT).show();
                                 }
                             });
                         }).start();
@@ -1774,159 +1782,84 @@ public class MainActivity extends Activity {
     }
 
     private void showCaptivePortalConfigDialog(Runnable onUpdated) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Internet Provider Login Setup");
+        View v = LayoutInflater.from(this).inflate(R.layout.dialog_campus_setup, null);
+        EditText etUser = v.findViewById(R.id.et_campus_user);
+        EditText etPass = v.findViewById(R.id.et_campus_password);
+        EditText etGateway = v.findViewById(R.id.et_campus_gateway);
+        TextView tvNote = v.findViewById(R.id.tv_campus_detect_note);
+        Switch swAuto = v.findViewById(R.id.switch_campus_auto);
+        Switch swScreen = v.findViewById(R.id.switch_campus_screen_on);
+        Button btnFind = v.findViewById(R.id.btn_campus_detect);
+        Button btnTest = v.findViewById(R.id.btn_campus_test);
+        Button btnSave = v.findViewById(R.id.btn_campus_save);
 
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(50, 25, 50, 15);
-
-        TextView tvHint = new TextView(this);
-        tvHint.setText("Configure your campus captive portal credentials (e.g. gateway.iisertvm.ac.in). Stored locally on this device only.");
-        tvHint.setTextColor(Color.parseColor("#94a3b8"));
-        tvHint.setTextSize(12);
-        tvHint.setPadding(0, 0, 0, 15);
-        layout.addView(tvHint);
-
-        TextView tvGatewayLabel = new TextView(this);
-        tvGatewayLabel.setText("Gateway URL:");
-        tvGatewayLabel.setTextColor(Color.parseColor("#38bdf8"));
-        tvGatewayLabel.setTextSize(12);
-        tvGatewayLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        layout.addView(tvGatewayLabel);
-
-        final EditText etGateway = new EditText(this);
+        etUser.setText(CaptivePortalManager.getUsername(this));
+        etPass.setText(CaptivePortalManager.getPassword(this));
         etGateway.setText(CaptivePortalManager.getGatewayUrl(this));
-        etGateway.setTextColor(Color.WHITE);
-        etGateway.setTextSize(13);
-        layout.addView(etGateway);
+        swAuto.setChecked(CaptivePortalManager.isAutoLoginOnWifi(this));
+        swScreen.setChecked(CaptivePortalManager.isCheckOnScreenOn(this));
 
-        Button btnAutoDetect = new Button(this);
-        btnAutoDetect.setText("Detect gateway");
-        btnAutoDetect.setTextSize(12);
-        btnAutoDetect.setTextColor(Color.parseColor("#38bdf8"));
-        btnAutoDetect.setBackgroundColor(Color.parseColor("#1e293b"));
-        btnAutoDetect.setOnClickListener(v -> {
-            Toast.makeText(MainActivity.this, "Probing network for captive portal...", Toast.LENGTH_SHORT).show();
+        Dialog page = createPage(v, true);
+
+        btnFind.setOnClickListener(x -> {
+            tvNote.setText("Looking for the login page…");
             new Thread(() -> {
-                String detected = CaptivePortalManager.detectGatewayUrl(MainActivity.this);
-                boolean live = CaptivePortalManager.isInternetConnected(MainActivity.this);
+                String found = CaptivePortalManager.detectGatewayUrl(MainActivity.this);
+                boolean online = CaptivePortalManager.isInternetConnected(MainActivity.this);
                 runOnUiThread(() -> {
-                    if (detected != null && !detected.isEmpty()) {
-                        etGateway.setText(detected);
-                        if (live) {
-                            Toast.makeText(MainActivity.this, "Detected: " + detected + "\n(Internet is already active & LIVE)", Toast.LENGTH_LONG).show();
-                        } else {
-                            Toast.makeText(MainActivity.this, "Detected: " + detected, Toast.LENGTH_SHORT).show();
-                        }
-                    } else if (live) {
+                    if (found != null && !found.isEmpty()) {
+                        etGateway.setText(found);
+                        tvNote.setText(online ? "Found it. You're already online." : "Found it.");
+                    } else if (online) {
                         etGateway.setText(CaptivePortalManager.DEFAULT_GATEWAY_URL);
-                        Toast.makeText(MainActivity.this, "Internet is already active & LIVE!\nUsing default: " + CaptivePortalManager.DEFAULT_GATEWAY_URL, Toast.LENGTH_LONG).show();
+                        tvNote.setText("You're already online, so there's no login page to find. Using the usual campus address.");
                     } else {
-                        Toast.makeText(MainActivity.this, "No captive portal redirect detected on current Wi-Fi", Toast.LENGTH_SHORT).show();
+                        tvNote.setText("No login page on this Wi-Fi. Are you on the campus network?");
                     }
                 });
             }).start();
         });
-        layout.addView(btnAutoDetect);
 
-        TextView tvUserLabel = new TextView(this);
-        tvUserLabel.setText("LDAP / Wi-Fi Username:");
-        tvUserLabel.setTextColor(Color.parseColor("#38bdf8"));
-        tvUserLabel.setTextSize(12);
-        tvUserLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvUserLabel.setPadding(0, 15, 0, 0);
-        layout.addView(tvUserLabel);
+        Runnable save = () -> {
+            CaptivePortalManager.saveConfig(MainActivity.this, true, etGateway.getText().toString().trim(),
+                    etUser.getText().toString().trim(), etPass.getText().toString(), swAuto.isChecked(), swScreen.isChecked());
+            updateCaptivePortalButton();
+            if (onUpdated != null) onUpdated.run();
+        };
 
-        final EditText etUsername = new EditText(this);
-        etUsername.setHint("Campus username");
-        etUsername.setText(CaptivePortalManager.getUsername(this));
-        etUsername.setTextColor(Color.WHITE);
-        etUsername.setTextSize(13);
-        layout.addView(etUsername);
+        btnSave.setOnClickListener(x -> {
+            save.run();
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            page.dismiss();
+        });
 
-        TextView tvPassLabel = new TextView(this);
-        tvPassLabel.setText("Password:");
-        tvPassLabel.setTextColor(Color.parseColor("#38bdf8"));
-        tvPassLabel.setTextSize(12);
-        tvPassLabel.setTypeface(null, android.graphics.Typeface.BOLD);
-        tvPassLabel.setPadding(0, 15, 0, 0);
-        layout.addView(tvPassLabel);
-
-        final EditText etPassword = new EditText(this);
-        etPassword.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        etPassword.setText(CaptivePortalManager.getPassword(this));
-        etPassword.setTextColor(Color.WHITE);
-        etPassword.setTextSize(13);
-        layout.addView(etPassword);
-
-        final CheckBox cbAutoLogin = new CheckBox(this);
-        cbAutoLogin.setText("Auto-login when connected to Wi-Fi");
-        cbAutoLogin.setChecked(CaptivePortalManager.isAutoLoginOnWifi(this));
-        cbAutoLogin.setTextColor(Color.parseColor("#e2e8f0"));
-        cbAutoLogin.setTextSize(13);
-        cbAutoLogin.setPadding(0, 15, 0, 5);
-        layout.addView(cbAutoLogin);
-
-        final CheckBox cbScreenOn = new CheckBox(this);
-        cbScreenOn.setText("Auto-reconnect when screen turns on");
-        cbScreenOn.setChecked(CaptivePortalManager.isCheckOnScreenOn(this));
-        cbScreenOn.setTextColor(Color.parseColor("#e2e8f0"));
-        cbScreenOn.setTextSize(13);
-        cbScreenOn.setPadding(0, 5, 0, 10);
-        layout.addView(cbScreenOn);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(layout);
-        builder.setView(scroll);
-
-        builder.setPositiveButton("Test & Save", (dialog, which) -> {
+        btnTest.setOnClickListener(x -> {
             String gateway = etGateway.getText().toString().trim();
-            String user = etUsername.getText().toString().trim();
-            String pass = etPassword.getText().toString().trim();
-            boolean auto = cbAutoLogin.isChecked();
-            boolean screenOn = cbScreenOn.isChecked();
-
-            Toast.makeText(this, "Testing portal login with " + user + "...", Toast.LENGTH_SHORT).show();
+            String user = etUser.getText().toString().trim();
+            String pass = etPass.getText().toString();
+            if (user.isEmpty() || pass.isEmpty()) {
+                Toast.makeText(this, "Add your username and password first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            btnTest.setEnabled(false);
+            btnTest.setText("Testing…");
             new Thread(() -> {
                 CaptivePortalManager.LoginResult res = CaptivePortalManager.login(MainActivity.this, gateway, user, pass);
                 runOnUiThread(() -> {
+                    btnTest.setEnabled(true);
+                    btnTest.setText("Test login");
                     if (res.success) {
-                        CaptivePortalManager.saveConfig(MainActivity.this, true, gateway, user, pass, auto, screenOn);
-                        updateCaptivePortalButton();
-                        if (onUpdated != null) onUpdated.run();
-                        Toast.makeText(MainActivity.this, "Test successful! " + res.message, Toast.LENGTH_LONG).show();
+                        save.run();
+                        Toast.makeText(this, "Logged in, and saved", Toast.LENGTH_SHORT).show();
+                        page.dismiss();
                     } else {
-                        new AlertDialog.Builder(MainActivity.this)
-                                .setTitle("Portal Test Notice")
-                                .setMessage("Gateway returned: " + res.message + "\n\nSave credentials anyway?")
-                                .setPositiveButton("Save Anyway", (d2, w2) -> {
-                                    CaptivePortalManager.saveConfig(MainActivity.this, true, gateway, user, pass, auto, screenOn);
-                                    updateCaptivePortalButton();
-                                    if (onUpdated != null) onUpdated.run();
-                                    Toast.makeText(MainActivity.this, "Saved portal configuration", Toast.LENGTH_SHORT).show();
-                                })
-                                .setNegativeButton("Cancel", null)
-                                .show();
+                        tvNote.setText("Couldn't log in: " + res.message);
                     }
                 });
             }).start();
         });
 
-        builder.setNeutralButton("Save Only", (dialog, which) -> {
-            String gateway = etGateway.getText().toString().trim();
-            String user = etUsername.getText().toString().trim();
-            String pass = etPassword.getText().toString().trim();
-            boolean auto = cbAutoLogin.isChecked();
-            boolean screenOn = cbScreenOn.isChecked();
-            CaptivePortalManager.saveConfig(MainActivity.this, true, gateway, user, pass, auto, screenOn);
-            updateCaptivePortalButton();
-            if (onUpdated != null) onUpdated.run();
-            Toast.makeText(MainActivity.this, "Saved portal configuration", Toast.LENGTH_SHORT).show();
-        });
-
-        builder.setNegativeButton("Cancel", null);
-        builder.show();
+        page.show();
     }
 
     private void showChangePasswordDialog(Runnable onUpdated) {
@@ -2146,7 +2079,13 @@ public class MainActivity extends Activity {
         if (btnSendFileToPc != null) btnSendFileToPc.setOnClickListener(v -> pickFileToSend());
         if (btnSendClipToPc != null) btnSendClipToPc.setOnClickListener(v -> sendPhoneClipboardToPc());
         if (btnGetClipFromPc != null) btnGetClipFromPc.setOnClickListener(v -> fetchPcClipboard());
-        if (btnRingPc != null) btnRingPc.setOnClickListener(v -> ringPc());
+        if (btnRingPc != null) btnRingPc.setOnClickListener(v -> {
+            if (!isPcConnected) {
+                Toast.makeText(this, "Not connected to the computer", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ringPc();
+        });
         if (btnRemoteTrackpad != null) {
             btnRemoteTrackpad.setOnClickListener(v -> {
                 Intent intent = new Intent(MainActivity.this, TrackpadActivity.class);
@@ -2821,7 +2760,19 @@ public class MainActivity extends Activity {
         Button btnRefresh = dialogView.findViewById(R.id.btn_screenshot_refresh);
         Button btnSave = dialogView.findViewById(R.id.btn_screenshot_save);
 
-        Dialog dialog = createPage(dialogView, false);
+        // A popup card the size of the picture (a landscape screen leaves most of a full page empty);
+        // tap outside or swipe back to close
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        dialog.setContentView(dialogView);
+        dialog.setCanceledOnTouchOutside(true);
+        android.view.Window w = dialog.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(
+                    new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT), dpToPx(12)));
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setDimAmount(0.6f);
+        }
 
         Runnable fetchScreenshot = () -> {
             pbLoading.setVisibility(View.VISIBLE);
@@ -3390,6 +3341,12 @@ public class MainActivity extends Activity {
                 loader.load(parentBrowsePath);
             }
         });
+        // Swiping back goes up a folder, like any file browser; at the top it closes the explorer
+        dialog.setOnKeyListener((d, keyCode, event) -> {
+            if (keyCode != android.view.KeyEvent.KEYCODE_BACK || parentBrowsePath == null) return false;
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP) loader.load(parentBrowsePath);
+            return true;
+        });
         btnRefresh.setOnClickListener(v -> loader.load(currentBrowsePath != null ? currentBrowsePath : "shortcuts"));
 
         if (btnHidden != null) {
@@ -3476,7 +3433,7 @@ public class MainActivity extends Activity {
                             }
                         } else {
                             if (tvMediaStatus != null) tvMediaStatus.setText("Nothing playing");
-                            if (tvMediaTitle != null) tvMediaTitle.setText("No media on computer");
+                            if (tvMediaTitle != null) tvMediaTitle.setText("Silence in orbit");
                             if (btnMediaPlayPause != null) setTopIcon(btnMediaPlayPause, R.drawable.ic_o_play, getColor(R.color.o_on_accent));
                             if (tvMediaArtist != null) tvMediaArtist.setText("");
                         }

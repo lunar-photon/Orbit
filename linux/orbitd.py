@@ -2664,9 +2664,9 @@ def start_clipboard_monitor(auth_mgr):
                 if curr:
                     with _clipboard_lock:
                         if curr != _last_pc_clipboard and curr != _last_phone_clipboard:
+                            # Only noted: the phone gets the computer's clipboard when you send
+                            # it ("Send clipboard to phone"), not every time something is copied
                             _last_pc_clipboard = curr
-                            # Broadcast clipboard content to connected phone(s)
-                            auth_mgr.broadcast_ndjson(json.dumps({"event": "clipboard", "text": curr}) + "\n")
             except Exception:
                 pass
 
@@ -2892,6 +2892,18 @@ class VirtualMouse:
     def __init__(self):
         self.lock = threading.Lock()
         self.fd = None
+        self._last_try = 0.0
+        self._open()
+
+    def _ready(self):
+        """Open the device if it isn't yet. At boot the service starts before you log in, when
+        /dev/uinput isn't yours yet (access comes with the login), so keep trying on use."""
+        if self.fd is None and time.time() - self._last_try > 2:
+            self._open()
+        return self.fd is not None
+
+    def _open(self):
+        self._last_try = time.time()
         try:
             self.fd = os.open('/dev/uinput', os.O_WRONLY | os.O_NONBLOCK)
             fcntl.ioctl(self.fd, UI_SET_EVBIT, EV_KEY)
@@ -2916,11 +2928,19 @@ class VirtualMouse:
             sys.stderr.write("  Virtual Input Keyboard & Mouse (/dev/uinput) initialized successfully\n")
             sys.stderr.flush()
         except Exception as e:
-            sys.stderr.write(f"Warning: Cannot initialize /dev/uinput: {e}\n")
+            if self.fd is not None:
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+            if not getattr(self, '_warned', False):
+                sys.stderr.write(f"Warning: Cannot initialize /dev/uinput yet ({e}); will retry when input arrives\n")
+                self._warned = True
             self.fd = None
 
+
     def emit(self, ev_type, ev_code, val):
-        if not self.fd:
+        if not self._ready():
             return
         now = time.time()
         sec = int(now)
@@ -2929,7 +2949,7 @@ class VirtualMouse:
         os.write(self.fd, data)
 
     def move(self, dx, dy):
-        if not self.fd:
+        if not self._ready():
             return
         with self.lock:
             try:
@@ -2945,7 +2965,7 @@ class VirtualMouse:
                 self.emit(EV_SYN, 0, 0)
 
     def click(self, button="left"):
-        if not self.fd:
+        if not self._ready():
             return
         with self.lock:
             code = BTN_RIGHT if button == "right" else (BTN_MIDDLE if button == "middle" else BTN_LEFT)
@@ -2955,7 +2975,7 @@ class VirtualMouse:
             self.emit(EV_SYN, 0, 0)
 
     def mouse_down(self, button="left"):
-        if not self.fd:
+        if not self._ready():
             return
         with self.lock:
             code = BTN_RIGHT if button == "right" else (BTN_MIDDLE if button == "middle" else BTN_LEFT)
@@ -2963,7 +2983,7 @@ class VirtualMouse:
             self.emit(EV_SYN, 0, 0)
 
     def mouse_up(self, button="left"):
-        if not self.fd:
+        if not self._ready():
             return
         with self.lock:
             code = BTN_RIGHT if button == "right" else (BTN_MIDDLE if button == "middle" else BTN_LEFT)
@@ -2971,7 +2991,7 @@ class VirtualMouse:
             self.emit(EV_SYN, 0, 0)
 
     def scroll(self, dy, dx=0):
-        if not self.fd:
+        if not self._ready():
             return
         with self.lock:
             if dy != 0:
@@ -2981,7 +3001,7 @@ class VirtualMouse:
             self.emit(EV_SYN, 0, 0)
 
     def press_key(self, key_name):
-        if not self.fd:
+        if not self._ready():
             return
         key_str = str(key_name).strip().lower()
         if not key_str:
@@ -3019,7 +3039,7 @@ class VirtualMouse:
                 self.emit(EV_SYN, 0, 0)
 
     def type_text(self, text):
-        if not self.fd or not text:
+        if not text or not self._ready():
             return
         with self.lock:
             for ch in str(text):

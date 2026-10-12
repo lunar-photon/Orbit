@@ -391,7 +391,7 @@ public class AuthService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         // Started again whenever the app opens: keep showing the current state, not "Connecting"
         startForeground(NOTIFICATION_ID_FOREGROUND, buildForegroundNotification(
-                lastForegroundStatus != null ? lastForegroundStatus : "Connecting to computer…"));
+                lastForegroundStatus != null ? lastForegroundStatus : "Launching into orbit…"));
 
         if (intent != null && ACTION_RECONNECT.equals(intent.getAction())) {
             if (currentConn == null && workerThread != null) {
@@ -513,7 +513,7 @@ public class AuthService extends Service {
                     DeviceManager.setActiveUrl(AuthService.this, targetUrl);
                     active.activeUrl = targetUrl;
 
-                    broadcastStatus(true, "Connected", isInternet);
+                    broadcastStatus(true, "Orbiting " + active.hostname, isInternet);
                     updateForegroundNotification("Orbiting " + active.hostname + (isInternet ? " · over the internet" : ""));
                     sendPhoneStatusToPc(active);
 
@@ -558,7 +558,7 @@ public class AuthService extends Service {
                 } else {
                     consecutiveFails++;
                     broadcastStatus(false, "Reconnecting…");
-                    updateForegroundNotification("Searching for computer...");
+                    updateForegroundNotification("Looking for your computer in the sky…");
                 }
             } catch (Exception e) {
                 if (isSwitchingNetwork) {
@@ -567,7 +567,7 @@ public class AuthService extends Service {
                     consecutiveFails++;
                     Log.w(TAG, "Connection loop error: " + e.getMessage() + " (fail #" + consecutiveFails + ")");
                     broadcastStatus(false, "Reconnecting…");
-                    updateForegroundNotification("Searching for computer...");
+                    updateForegroundNotification("Looking for your computer in the sky…");
                 }
 
             } finally {
@@ -830,7 +830,7 @@ public class AuthService extends Service {
             builder.setPriority(Notification.PRIORITY_MIN);
         }
 
-        return builder.setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+        return builder.setSmallIcon(R.drawable.ic_o_notify)
                 .setContentTitle("Orbit")
                 .setContentText(status)
                 .setContentIntent(pendingIntent)
@@ -972,19 +972,31 @@ public class AuthService extends Service {
         }).start();
     }
 
+    /** The computer sent its clipboard: offer it, don't overwrite the phone's clipboard. */
     private void handleClipboardEvent(JSONObject json) {
         String text = json.optString("text", "");
-        if (!text.isEmpty()) {
-            new Handler(Looper.getMainLooper()).post(() -> {
-                try {
-                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (cm != null) {
-                        lastSyncedClipboard = text; // Prevent echo loop!
-                        cm.setPrimaryClip(ClipData.newPlainText("Orbit", text));
-                        Toast.makeText(AuthService.this, "Clipboard copied from computer", Toast.LENGTH_SHORT).show();
-                    }
-                } catch (Exception ignored) {}
-            });
+        if (text.isEmpty()) return;
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            Intent copy = new Intent(this, ActionReceiver.class);
+            copy.setAction(ActionReceiver.ACTION_COPY_CLIPBOARD);
+            copy.putExtra("text", text);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+            PendingIntent pi = PendingIntent.getBroadcast(this, 4100, copy, flags);
+            String preview = text.length() > 300 ? text.substring(0, 300) + "…" : text;
+            Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, FileServer.CHANNEL_FILE) : new Notification.Builder(this);
+            b.setSmallIcon(R.drawable.ic_o_clipboard)
+                    .setContentTitle("Clipboard from computer")
+                    .setContentText(preview.replace('\n', ' '))
+                    .setStyle(new Notification.BigTextStyle().bigText(preview))
+                    .setContentIntent(pi)                      // tapping it copies too
+                    .addAction(new Notification.Action.Builder(null, "Copy", pi).build())
+                    .setAutoCancel(true);
+            nm.notify(ActionReceiver.CLIPBOARD_NOTIF_ID, b.build());
+        } catch (Exception e) {
+            Log.w(TAG, "Clipboard notification error: " + e.getMessage());
         }
     }
 

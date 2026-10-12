@@ -345,76 +345,70 @@
                             android:text="Get clipboard" />
                     </LinearLayout>
 
-                    <!-- Campus internet (only when the captive portal feature is on) -->
+                    <!-- Campus internet (only when the captive portal feature is on): one row, the globe's
+                         colour says the state; tap the card for more options -->
                     <LinearLayout
                         android:id="@+id/layout_captive_portal"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
                         android:background="@drawable/bg_card"
-                        android:orientation="vertical"
-                        android:padding="16dp"
+                        android:baselineAligned="false"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="16dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingBottom="12dp"
                         android:visibility="gone">
 
+                        <ImageView
+                            android:id="@+id/iv_captive_icon"
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/ic_o_globe"
+                            android:tint="@color/o_text_2" />
+
                         <LinearLayout
-                            android:layout_width="match_parent"
+                            android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:baselineAligned="false"
-                            android:orientation="horizontal">
-
-                            <ImageView
-                                android:layout_width="20dp"
-                                android:layout_height="20dp"
-                                android:src="@drawable/ic_o_globe"
-                                android:tint="@color/o_text_2"
-                                android:importantForAccessibility="no" />
-
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginStart="12dp"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    style="@style/Text"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:fontFamily="@font/geist_medium"
-                                    android:textSize="14sp"
-                                    android:text="Campus internet" />
-
-                                <TextView
-                                    android:id="@+id/tv_captive_status_badge"
-                                    style="@style/Text.Caption"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="3dp"
-                                    android:text="Checking…" />
-                            </LinearLayout>
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
                             <TextView
-                                android:id="@+id/tv_captive_actions_link"
+                                style="@style/Text"
                                 android:layout_width="wrap_content"
-                                android:layout_height="44dp"
-                                android:background="@drawable/btn_ghost"
+                                android:layout_height="wrap_content"
                                 android:fontFamily="@font/geist_medium"
-                                android:gravity="center"
-                                android:paddingStart="12dp"
-                                android:paddingEnd="12dp"
-                                android:text="More"
-                                android:textColor="@color/o_accent"
-                                android:textSize="13sp" />
+                                android:text="Campus internet"
+                                android:textSize="14sp" />
+
+                            <TextView
+                                android:id="@+id/tv_captive_status_badge"
+                                style="@style/Text.Caption"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:ellipsize="end"
+                                android:singleLine="true"
+                                android:text="Checking…" />
                         </LinearLayout>
 
                         <Button
                             android:id="@+id/btn_captive_portal_toggle"
                             style="@style/Btn.Secondary"
-                            android:layout_width="match_parent"
-                            android:layout_height="44dp"
-                            android:layout_marginTop="12dp"
-                            android:text="Log in" />
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="8dp"
+                            android:minWidth="0dp"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="14dp"
+                            android:text="Log in"
+                            android:textSize="13sp" />
                     </LinearLayout>
 
 
@@ -486,7 +480,7 @@
                                 android:ellipsize="end"
                                 android:fontFamily="@font/geist_medium"
                                 android:singleLine="true"
-                                android:text="No media on computer" />
+                                android:text="Silence in orbit" />
 
                             <TextView
                                 android:id="@+id/tv_media_artist"
@@ -799,7 +793,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="16dp"
-                                android:text="No open terminals" />
+                                android:text="No terminals in orbit" />
 
                             <TextView
                                 style="@style/Text.Secondary"
