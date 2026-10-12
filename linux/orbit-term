@@ -20,11 +20,37 @@ import signal
 import socket
 import struct
 import sys
+import re
 import termios
 import time
 import tty
 
 REC_DIR = os.path.expanduser('~/.cache/orbit/term')
+
+# Inputs that only scroll an app's own view (Claude Code's fullscreen mode): the mouse wheel
+# (SGR reports, button 64/65 plus modifier bits), Page Up/Down and Ctrl+Home/End. Noting them
+# in the timing file lets the replay tell "you scrolled" from "new text arrived" for certain.
+# Only the kind of input is written, never what was typed.
+_WHEEL_SGR = re.compile(rb'\x1b\[<(\d+);\d+;\d+[Mm]')
+_WHEEL_X10 = re.compile(rb'\x1b\[M([\x20-\xff])[\x20-\xff][\x20-\xff]')
+_SCROLL_KEYS = ((re.compile(rb'\x1b\[5(?:;\d+)?~'), 'up'), (re.compile(rb'\x1b\[6(?:;\d+)?~'), 'down'),
+                (re.compile(rb'\x1b\[1;\d+H'), 'top'), (re.compile(rb'\x1b\[1;\d+F'), 'bottom'))
+
+
+def scroll_inputs(data):
+    """The scroll directions in a chunk of input, in order of appearance."""
+    found = []
+    for m in _WHEEL_SGR.finditer(data):
+        b = int(m.group(1)) & ~(4 | 8 | 16)     # drop shift/alt/ctrl bits
+        if b in (64, 65):
+            found.append((m.start(), 'up' if b == 64 else 'down'))
+    for m in _WHEEL_X10.finditer(data):
+        b = (m.group(1)[0] - 32) & ~(4 | 8 | 16)
+        if b in (64, 65):
+            found.append((m.start(), 'up' if b == 64 else 'down'))
+    for rx, d in _SCROLL_KEYS:
+        found += [(m.start(), d) for m in rx.finditer(data)]
+    return [d for _, d in sorted(found)]
 
 
 def winsize(fd):
@@ -85,7 +111,7 @@ def main():
     timing = open(base + '.timing', 'w', buffering=1)
     os.chmod(base + '.log', 0o600)
     os.chmod(base + '.timing', 0o600)
-    timing.write(f'H 0.000000 COLUMNS {cols}\nH 0.000000 LINES {rows}\n')
+    timing.write(f'H 0.000000 COLUMNS {cols}\nH 0.000000 LINES {rows}\nH 0.000000 ORBIT_INPUT_MARKS 1\n')
     meta = {'pid': os.getpid(), 'shell_pid': child, 'command': cmd,
             'app': os.environ.get('TERM_PROGRAM') or ('konsole' if os.environ.get('KONSOLE_VERSION') else ''),
             'tty': os.ttyname(0), 'started': time.time()}
@@ -181,6 +207,8 @@ def main():
                     data = b''
                 if not data:
                     break                            # the terminal is gone
+                for direction in scroll_inputs(data):
+                    timing.write(f'X {stamp()} SCROLL {direction}\n')
                 pending += data
             if server in ready:
                 try:

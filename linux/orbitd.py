@@ -1490,6 +1490,8 @@ class TermRecording:
         self.alt_latest_rows = []     # the last screen showing the latest part (not scrolled back)
         self.alt_scrolled = False     # the app shows an older part (you scrolled back on the computer)
         self.alt_last_seen = []       # the previous screen's body, scrolled or not
+        self.input_marks = False      # the recording notes scroll inputs (orbit-term)
+        self.scroll_input_until = -1.0   # recorded time until which a redraw follows a scroll input
         self.alt_status_seen = {}     # masked row -> scrolls it stayed pinned through
         self.alt_rows, self.alt_rows_width = None, 0   # rendered rows of the current screen
         self.revision = 0            # bumps whenever the screen may have changed
@@ -1634,8 +1636,15 @@ class TermRecording:
             shown = [plain for plain, _ in body if plain.strip()]
             continuous = bool(shown) and sum(1 for p in shown if p in seen) * 3 >= len(shown)
             self.alt_last_seen = body
-            if (self.alt_frames and continuous and pos < self.alt_pos and len(merged) == len(self.alt_frames)
-                    and sum(1 for a, b in zip(merged, self.alt_frames) if a != b) <= 2):
+            nothing_new = (bool(self.alt_frames) and pos < self.alt_pos and len(merged) == len(self.alt_frames)
+                           and sum(1 for a, b in zip(merged, self.alt_frames) if a != b) <= 2)
+            if self.input_marks:
+                # The recording says when you scrolled: an older part after a scroll input (or
+                # while still scrolled back) is scrolling; otherwise follow the screen as it is
+                scrolling = nothing_new and (self.clock <= self.scroll_input_until or self.alt_scrolled)
+            else:
+                scrolling = nothing_new and continuous      # older recordings: judge by the screens
+            if scrolling:
                 # Everything on screen is already in the history, and it's an older part than
                 # the latest: you're scrolling back in the app on the computer, nothing new was
                 # printed. Change nothing, so the phone doesn't move; new lines resume it.
@@ -1709,6 +1718,16 @@ class TermRecording:
                     kind = parts[0]
                     if kind == 'H' and len(parts) >= 4 and parts[2] in ('COLUMNS', 'LINES'):
                         self.size[0 if parts[2] == 'COLUMNS' else 1] = int(parts[3])
+                    elif kind == 'H' and len(parts) >= 3 and parts[2] == 'ORBIT_INPUT_MARKS':
+                        self.input_marks = True          # orbit-term notes scroll inputs (below)
+                    elif kind == 'X' and len(parts) >= 4 and parts[2] == 'SCROLL':
+                        # you scrolled the app's view (wheel, Page Up/Down, Ctrl+Home/End): what
+                        # it redraws next is an older part, not new output
+                        try:
+                            self.clock += float(parts[1])
+                        except ValueError:
+                            pass
+                        self.scroll_input_until = self.clock + 1.0
                     elif kind == 'O' and len(parts) >= 3:
                         n = int(parts[2])
                         try:

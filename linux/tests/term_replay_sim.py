@@ -165,3 +165,46 @@ def scroll_without_hint_check():
     print(f'{"J scroll, no hint":<22} phone unchanged while scrolling, then in order: {ok}')
 
 scroll_without_hint_check()
+
+
+# K: recordings from orbit-term mark scroll inputs. A big jump to the top right after a scroll
+# input is scrolling (the phone holds), a later redraw while still scrolled back holds too, and
+# a panel opened with no scroll input is followed.
+def input_marks_check():
+    import os, tempfile
+    d = tempfile.mkdtemp()
+    base = os.path.join(d, 'rec')
+    log, timing = open(base + '.log', 'wb'), open(base + '.timing', 'w')
+    timing.write(f'H 0.000000 COLUMNS {COLS}\nH 0.000000 LINES {ROWS}\nH 0.000000 ORBIT_INPUT_MARKS 1\n')
+    def out(text, delay=0.5):
+        b = text.encode()
+        log.write(b); timing.write(f'O {delay:.6f} {len(b)}\n')
+    def screen(lines):
+        out('\x1b[H\x1b[2J' + '\r\n'.join(l.ljust(COLS)[:COLS] for l in lines))
+    footer = ['─' * 40, '❯', '─' * 40, '  status']
+    msgs = [f'message {i}' for i in range(90)]
+    out('\x1b[?1049h', 0.1)
+    for k in range(20, 61, 2):
+        screen(msgs[k - 20:k] + footer)
+    log.flush(); timing.flush()
+    r = ns['TermRecording'](base); r.update()
+    strip = lambda l: re.sub(r'\x1b\[[0-9;:]*m', '', l).rstrip()
+    before = [strip(l) for l in r.render(10000)[0]]
+    timing.write('X 0.300000 SCROLL top\n')                       # Ctrl+Home: straight to the top
+    screen(msgs[0:20] + footer)
+    screen(msgs[0:20] + footer[:3] + ['  status ·'])               # spinner tick while up there
+    log.flush(); timing.flush(); r.update()
+    held = [strip(l) for l in r.render(10000)[0]] == before
+    timing.write('X 0.300000 SCROLL bottom\n')                    # Ctrl+End, then new output
+    screen(msgs[40:60] + footer)
+    screen(msgs[44:64] + footer)
+    log.flush(); timing.flush(); r.update()
+    nums = [int(l.split()[1]) for l in (strip(x) for x in r.render(10000)[0]) if l.startswith('message')]
+    in_order = nums == sorted(nums) and len(nums) == len(set(nums)) and nums[-1] == 63
+    screen([f'PANEL row {i}' for i in range(20)] + footer)           # a panel, no scroll input
+    log.flush(); timing.flush(); r.update()
+    followed = strip(r.render(10000)[0][-5]) == 'PANEL row 19'
+    ok = held and in_order and followed
+    print(f'{"K scroll inputs":<22} held after scroll input, in order after, panel followed: {ok}')
+
+input_marks_check()
