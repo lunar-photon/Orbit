@@ -1359,6 +1359,7 @@ def _render_line(line, width):
 
 ALT_FRAME_INTERVAL = 0.3      # seconds of recorded time between snapshots of a full-screen app
 ALT_HISTORY_MAX = 5000
+ALT_REENTER_SECONDS = 2.0     # back on its screen this soon after leaving: the same app
 
 
 _ANSI_SGR = re.compile(r'\x1b\[[0-9;:]*m')
@@ -1528,6 +1529,7 @@ class TermRecording:
         self.scroll_input_until = -1.0   # recorded time until which a redraw follows a scroll input
         self.alt_status_seen = {}     # masked row -> scrolls it stayed pinned through
         self.alt_rows, self.alt_rows_width = None, 0   # rendered rows of the current screen
+        self.alt_saved = None         # (recorded time, stitching) of a full-screen app that just left
         self.revision = 0            # bumps whenever the screen may have changed
         self._render_cache = (None, None)
         self.clock = self.last_snap = 0.0
@@ -1554,14 +1556,34 @@ class TermRecording:
             # we rebuild one by stitching its frames together (see _snapshot_alt)
             if m.group(1) == 'h':
                 self._snapshot_alt()
+                saved, self.alt_saved = self.alt_saved, None
                 self.alt = self._new_screen(False)
                 self._reset_stitching()
+                if saved and self.clock - saved[0] < ALT_REENTER_SECONDS:
+                    # The app left its screen and came straight back (Claude Code does this to
+                    # open its sessions dashboard): the same app, so its history carries on
+                    self._restore_stitching(saved[1])
             else:
+                if self.alt is not None:
+                    self._snapshot_alt()
+                    self.alt_saved = (self.clock, self._stitching())
                 self.alt = None
                 if self.main_tui:
                     self._reset_stitching()
             pos = m.end()
         self._feed_plain(text[pos:])
+
+    _STITCH_FIELDS = ('alt_frames', 'alt_footer', 'alt_prev_body', 'alt_pos', 'view', 'views',
+                      'alt_prev_raw', 'alt_status_seen', 'alt_latest_rows', 'alt_last_seen')
+
+    def _stitching(self):
+        return {k: getattr(self, k) for k in self._STITCH_FIELDS}
+
+    def _restore_stitching(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
+        self.alt_scrolled = False
+        self.alt_rows = None
 
     def _reset_stitching(self):
         self.alt_frames, self.alt_footer, self.alt_prev_body, self.alt_pos = [], [], [], 0
@@ -1656,13 +1678,22 @@ class TermRecording:
             if seen:
                 body = body[:len(body) - seen]
             self.alt_prev_raw = raw_body
-            view = self._view_of(self.alt_footer)
+            view = self._view_of(self.alt_footer, raw_body)
             if view != self.view:
                 # The app shows another view (e.g. an agent's transcript): park this history
                 # and continue the other one, so the phone shows only what the computer does
                 self.views[self.view] = (self.alt_frames, self.alt_pos, self.alt_prev_body)
                 self.alt_frames, self.alt_pos, self.alt_prev_body = self.views.pop(view, ([], 0, []))
                 self.view = view
+            if view == _SESSIONS_VIEW:
+                # Claude Code's sessions dashboard is a live status screen: show it as it is now,
+                # with no history of its own and nothing added to the conversation's
+                self.alt_frames, self.alt_pos, self.alt_prev_body = [], 0, body
+                self.alt_scrolled = False
+                self.alt_latest_rows = frame
+                self.alt_last_seen = body
+                self.last_snap = self.clock
+                return
             merged, pos = _merge_frames(self.alt_frames, body)
             # Scrolling moves a few lines at a time, so the screen shares most lines with the one
             # just before it; a view switch (a panel, and back) replaces it all at once
@@ -1703,11 +1734,14 @@ class TermRecording:
             self.alt_prev_body = body
         self.last_snap = self.clock
 
-    def _view_of(self, footer):
+    def _view_of(self, footer, body=()):
         """Which view a full-screen app shows, from its input box: Claude Code's agent view
-        says "Message @agent…", its views list marks the open one with ●, and the main
-        conversation has a plain prompt. Unknown (e.g. while typing): the current one."""
+        says "Message @agent…", its views list marks the open one with ●, its sessions
+        dashboard says the conversation moved to the background, and the main conversation
+        has a plain prompt. Unknown (e.g. while typing): the current one."""
         text = '\n'.join(plain for plain, _ in footer)
+        if any(_SESSIONS_HINT.match(plain) for plain, _ in footer) or any(_SESSIONS_HINT.match(plain) for plain, _ in body[:12]):
+            return _SESSIONS_VIEW
         if not text:
             return self.view
         m = _VIEW_AGENT.search(text)
@@ -1931,6 +1965,10 @@ class TermRecording:
 
 _PROMPT_MARKS = ('❯', '➜', '›', '»', '$', '%', '#', '>')
 _VIEW_AGENT = re.compile(r'Message @([\w.-]+)')
+_SESSIONS_VIEW = '\x00sessions'          # not an agent's name: the dashboard of all sessions
+# its own lines (a whole row each, so a conversation quoting them doesn't count)
+_SESSIONS_HINT = re.compile(r'^\s*(Your conversation moved to the background\b|❯\s*describe a task for a new session\s*$'
+                            r'|⏵⏵ .*\benter to return · space to reply\b)')
 _VIEW_LISTED = re.compile(r'^\s*(?:❯\s*)?●\s+([\w.-]+)')
 
 
@@ -2267,7 +2305,7 @@ def claude_checked_render(term_id, rec, max_lines, join):
     """rec.render, with a Claude Code tab's history checked against its log (cached)."""
     lines, total, more = rec.render(100000, join)
     pid = _recorder_pid(term_id)
-    log = claude_log_for(pid) if pid and rec._tui() is not None else None
+    log = claude_log_for(pid) if pid and rec._tui() is not None and rec.view == 'main' else None
     if log is None:
         take = lines[-max_lines:]
         return take, total, total > len(take)
