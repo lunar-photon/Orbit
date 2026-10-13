@@ -2080,22 +2080,48 @@ _keep_awake_proc = None
 
 # Holds KDE's block (the one the battery applet uses) under Orbit's own name, so the
 # applet lists "Orbit: Kept awake from your phone", once: one request for both sleep and
-# screen dimming (1 | 4), not one each. Elsewhere, the freedesktop calls. It lasts as long
-# as this process lives.
+# screen dimming (1 | 4). The power manager may not be running yet (at login this service
+# starts first) or may restart and forget every block, so the helper asks again whenever it
+# (re)appears, and checks every few seconds until a request holds. Without KDE's power
+# manager, the freedesktop calls. The block lasts as long as this process lives.
 _KEEP_AWAKE_HELPER = """
-import sys
-from PyQt6.QtCore import QCoreApplication, QMetaType
-from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusArgument
+import sys, time
+from PyQt6.QtCore import QCoreApplication, QMetaType, QTimer
+from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusArgument, QDBusServiceWatcher
+WHO, WHY = "Orbit", "Kept awake from your phone"
+KDE = "org.kde.Solid.PowerManagement"
+FD = (("org.freedesktop.PowerManagement", "/org/freedesktop/PowerManagement/Inhibit",
+       "org.freedesktop.PowerManagement.Inhibit"),
+      ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver"))
 app = QCoreApplication(sys.argv)
 bus = QDBusConnection.sessionBus()
-kde = QDBusInterface("org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement/PolicyAgent",
-                     "org.kde.Solid.PowerManagement.PolicyAgent", bus)
-reply = kde.call("AddInhibition", QDBusArgument(1 | 4, QMetaType.Type.UInt.value), "Orbit", "Kept awake from your phone")
-if reply.errorMessage():
-    for service, path, iface in (("org.freedesktop.PowerManagement", "/org/freedesktop/PowerManagement/Inhibit",
-                                  "org.freedesktop.PowerManagement.Inhibit"),
-                                 ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver")):
-        QDBusInterface(service, path, iface, bus).call("Inhibit", "Orbit", "Kept awake from your phone")
+started = time.monotonic()
+held = [False]
+
+def hold():
+    if held[0]:
+        return
+    if bus.interface().isServiceRegistered(KDE).value():
+        kde = QDBusInterface(KDE, "/org/kde/Solid/PowerManagement/PolicyAgent", KDE + ".PolicyAgent", bus)
+        reply = kde.call("AddInhibition", QDBusArgument(1 | 4, QMetaType.Type.UInt.value), WHO, WHY)
+        held[0] = not reply.errorMessage()
+    elif time.monotonic() - started > 60 and bus.interface().isServiceRegistered(FD[0][0]).value():
+        # no KDE power manager after a minute: another desktop
+        for service, path, iface in FD:
+            QDBusInterface(service, path, iface, bus).call("Inhibit", WHO, WHY)
+        held[0] = True
+
+def gone(name):
+    held[0] = False            # a restarted power manager has forgotten every block
+
+watcher = QDBusServiceWatcher(KDE, bus, QDBusServiceWatcher.WatchModeFlag.WatchForRegistration
+                              | QDBusServiceWatcher.WatchModeFlag.WatchForUnregistration)
+watcher.serviceRegistered.connect(lambda name: QTimer.singleShot(1000, hold))
+watcher.serviceUnregistered.connect(gone)
+timer = QTimer()
+timer.timeout.connect(hold)
+timer.start(5000)
+hold()
 app.exec()
 """
 
