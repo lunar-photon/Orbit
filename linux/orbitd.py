@@ -1966,6 +1966,322 @@ def recording_for(pid):
     rec.update()
     return rec
 
+# ---- Claude Code: its log checks the stitched history ----
+# Claude Code's fullscreen mode only ever draws one screen, so its history on the phone is
+# pieced together from screens (TermRecording), which can repeat or lose a message. Claude
+# Code also writes every message to ~/.claude/projects/<dir>/<session>.jsonl, and
+# ~/.claude/sessions/<pid>.json says which session a running claude has. The phone still gets
+# what the terminal drew; the log only checks it: a message the history shows twice is shown
+# once, and one it lost between two others is put back (see _check_with_log).
+CLAUDE_DIR = os.path.expanduser('~/.claude')
+_CLAUDE_PROC_CACHE = {}       # recorder pid -> (checked at, claude pid or None)
+_CLAUDE_LOGS = {}             # log path -> ClaudeLog
+_CLAUDE_LOGS_LOCK = threading.Lock()
+
+# Claude Code's own colours, so the phone looks like the computer
+_C_USER = '\x1b[0;38;2;153;153;153;48;2;55;55;55m'
+_C_USER_TEXT = '\x1b[0;38;2;255;255;255;48;2;55;55;55m'
+_C_DIM = '\x1b[0;38;2;153;153;153m'
+_C_RESET = '\x1b[0m'
+_MD_BOLD = re.compile(r'\*\*(.+?)\*\*')
+
+
+def _claude_pid_under(recorder_pid):
+    """The claude process running in this terminal (below its recorder), or None."""
+    now = time.time()
+    hit = _CLAUDE_PROC_CACHE.get(recorder_pid)
+    if hit and now - hit[0] < 3:
+        return hit[1]
+    children = collections.defaultdict(list)
+    for name in os.listdir('/proc'):
+        if not name.isdigit():
+            continue
+        try:
+            with open(f'/proc/{name}/stat') as f:
+                stat = f.read()
+            ppid = int(stat[stat.rindex(')') + 2:].split()[1])
+        except (OSError, ValueError):
+            continue
+        children[ppid].append(int(name))
+    found, todo = None, list(children.get(recorder_pid, []))
+    while todo:
+        pid = todo.pop()
+        if os.path.exists(os.path.join(CLAUDE_DIR, 'sessions', f'{pid}.json')):
+            found = max(found or 0, pid)
+        todo += children.get(pid, [])
+    _CLAUDE_PROC_CACHE[recorder_pid] = (now, found)
+    return found
+
+
+def _claude_log_path(claude_pid):
+    try:
+        with open(os.path.join(CLAUDE_DIR, 'sessions', f'{claude_pid}.json')) as f:
+            session = json.load(f).get('sessionId', '')
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not re.fullmatch(r'[0-9a-f-]{36}', session or ''):
+        return None
+    projects = os.path.join(CLAUDE_DIR, 'projects')
+    try:
+        for d in os.listdir(projects):
+            path = os.path.join(projects, d, session + '.jsonl')
+            if os.path.exists(path):
+                return path
+    except OSError:
+        pass
+    return None
+
+
+def _claude_item_lines(kind, text):
+    """One message as ANSI lines, styled like Claude Code (unwrapped: the phone wraps)."""
+    rows = text.split('\n')
+    if kind == 'user':
+        return [f'{_C_USER}❯ {_C_USER_TEXT}{rows[0]} {_C_RESET}'] + [f'{_C_USER_TEXT}  {r} {_C_RESET}' for r in rows[1:]]
+    if kind == 'text':
+        return [f'{_C_RESET}● {_claude_md(rows[0])}{_C_RESET}'] + [f'  {_claude_md(r)}{_C_RESET}' if r else '' for r in rows[1:]]
+    if kind == 'tool':
+        return [f'{_C_DIM}● {text}{_C_RESET}']
+    return [f'{_C_DIM}──── {text} ────{_C_RESET}']
+
+
+def _claude_md(line):
+    return _MD_BOLD.sub('\x1b[1m\\1\x1b[22m', line)
+
+
+def _tool_summary(name, inp):
+    """One line for a tool call, like Claude Code's own "● Bash(…)"."""
+    if not isinstance(inp, dict):
+        inp = {}
+    arg = ''
+    if name == 'Bash':
+        arg = inp.get('description') or (inp.get('command') or '').strip().split('\n')[0]
+    elif name in ('Read', 'Write', 'Edit', 'NotebookEdit'):
+        arg = (inp.get('file_path') or inp.get('notebook_path') or '').replace(os.path.expanduser('~'), '~')
+    elif name in ('Grep', 'Glob'):
+        arg = inp.get('pattern') or ''
+    elif name in ('Agent', 'Task'):
+        arg = inp.get('description') or ''
+    elif name == 'WebFetch':
+        arg = inp.get('url') or ''
+    elif name == 'WebSearch':
+        arg = inp.get('query') or ''
+    elif name == 'Skill':
+        arg = inp.get('skill') or ''
+    arg = ' '.join(str(arg).split())
+    if len(arg) > 160:
+        arg = arg[:159] + '…'
+    return f'{name}({arg})' if arg else name
+
+
+def _user_text(content):
+    """What you typed, from a user entry, or None for entries that aren't a typed message."""
+    if isinstance(content, list):
+        content = '\n'.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
+    if not isinstance(content, str) or not content.strip():
+        return None
+    s = content.strip()
+    if s.startswith('<'):
+        m = re.match(r'<command-name>(.*?)</command-name>(?:.*?<command-args>(.*?)</command-args>)?', s, re.S)
+        if m:
+            return (m.group(1) + ' ' + (m.group(2) or '')).strip()
+        m = re.match(r'<bash-input>(.*?)</bash-input>', s, re.S)
+        if m:
+            return '! ' + m.group(1).strip()
+        if s.startswith('<pasted_content'):
+            return s
+        return None                  # command output, task notices, reminders: not typed
+    return s
+
+
+def _norm_words(s):
+    return ' '.join(re.sub(r'[^\w]+', ' ', s.lower()).split())
+
+
+class ClaudeLog:
+    """Reads one Claude Code conversation log as it grows, keeping what the phone shows:
+    your messages, Claude's replies, and one line per tool call."""
+
+    def __init__(self, path):
+        self.path, self.pos, self.carry = path, 0, b''
+        self.items = []              # (kind, text): 'user', 'text', 'tool', 'note'
+        self.version = 0
+        self._lines = self._recent = (None, None)      # (version, value) caches
+        self.lock = threading.Lock()
+
+    def update(self):
+        with self.lock:
+            try:
+                with open(self.path, 'rb') as f:
+                    f.seek(self.pos)
+                    data = f.read()
+            except OSError:
+                return
+            if not data:
+                return
+            self.pos += len(data)
+            lines = (self.carry + data).split(b'\n')
+            self.carry = lines.pop()
+            for raw in lines:
+                self._add(raw)
+            self.version += 1
+
+    def _add(self, raw):
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            return
+        if not isinstance(d, dict) or d.get('isSidechain'):
+            return
+        kind = d.get('type')
+        msg = d.get('message') if isinstance(d.get('message'), dict) else {}
+        if kind == 'user' and not d.get('isMeta') and not d.get('isCompactSummary'):
+            text = _user_text(msg.get('content'))
+            if text and text.startswith('[Request interrupted'):
+                self.items.append(('note', 'Interrupted'))     # Claude Code's marker, not typed
+            elif text:
+                self.items.append(('user', text))
+        elif kind == 'attachment':
+            a = d.get('attachment') or {}
+            # a message you sent while Claude was working
+            if a.get('type') == 'queued_command' and (a.get('origin') or {}).get('kind') == 'human':
+                text = _user_text(a.get('prompt'))
+                if text:
+                    self.items.append(('user', text))
+        elif kind == 'assistant':
+            if d.get('isApiErrorMessage') or msg.get('model') == '<synthetic>':
+                return       # "You've hit your limit" and the like: notes on screen, not replies
+            for block in msg.get('content') or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get('type') == 'text' and block.get('text', '').strip():
+                    self.items.append(('text', block['text'].strip()))
+                elif block.get('type') == 'tool_use':
+                    self.items.append(('tool', _tool_summary(block.get('name', ''), block.get('input'))))
+        elif kind == 'system' and d.get('subtype') == 'compact_boundary':
+            self.items.append(('note', 'Conversation compacted'))
+
+    def lines(self):
+        """The conversation as ANSI lines (unwrapped: the phone wraps them)."""
+        with self.lock:
+            if self._lines[0] != self.version:
+                self._lines = (self.version, self._render())
+            return list(self._lines[1])
+
+    def _render(self):
+        out = []
+        for kind, text in self.items:
+            if out:
+                out.append('')
+            out += _claude_item_lines(kind, text)
+        return out
+
+    def messages(self):
+        """(kind, text, words) of your messages and Claude's replies, in order."""
+        with self.lock:
+            if self._recent[0] != self.version:
+                self._recent = (self.version, [(k, t, _norm_words(t)) for k, t in self.items if k in ('user', 'text')])
+            return self._recent[1]
+
+def claude_log_for(recorder_pid):
+    """The conversation log of the Claude Code running in this terminal, read up to now."""
+    cpid = _claude_pid_under(recorder_pid)
+    path = _claude_log_path(cpid) if cpid else None
+    if not path:
+        return None
+    with _CLAUDE_LOGS_LOCK:
+        log = _CLAUDE_LOGS.get(path)
+        if log is None:
+            if len(_CLAUDE_LOGS) > 8:
+                _CLAUDE_LOGS.pop(next(iter(_CLAUDE_LOGS)))
+            log = _CLAUDE_LOGS[path] = ClaudeLog(path)
+    log.update()
+    return log
+
+
+_ANSI_ANY = re.compile(r'\x1b\[[0-9;:?<>=]*[A-Za-z]')
+_CHECK_WINDOW = 80            # messages to look ahead/back when placing a block
+
+
+def _check_with_log(lines, log):
+    """The stitched history of a Claude Code tab, checked against its log: a message shown
+    twice keeps its first copy, and a message lost between two shown ones is put back there.
+    Everything else stays as the terminal drew it."""
+    msgs = log.messages()
+    if not msgs:
+        return lines
+    plain = [_ANSI_ANY.sub('', l) for l in lines]
+    # blocks: a message starts at "❯ " (yours) or "● " (Claude's), and runs to the next start
+    starts = [i for i, p in enumerate(plain) if p.startswith('❯ ') or p.startswith('● ')]
+    blocks = []
+    for n, i in enumerate(starts):
+        # its lines are indented; it ends at the next message or other unindented line (a rule)
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        end = next((j for j in range(i + 1, end) if plain[j] and not plain[j].startswith(' ')), end)
+        kind = 'user' if plain[i].startswith('❯ ') else 'text'
+        # its text stops at Claude Code's notes under it ("⎿ You've hit your limit", results)
+        text_end = next((j for j in range(i + 1, end) if plain[j].lstrip().startswith('⎿')), end)
+        words = _norm_words(' '.join(p.strip().lstrip('❯● ') for p in plain[i:text_end]))
+        blocks.append([i, end, kind, words, None])
+
+    def matches(block, m):
+        kind, words = block[2], block[3]
+        if m[0] != kind or not words:
+            return False
+        return words == m[2] if len(words) < 15 else words in m[2]
+
+    last, drop = -1, set()
+    for b in blocks:
+        ahead = next((j for j in range(last + 1, min(len(msgs), last + 1 + _CHECK_WINDOW)) if matches(b, msgs[j])), None)
+        if ahead is not None:
+            b[4] = last = ahead
+        elif last >= 0 and len(b[3]) >= 15 and any(matches(b, msgs[j]) for j in range(max(0, last - _CHECK_WINDOW), last + 1)):
+            drop.add(b[0])                       # already shown above: a repeat
+    placed = [b for b in blocks if b[4] is not None]
+    shown_words = _norm_words(' '.join(plain))      # to make sure a "lost" message really is missing
+    seen = {b[4] for b in placed}
+    out, cursor = [], 0
+    for prev, nxt in zip(placed, placed[1:]):
+        # everything up to the end of `prev`'s block, minus repeats
+        for b in blocks:
+            if cursor <= b[0] < prev[1] and b[0] in drop:
+                out += lines[cursor:b[0]]
+                cursor = b[1]
+        out += lines[cursor:prev[1]]
+        cursor = prev[1]
+        lost = [j for j in range(prev[4] + 1, nxt[4]) if j not in seen and len(msgs[j][2]) >= 15
+                and ' '.join(msgs[j][2].split()[:8]) not in shown_words]
+        for j in lost:
+            if out and _ANSI_ANY.sub('', out[-1]).strip():
+                out.append('')
+            out += _claude_item_lines(msgs[j][0], msgs[j][1])
+            out.append('')
+    for b in blocks:
+        if b[0] >= cursor and b[0] in drop:
+            out += lines[cursor:b[0]]
+            cursor = b[1]
+    out += lines[cursor:]
+    return out
+
+
+def claude_checked_render(term_id, rec, max_lines, join):
+    """rec.render, with a Claude Code tab's history checked against its log (cached)."""
+    lines, total, more = rec.render(100000, join)
+    pid = _recorder_pid(term_id)
+    log = claude_log_for(pid) if pid and rec._tui() is not None else None
+    if log is None:
+        take = lines[-max_lines:]
+        return take, total, total > len(take)
+    key = (id(rec), rec.revision, log.version, join)
+    hit = _CHECKED_CACHE.get(term_id)
+    if not hit or hit[0] != key:
+        hit = (key, _check_with_log(lines, log))
+        _CHECKED_CACHE[term_id] = hit
+    checked = hit[1]
+    take = checked[-max_lines:]
+    return take, len(checked), len(checked) > len(take)
+
+_CHECKED_CACHE = {}
+
 _PALETTE_CACHE = {}
 
 def konsole_palette():
@@ -2400,7 +2716,10 @@ def konsole_session_info(svc, sid):
     return title, pid
 
 def _recorded_reply(term_id, title, rec, max_lines, join):
-    lines, total, more = rec.render(max_lines, join)
+    if rec._tui() is not None:
+        lines, total, more = claude_checked_render(term_id, rec, max_lines, join)
+    else:
+        lines, total, more = rec.render(max_lines, join)
     if not total:
         return None
     # columns: the terminal's width, so the phone can lay tables out the same way
