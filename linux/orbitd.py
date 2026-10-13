@@ -2079,17 +2079,23 @@ def prune_term_recordings():
 _keep_awake_proc = None
 
 # Holds KDE's block (the one the battery applet uses) under Orbit's own name, so the
-# applet lists "Orbit: Kept awake from your phone". It lasts as long as this process lives.
+# applet lists "Orbit: Kept awake from your phone", once: one request for both sleep and
+# screen dimming (1 | 4), not one each. Elsewhere, the freedesktop calls. It lasts as long
+# as this process lives.
 _KEEP_AWAKE_HELPER = """
 import sys
-from PyQt6.QtCore import QCoreApplication
-from PyQt6.QtDBus import QDBusConnection, QDBusInterface
+from PyQt6.QtCore import QCoreApplication, QMetaType
+from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusArgument
 app = QCoreApplication(sys.argv)
 bus = QDBusConnection.sessionBus()
-for service, path, iface in (("org.freedesktop.PowerManagement", "/org/freedesktop/PowerManagement/Inhibit",
-                              "org.freedesktop.PowerManagement.Inhibit"),
-                             ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver")):
-    QDBusInterface(service, path, iface, bus).call("Inhibit", "Orbit", "Kept awake from your phone")
+kde = QDBusInterface("org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement/PolicyAgent",
+                     "org.kde.Solid.PowerManagement.PolicyAgent", bus)
+reply = kde.call("AddInhibition", QDBusArgument(1 | 4, QMetaType.Type.UInt.value), "Orbit", "Kept awake from your phone")
+if reply.errorMessage():
+    for service, path, iface in (("org.freedesktop.PowerManagement", "/org/freedesktop/PowerManagement/Inhibit",
+                                  "org.freedesktop.PowerManagement.Inhibit"),
+                                 ("org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver")):
+        QDBusInterface(service, path, iface, bus).call("Inhibit", "Orbit", "Kept awake from your phone")
 app.exec()
 """
 
@@ -5056,7 +5062,14 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             if not client_info:
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
-            set_keep_awake(bool(body.get('enabled')))
+            enabled = bool(body.get('enabled'))
+            set_keep_awake(enabled)
+            # remembered, so a restart of this service (an update) doesn't quietly let the
+            # computer sleep: the block dies with the old process
+            cfg = load_config()
+            if bool(cfg.get('keep_awake')) != enabled:
+                cfg['keep_awake'] = enabled
+                save_config(cfg)
             self.send_json({"status": "ok", "enabled": keep_awake_active()})
 
         elif path == '/api/processes/kill':
@@ -5758,6 +5771,8 @@ def main():
     start_udp_mouse_listener(1762)
     start_clipboard_monitor(auth_mgr)
     start_terminal_recorder()
+    if load_config().get('keep_awake'):
+        set_keep_awake(True)            # it was on before this service restarted
 
     tunnel_mgr.port = port
     tunnel_mgr.start()
