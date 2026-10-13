@@ -3159,7 +3159,17 @@ public class MainActivity extends Activity {
 
         Dialog dialog = createPage(dialogView, false);
 
+        // The folders you came through, newest last: back returns to the one you came from
+        // (a shortcut, the drives list, a folder further away), not always the parent
+        java.util.ArrayDeque<String> backStack = new java.util.ArrayDeque<>();
+
         class BrowseLoader {
+            /** Go to a folder, remembering this one so back returns here. */
+            void open(String targetPath) {
+                if (currentBrowsePath != null && !currentBrowsePath.equals(targetPath)) backStack.push(currentBrowsePath);
+                load(targetPath);
+            }
+
             void load(String targetPath) {
                 currentBrowsePath = targetPath;
                 pbLoading.setVisibility(View.VISIBLE);
@@ -3237,9 +3247,9 @@ public class MainActivity extends Activity {
                                         tvDetails.setText("Directory / Folder");
                                         btnAction.setVisibility(View.VISIBLE);
                                         btnAction.setText("Open");
-                                        btnAction.setOnClickListener(v -> load(itemPath));
+                                        btnAction.setOnClickListener(v -> open(itemPath));
                                         if (btnDownload != null) btnDownload.setVisibility(View.GONE);
-                                        row.setOnClickListener(v -> load(itemPath));
+                                        row.setOnClickListener(v -> open(itemPath));
                                     } else {
                                         String lower = name.toLowerCase();
                                         setIconTile(tvIcon, fileIconFor(lower), getColor(R.color.o_text_2));
@@ -3275,17 +3285,18 @@ public class MainActivity extends Activity {
         }
 
         BrowseLoader loader = new BrowseLoader();
-        btnHome.setOnClickListener(v -> loader.load("shortcuts"));
-        if (btnShortcutDrives != null) btnShortcutDrives.setOnClickListener(v -> loader.load("shortcuts"));
+        btnHome.setOnClickListener(v -> loader.open("shortcuts"));
+        if (btnShortcutDrives != null) btnShortcutDrives.setOnClickListener(v -> loader.open("shortcuts"));
         btnUp.setOnClickListener(v -> {
             if (parentBrowsePath != null) {
-                loader.load(parentBrowsePath);
+                loader.open(parentBrowsePath);
             }
         });
-        // Swiping back goes up a folder, like any file browser; at the top it closes the explorer
+        // Swiping back retraces your steps, like a web browser; from where the explorer
+        // opened, it closes the explorer
         dialog.setOnKeyListener((d, keyCode, event) -> {
-            if (keyCode != android.view.KeyEvent.KEYCODE_BACK || parentBrowsePath == null) return false;
-            if (event.getAction() == android.view.KeyEvent.ACTION_UP) loader.load(parentBrowsePath);
+            if (keyCode != android.view.KeyEvent.KEYCODE_BACK || backStack.isEmpty()) return false;
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP) loader.load(backStack.pop());
             return true;
         });
         btnRefresh.setOnClickListener(v -> loader.load(currentBrowsePath != null ? currentBrowsePath : "shortcuts"));
@@ -3302,11 +3313,11 @@ public class MainActivity extends Activity {
             });
         }
 
-        btnQuickDownloads.setOnClickListener(v -> loader.load("~/Downloads"));
-        btnQuickDocs.setOnClickListener(v -> loader.load("~/Documents"));
-        btnQuickPics.setOnClickListener(v -> loader.load("~/Pictures"));
-        btnQuickVids.setOnClickListener(v -> loader.load("~/Videos"));
-        btnQuickDesk.setOnClickListener(v -> loader.load("~/Desktop"));
+        btnQuickDownloads.setOnClickListener(v -> loader.open("~/Downloads"));
+        btnQuickDocs.setOnClickListener(v -> loader.open("~/Documents"));
+        btnQuickPics.setOnClickListener(v -> loader.open("~/Pictures"));
+        btnQuickVids.setOnClickListener(v -> loader.open("~/Videos"));
+        btnQuickDesk.setOnClickListener(v -> loader.open("~/Desktop"));
 
         loader.load(startPath);
         dialog.show();
