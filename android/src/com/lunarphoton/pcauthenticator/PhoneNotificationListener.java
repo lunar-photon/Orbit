@@ -30,6 +30,63 @@ public class PhoneNotificationListener extends NotificationListenerService {
         @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 200; }
     };
 
+    // the running listener, and the reply / mark-as-read buttons of the notifications it sent
+    private static volatile PhoneNotificationListener instance;
+    private static final Map<String, Notification.Action[]> buttons = new LinkedHashMap<String, Notification.Action[]>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Notification.Action[]> e) { return size() > 200; }
+    };
+    // after a reply from the computer, the app's own update of that notification (your reply
+    // shown in it) isn't sent back: key -> until when
+    private static final Map<String, Long> quietUntil = new java.util.HashMap<>();
+
+    @Override public void onListenerConnected() { instance = this; }
+    @Override public void onListenerDisconnected() { instance = null; }
+
+    /** A reply typed on the computer: sent through the app's own Reply button. */
+    public static boolean reply(Context c, String key, String text) {
+        Notification.Action[] b;
+        synchronized (buttons) { b = buttons.get(key); }
+        if (b == null || b[0] == null || text == null || text.isEmpty()) return false;
+        Notification.Action a = b[0];
+        try {
+            android.app.RemoteInput[] inputs = a.getRemoteInputs();
+            Bundle results = new Bundle();
+            for (android.app.RemoteInput in : inputs) results.putCharSequence(in.getResultKey(), text);
+            android.content.Intent fill = new android.content.Intent().addFlags(android.content.Intent.FLAG_RECEIVER_FOREGROUND);
+            android.app.RemoteInput.addResultsToIntent(inputs, fill, results);
+            a.actionIntent.send(c, 0, fill);
+            synchronized (quietUntil) { quietUntil.put(key, System.currentTimeMillis() + 15000); }
+            PhoneNotificationListener l = instance;
+            if (l != null) l.dropFromComputer(key);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** "Mark as read" clicked on the computer: the app's own button. */
+    public static boolean markRead(Context c, String key) {
+        Notification.Action[] b;
+        synchronized (buttons) { b = buttons.get(key); }
+        if (b == null || b[1] == null) return false;
+        try {
+            b[1].actionIntent.send();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void dropFromComputer(String key) {
+        synchronized (lastSent) { lastSent.remove(key); }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("key", key);
+            json.put("removed", true);
+            send("/api/phone/notification", json);
+        } catch (Exception ignored) { }
+    }
+
     public static boolean isEnabled(Context c) {
         return c.getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).getBoolean(PREF_FORWARD, false);
     }
@@ -58,6 +115,20 @@ public class PhoneNotificationListener extends NotificationListenerService {
         if (title.isEmpty() && body.isEmpty()) return;
 
         String key = sbn.getKey();
+        synchronized (quietUntil) {
+            Long until = quietUntil.get(key);
+            if (until != null && until > System.currentTimeMillis()) return;    // our own reply, shown back
+            quietUntil.remove(key);
+        }
+        // the app's Reply (a text input) and Mark as read buttons, to use from the computer
+        Notification.Action replyBtn = null, readBtn = null;
+        if (n.actions != null) for (Notification.Action a : n.actions) {
+            if (a == null) continue;
+            if (replyBtn == null && a.getRemoteInputs() != null && a.getRemoteInputs().length > 0) replyBtn = a;
+            else if (readBtn == null && android.os.Build.VERSION.SDK_INT >= 28
+                    && a.getSemanticAction() == Notification.Action.SEMANTIC_ACTION_MARK_AS_READ) readBtn = a;
+        }
+        synchronized (buttons) { buttons.put(key, new Notification.Action[]{replyBtn, readBtn}); }
         String sig = title + "\n" + body;
         synchronized (lastSent) {
             if (sig.equals(lastSent.get(key))) return;
@@ -70,6 +141,8 @@ public class PhoneNotificationListener extends NotificationListenerService {
             json.put("title", trim(title, 200));
             json.put("text", trim(body, 1000));
             json.put("category", call ? "call" : (n.category != null ? n.category : ""));
+            json.put("can_reply", replyBtn != null);
+            json.put("can_mark_read", readBtn != null);
             send("/api/phone/notification", json);
         } catch (Exception ignored) { }
     }

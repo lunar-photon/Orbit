@@ -362,6 +362,28 @@ public class WebcamActivity extends Activity {
             lp.width = w;
             lp.height = h;
             preview.setLayoutParams(lp);
+            final int vw = w, vh = h;
+            preview.post(() -> turnPreview(vw, vh));
         });
+    }
+
+    /** Held sideways, Android doesn't turn the preview to match: the camera's picture comes
+     *  out turned and stretched. Turn and scale it to the way the phone is held. */
+    private void turnPreview(int viewW, int viewH) {
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        android.graphics.Matrix m = new android.graphics.Matrix();
+        android.graphics.RectF view = new android.graphics.RectF(0, 0, viewW, viewH);
+        float cx = view.centerX(), cy = view.centerY();
+        if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) {
+            android.graphics.RectF buffer = new android.graphics.RectF(0, 0, height, width);
+            buffer.offset(cx - buffer.centerX(), cy - buffer.centerY());
+            m.setRectToRect(view, buffer, android.graphics.Matrix.ScaleToFit.FILL);
+            float scale = Math.max((float) viewH / height, (float) viewW / width);
+            m.postScale(scale, scale, cx, cy);
+            m.postRotate(90 * (rotation - 2), cx, cy);
+        } else if (rotation == Surface.ROTATION_180) {
+            m.postRotate(180, cx, cy);
+        }
+        preview.setTransform(m);
     }
 }

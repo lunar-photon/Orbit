@@ -3169,28 +3169,153 @@ telephony_state = {
 }
 telephony_lock = threading.Lock()
 
-_PHONE_NOTES = collections.OrderedDict()     # phone notification key -> desktop notification id
-_PHONE_NOTES_LOCK = threading.Lock()
+# Phone notifications on the desktop, with Reply (KDE's inline reply) and Mark as read. A small
+# helper talks to the desktop's notification service over D-Bus (notify-send can't receive a
+# typed reply): commands in on stdin, what you did out on stdout, one JSON object per line.
+_NOTIFY_HELPER = r"""
+import sys, json
+from PyQt6.QtCore import QCoreApplication, QMetaType, QObject, QSocketNotifier, pyqtSlot
+from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusArgument, QDBusMessage
+app = QCoreApplication(sys.argv)
+bus = QDBusConnection.sessionBus()
+SVC, PATH = "org.freedesktop.Notifications", "/org/freedesktop/Notifications"
+notes = QDBusInterface(SVC, PATH, SVC, bus)
+ids, keys = {}, {}
+
+def out(obj):
+    sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
+
+def show(c):
+    actions = []
+    if c.get("reply"):
+        actions += ["inline-reply", "Reply"]
+    if c.get("mark_read"):
+        actions += ["mark_read", "Mark as read"]
+    hints = {"urgency": QDBusArgument(int(c.get("urgency", 1)), QMetaType.Type.UChar.value),
+             "x-kde-display-appname": c.get("app", "Phone")}
+    if c.get("reply"):
+        hints["x-kde-reply-placeholder-text"] = "Reply to " + (c.get("title") or c.get("app") or "")
+        hints["x-kde-reply-submit-button-text"] = "Send"
+    old = ids.get(c["key"], 0)
+    r = notes.call("Notify", c.get("app", "Phone"), QDBusArgument(old, QMetaType.Type.UInt.value),
+                   c.get("icon", "smartphone"), c.get("title", ""), c.get("text", ""),
+                   QDBusArgument(actions, QMetaType.Type.QStringList.value), hints, -1 if c.get("urgency", 1) < 2 else 0)
+    if r.arguments():
+        nid = int(r.arguments()[0])
+        ids[c["key"]] = nid
+        keys[nid] = c["key"]
+
+def close(c):
+    nid = ids.pop(c.get("key"), None)
+    if nid:
+        keys.pop(nid, None)
+        notes.call("CloseNotification", QDBusArgument(nid, QMetaType.Type.UInt.value))
+
+class Signals(QObject):
+    @pyqtSlot(QDBusMessage)
+    def replied(self, m):
+        nid, text = m.arguments()
+        if int(nid) in keys:
+            out({"event": "reply", "key": keys[int(nid)], "text": text})
+    @pyqtSlot(QDBusMessage)
+    def action(self, m):
+        nid, act = m.arguments()
+        if int(nid) in keys and act != "inline-reply":
+            out({"event": "action", "key": keys[int(nid)], "action": act})
+    @pyqtSlot(QDBusMessage)
+    def closed(self, m):
+        nid = int(m.arguments()[0])
+        key = keys.pop(nid, None)
+        if key:
+            ids.pop(key, None)
+
+sig = Signals()
+bus.connect(SVC, PATH, SVC, "NotificationReplied", sig.replied)
+bus.connect(SVC, PATH, SVC, "ActionInvoked", sig.action)
+bus.connect(SVC, PATH, SVC, "NotificationClosed", sig.closed)
+
+buf = b""
+def readable():
+    global buf
+    import os
+    data = os.read(0, 65536)
+    if not data:
+        app.quit(); return
+    buf += data
+    while b"\n" in buf:
+        line, buf = buf.split(b"\n", 1)
+        try:
+            c = json.loads(line)
+            (show if c.get("cmd") == "show" else close)(c)
+        except Exception as e:
+            sys.stderr.write("notify helper: %s\n" % e)
+watch = QSocketNotifier(0, QSocketNotifier.Type.Read)
+watch.activated.connect(readable)
+app.exec()
+"""
+
 _PHONE_NOTE_TIMES = collections.deque(maxlen=30)
 
 def _markup_safe(text, limit):
     text = str(text or '')[:limit]
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
+class PhoneNotes:
+    """Runs the notification helper and passes what you do with a phone notification on the
+    desktop (a reply, Mark as read) back to the phone over the live link."""
+
+    def __init__(self):
+        self.proc = None
+        self.lock = threading.Lock()
+
+    def _helper(self):
+        if self.proc and self.proc.poll() is None:
+            return self.proc
+        try:
+            import importlib.util
+            if not importlib.util.find_spec('PyQt6.QtDBus'):
+                return None
+        except (ImportError, ValueError):
+            return None
+        self.proc = subprocess.Popen([sys.executable, '-c', _NOTIFY_HELPER], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        threading.Thread(target=self._listen, args=(self.proc,), daemon=True, name='phone-notes').start()
+        return self.proc
+
+    def _listen(self, proc):
+        for line in proc.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get('event') == 'reply' and ev.get('text'):
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "notification_reply", "key": ev['key'],
+                                                      "text": str(ev['text'])[:2000]}) + "\n")
+            elif ev.get('event') == 'action' and ev.get('action') == 'mark_read':
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "notification_action", "key": ev['key'],
+                                                      "action": "mark_read"}) + "\n")
+
+    def send(self, cmd):
+        with self.lock:
+            proc = self._helper()
+            if not proc:
+                return False
+            try:
+                proc.stdin.write((json.dumps(cmd) + "\n").encode())
+                return True
+            except OSError:
+                self.proc = None
+                return False
+
+PHONE_NOTES = PhoneNotes()
+
 def show_phone_notification(note):
-    """A notification from the phone, as a desktop notification: a message, or who is calling
-    (that one stays until the call ends). `removed` closes the one shown for that key."""
+    """A notification from the phone, as a desktop notification: a message (with Reply and Mark
+    as read when the phone's app offers them), or who is calling (stays until the call ends).
+    `removed` closes the one shown for that key."""
     key = str(note.get('key', ''))[:300]
-    with _PHONE_NOTES_LOCK:
-        shown = _PHONE_NOTES.get(key)
     if note.get('removed'):
-        if shown:
-            with _PHONE_NOTES_LOCK:
-                _PHONE_NOTES.pop(key, None)
-            subprocess.run(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.Notifications',
-                            '--object-path', '/org/freedesktop/Notifications',
-                            '--method', 'org.freedesktop.Notifications.CloseNotification', str(shown)],
-                           capture_output=True, timeout=3)
+        PHONE_NOTES.send({"cmd": "close", "key": key})
         return {"status": "ok"}
     now = time.time()
     if len(_PHONE_NOTE_TIMES) == _PHONE_NOTE_TIMES.maxlen and now - _PHONE_NOTE_TIMES[0] < 60:
@@ -3200,22 +3325,18 @@ def show_phone_notification(note):
     title = _markup_safe(note.get('title'), 200)
     text = _markup_safe(note.get('text'), 1000)
     call = note.get('category') == 'call'
-    cmd = ['notify-send', '--print-id', '-a', f'{app} (phone)',
-           '-i', 'call-start' if call else 'smartphone']
-    if call:
-        cmd += ['-u', 'critical']               # stays up while it rings; closed when the call ends
-    if shown:
-        cmd += ['-r', str(shown)]               # an update of one already shown
-    cmd += [title or app, text]
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return {"status": "error", "message": "No notification service (nobody logged in?)"}
-    if out.isdigit():
-        with _PHONE_NOTES_LOCK:
-            _PHONE_NOTES[key] = int(out)
-            while len(_PHONE_NOTES) > 200:
-                _PHONE_NOTES.popitem(last=False)
+    shown = PHONE_NOTES.send({"cmd": "show", "key": key, "app": f"{app} (phone)", "title": title or app,
+                              "text": text, "icon": 'call-start' if call else 'smartphone',
+                              "urgency": 2 if call else 1, "reply": bool(note.get('can_reply')) and not call,
+                              "mark_read": bool(note.get('can_mark_read')) and not call})
+    if not shown:
+        # no helper (PyQt6 missing): a plain notification, without Reply
+        try:
+            subprocess.run(['notify-send', '-a', f'{app} (phone)', '-i', 'call-start' if call else 'smartphone']
+                           + (['-u', 'critical'] if call else []) + [title or app, text],
+                           capture_output=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            return {"status": "error", "message": "No notification service (nobody logged in?)"}
     return {"status": "ok"}
 
 WEBCAM_SIZE = (1280, 720)          # one fixed format for everything the camera shows

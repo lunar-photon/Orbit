@@ -581,6 +581,13 @@ public class AuthService extends Service {
                                     RingManager.stopAlarm(AuthService.this);
                                 } else if ("clipboard".equals(event)) {
                                     handleClipboardEvent(json);
+                                } else if ("notification_reply".equals(event)) {
+                                    boolean sent = PhoneNotificationListener.reply(AuthService.this, json.optString("key"), json.optString("text"));
+                                    if (!sent) Log.w(TAG, "Reply from the computer couldn't be sent (notification gone?)");
+                                } else if ("notification_action".equals(event)) {
+                                    if ("mark_read".equals(json.optString("action"))) {
+                                        PhoneNotificationListener.markRead(AuthService.this, json.optString("key"));
+                                    }
                                 } else if ("check_in".equals(event)) {
                                     checkInWithComputer("live link");
                                 } else if ("incoming_file".equals(event)) {
