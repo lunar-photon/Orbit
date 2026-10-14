@@ -2239,7 +2239,7 @@ public class MainActivity extends Activity {
         intent.setType("*/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         try {
-            startActivityForResult(Intent.createChooser(intent, "Select File to Send to computer"), REQUEST_PICK_FILE);
+            startActivityForResult(Intent.createChooser(intent, "Choose a file to beam to your computer"), REQUEST_PICK_FILE);
         } catch (Exception e) {
             Toast.makeText(this, "No file manager found", Toast.LENGTH_SHORT).show();
         }

@@ -73,7 +73,7 @@
 
         <activity
             android:name=".ShareActivity"
-            android:label="Send to computer"
+            android:label="Beam to computer"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
