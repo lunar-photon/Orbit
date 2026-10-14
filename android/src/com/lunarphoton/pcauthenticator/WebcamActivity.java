@@ -39,9 +39,13 @@ import java.util.Arrays;
  * The screen stays on while it streams; leaving this screen stops it.
  */
 public class WebcamActivity extends Activity {
-    private static final int WANT_W = 1280, WANT_H = 720, FPS = 30, BITRATE = 4_000_000;
+    private static final int FPS = 30;
+    private static final String PREF_SHARP = "webcam_1080p";
+    private boolean sharp = true;               // 1080p; 720p saves Wi-Fi and battery
+    private int wantW = 1920, wantH = 1080;
     // the size the camera really delivers (one it supports, so nothing gets stretched)
-    private int width = WANT_W, height = WANT_H;
+    private int width = wantW, height = wantH;
+    private String codec = "h264";              // hevc when the phone has a hardware encoder for it
     private static final int REQ_CAMERA = 41;
 
     private TextureView preview;
@@ -84,6 +88,23 @@ public class WebcamActivity extends Activity {
             if (streaming) { stopStreaming(); startStreaming(); }
         });
         front = getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).getBoolean(PREF_FRONT, true);
+        sharp = getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).getBoolean(PREF_SHARP, true);
+        Button quality = findViewById(R.id.btn_webcam_quality);
+        quality.setText(sharp ? "1080p" : "720p");
+        quality.setOnClickListener(v -> {
+            sharp = !sharp;
+            getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).edit().putBoolean(PREF_SHARP, sharp).apply();
+            quality.setText(sharp ? "1080p" : "720p");
+            if (streaming) { stopStreaming(); startStreaming(); }
+        });
+        // the picture's corners rounded like its frame
+        final float radius = 17 * getResources().getDisplayMetrics().density;
+        preview.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View v, android.graphics.Outline o) {
+                o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius);
+            }
+        });
+        preview.setClipToOutline(true);
         PairedDevice active = DeviceManager.getActiveDevice(this);
         tvTarget.setText(active != null ? "Your camera, beamed to " + active.hostname : "No computer paired");
     }
@@ -146,20 +167,45 @@ public class WebcamActivity extends Activity {
             String id = pickCamera(cm);
             if (id == null) { showError("No camera found."); return; }
             CameraCharacteristics cc = cm.getCameraCharacteristics(id);
+            wantW = sharp ? 1920 : 1280;
+            wantH = sharp ? 1080 : 720;
             android.util.Size size = pictureSize(cc);
             width = size.getWidth();
             height = size.getHeight();
             int rotation = pictureRotation(cc);
             fitPreview(rotation);
 
-            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            MediaFormat fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-            fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE);
-            fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
-            fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-            fmt.setInteger(MediaFormat.KEY_PRIORITY, 0);          // real time
-            encoder.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            // HEVC: the same picture at about half the data of H.264 (less Wi-Fi and battery),
+            // when this phone has a hardware encoder for it; H.264 otherwise
+            encoder = null;
+            for (String mime : new String[]{MediaFormat.MIMETYPE_VIDEO_HEVC, MediaFormat.MIMETYPE_VIDEO_AVC}) {
+                boolean hevc = mime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC);
+                MediaFormat fmt = MediaFormat.createVideoFormat(mime, width, height);
+                fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+                int pixels = width * height;
+                fmt.setInteger(MediaFormat.KEY_BIT_RATE, (hevc ? 5_000_000 : 8_000_000) * pixels / (1920 * 1080));
+                fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
+                fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+                fmt.setInteger(MediaFormat.KEY_PRIORITY, 0);          // real time
+                // plain video colour (limited range, BT.709), which the computer's GPU takes as
+                // is; some phones would otherwise send full-range "camera" colour
+                fmt.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
+                fmt.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
+                fmt.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+                String name = new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).findEncoderForFormat(fmt);
+                if (name == null) continue;
+                try {
+                    MediaCodec c = MediaCodec.createByCodecName(name);
+                    if (hevc && !c.getCodecInfo().isHardwareAccelerated()) { c.release(); continue; }
+                    c.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                    encoder = c;
+                    codec = hevc ? "hevc" : "h264";
+                    break;
+                } catch (Exception e) {
+                    // this encoder won't take it: try the next
+                }
+            }
+            if (encoder == null) { showError("This phone can't encode video for Orbit Cam."); return; }
             encoderSurface = encoder.createInputSurface();
             encoder.start();
 
@@ -169,7 +215,7 @@ public class WebcamActivity extends Activity {
 
             streaming = true;
             setStatus("Connecting", R.color.o_text_2);
-            String url = base + "/api/webcam/stream?rot=" + rotation;
+            String url = base + "/api/webcam/stream?rot=" + rotation + "&codec=" + codec;
             sender = new Thread(() -> send(url, active.authToken), "webcam-send");
             sender.start();
 
@@ -307,7 +353,7 @@ public class WebcamActivity extends Activity {
     private android.util.Size pictureSize(CameraCharacteristics cc) {
         android.hardware.camera2.params.StreamConfigurationMap map =
                 cc.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        if (map == null) return new android.util.Size(WANT_W, WANT_H);
+        if (map == null) return new android.util.Size(wantW, wantH);
         java.util.Set<String> preview = new java.util.HashSet<>();
         for (android.util.Size z : map.getOutputSizes(SurfaceTexture.class)) preview.add(z.toString());
         android.util.Size best = null;
@@ -316,11 +362,11 @@ public class WebcamActivity extends Activity {
             if (!preview.contains(z.toString()) || z.getWidth() % 16 != 0 || z.getHeight() % 2 != 0) continue;
             if (z.getWidth() > 1920) continue;               // more than needed: heat and battery
             boolean wide = Math.abs((double) z.getWidth() / z.getHeight() - 16.0 / 9) < 0.02;
-            double score = Math.abs(z.getWidth() * z.getHeight() - WANT_W * WANT_H) / (double) (WANT_W * WANT_H)
+            double score = Math.abs(z.getWidth() * z.getHeight() - wantW * wantH) / (double) (wantW * wantH)
                     + (wide ? 0 : 10);
             if (score < bestScore) { bestScore = score; best = z; }
         }
-        return best != null ? best : new android.util.Size(WANT_W, WANT_H);
+        return best != null ? best : new android.util.Size(wantW, wantH);
     }
 
     private String pickCamera(CameraManager cm) throws CameraAccessException {

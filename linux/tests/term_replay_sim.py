@@ -2,6 +2,8 @@
 daemon's terminal replay and check the rebuilt history: right length, one footer, no repeats.
 
 Usage: python3 tests/term_replay_sim.py orbitd.py
+Runs on the C++ emulator when liborbitvt.so is installed (or ORBIT_VT_LIB points at a build);
+ORBIT_VT=pyte runs it on the pyte fallback. Both must pass.
 """
 import os, re, sys, collections, random
 src = open(sys.argv[1]).read()

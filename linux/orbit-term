@@ -10,6 +10,9 @@ Unlike `script`, it also takes input from the phone through a socket next to the
 (<pid>.sock, only this user can open it), so typing from the phone works in any terminal
 app, not only Konsole. Started by the shell's own startup file, it replaces that shell
 (exec), so the terminal app sees this process where the shell was.
+
+native/orbit-term.cpp is the same program in C++, which the installer builds and uses when a
+compiler is available (much less memory per open terminal); this one is the fallback.
 """
 import ctypes
 import errno

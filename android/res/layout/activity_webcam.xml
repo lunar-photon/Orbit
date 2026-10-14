@@ -111,5 +111,14 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:text="Flip" />
+
+        <Button
+            android:id="@+id/btn_webcam_quality"
+            style="@style/Btn.Secondary"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="1080p" />
     </LinearLayout>
 </LinearLayout>

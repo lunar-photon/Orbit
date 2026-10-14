@@ -141,6 +141,7 @@ public class PhoneNotificationListener extends NotificationListenerService {
             json.put("title", trim(title, 200));
             json.put("text", trim(body, 1000));
             json.put("category", call ? "call" : (n.category != null ? n.category : ""));
+            json.put("posted_at", sbn.getPostTime());       // so the computer can see a late arrival
             json.put("can_reply", replyBtn != null);
             json.put("can_mark_read", readBtn != null);
             send("/api/phone/notification", json);

@@ -752,6 +752,49 @@ subst() {         # template -> content with @BINDIR@ / @ICON@ filled in
     sed -e "s|@BINDIR@|$BIN|g" -e "s|@ICON@|$icon|g" -- "$1"
 }
 
+# put_exec SRC DEST  -- install an executable by renaming over the old one, so terminals
+# still running the old copy keep working (writing into a running binary fails)
+put_exec() {
+    if ((DRY)); then run install -m 755 -- "$1" "$2"; return 0; fi
+    local tmp
+    tmp="$(mktemp -- "$(dirname -- "$2")/.orbit-tmp.XXXXXX")"
+    install -m 755 -- "$1" "$tmp" && mv -f -- "$tmp" "$2"
+}
+
+# The C++ parts (native/): the terminal recorder (orbit-term, ~0.3 MB per open terminal instead
+# of ~6 MB for Python) and the service's terminal emulator (liborbitvt.so, rebuilds a terminal's
+# history many times faster than pyte). Built here when a C++ compiler is around; without one,
+# the Python versions do the same job, slower.
+build_native() {
+    local cxx="" c out
+    NATIVE_OK=0
+    for c in c++ g++ clang++; do
+        if command -v "$c" >/dev/null 2>&1; then cxx="$c"; break; fi
+    done
+    if [[ -z "$cxx" ]]; then
+        warn "no C++ compiler (g++ or clang++): using the Python terminal recorder and emulator"
+        NOTES+=("Install g++ and re-run for the faster terminal recorder and history (C++)")
+        return 0
+    fi
+    if ((DRY)); then
+        run "$cxx" -std=c++17 -O2 -o "$BIN/orbit-term" "$SRC/native/orbit-term.cpp"
+        run "$cxx" -std=c++17 -O2 -shared -fPIC -fvisibility=hidden -o "$DATA/liborbitvt.so" "$SRC/native/orbitvt.cpp"
+        NATIVE_OK=1
+        return 0
+    fi
+    out="$(mktemp -d)"
+    if "$cxx" -std=c++17 -O2 -o "$out/orbit-term" "$SRC/native/orbit-term.cpp" 2>"$out/err" &&
+       "$cxx" -std=c++17 -O2 -shared -fPIC -fvisibility=hidden -o "$out/liborbitvt.so" "$SRC/native/orbitvt.cpp" 2>>"$out/err"; then
+        put_exec "$out/orbit-term" "$BIN/orbit-term"
+        put_exec "$out/liborbitvt.so" "$DATA/liborbitvt.so"
+        NATIVE_OK=1
+        ok "built with $cxx: orbit-term, liborbitvt.so"
+    else
+        warn "C++ build failed: $(grep -m1 error "$out/err"); using the Python versions"
+    fi
+    rm -rf -- "$out"
+}
+
 step_files() {
     step "Program files: ~/.local/share/orbit"
     [[ -f "$SRC/orbitd.py" ]] || die "linux/orbitd.py missing"
@@ -769,7 +812,11 @@ step_files() {
     mkd 755 "$BIN"
     run install -m 755 -- "$SRC/orbit" "$BIN/orbit"
     run install -m 755 -- "$SRC/orbit-send" "$BIN/orbit-send"
-    run install -m 755 -- "$SRC/orbit-term" "$BIN/orbit-term"
+    build_native
+    if ((!NATIVE_OK)); then
+        put_exec "$SRC/orbit-term" "$BIN/orbit-term"
+        remove "$DATA/liborbitvt.so"
+    fi
     run install -m 755 -- "$SRC/kdeconnect-handler" "$BIN/kdeconnect-handler"
     local tray_ok=0
     if [[ -f "$SRC/orbit-tray.py" ]]; then

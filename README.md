@@ -94,6 +94,9 @@ Run it as your normal user; it asks for `sudo` only to install missing packages
 and for the login integration (`/usr/local/bin/orbit-auth-check`, `/etc/orbit`,
 `/etc/pam.d`). It is safe to run again (e.g. after `git pull`), and it migrates
 an existing PC Connect / PC Authenticator install, keeping your phone pairing.
+With a C++ compiler (`g++` or `clang++`) it also builds the terminal recorder and the
+terminal emulator in C++ (`linux/native/`): far less memory per open terminal and a much
+faster terminal history; without one, the Python versions are used.
 
 | Option | What it does |
 | :--- | :--- |

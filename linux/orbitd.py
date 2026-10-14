@@ -1325,6 +1325,162 @@ if pyte is not None:
         return DimScreen
     _DimScreen, _DimHistoryScreen = _with_dim(pyte.Screen), _with_dim(pyte.HistoryScreen)
 
+
+class _PyteScreen:
+    """A pyte screen behind the interface TermRecording uses; the fallback when the C++
+    emulator (liborbitvt.so, see _VtScreen) isn't built."""
+
+    def __init__(self, cols, rows, history):
+        self.history = history
+        self.screen = _DimHistoryScreen(cols, rows, history=history) if history else _DimScreen(cols, rows)
+        self.stream = pyte.Stream(self.screen)
+
+    columns = property(lambda self: self.screen.columns)
+    lines = property(lambda self: self.screen.lines)
+
+    def cursor(self):
+        return self.screen.cursor.x, self.screen.cursor.y
+
+    def feed(self, text):
+        self.stream.feed(text)
+
+    def resize(self, lines, columns):
+        self.screen.resize(lines=lines, columns=columns)
+
+    def history_len(self):
+        return len(self.screen.history.top) if self.history else 0
+
+    history_serial = history_len    # changes when lines scroll into the history
+
+    def take_dirty(self):
+        """Rows changed since the last call (pyte tracks them in `dirty`)."""
+        scr = self.screen
+        dirty = [y for y in scr.dirty if 0 <= y < scr.lines]
+        scr.dirty.clear()
+        return dirty
+
+    def rows(self, start=0, end=None):
+        """(plain, ansi, wrapped-from-above) for screen rows [start, end)."""
+        scr = self.screen
+        end = scr.lines if end is None else min(end, scr.lines)
+        return [_render_row(scr.buffer[y], scr.columns) + (getattr(scr.buffer[y], 'cont', False),)
+                for y in range(start, end)]
+
+    def history_rows(self, count):
+        """The same for the newest `count` lines of history."""
+        if not self.history or count <= 0:
+            return []
+        return [_render_row(l, self.screen.columns) + (getattr(l, 'cont', False),)
+                for l in list(self.screen.history.top)[-count:]]
+
+    def cells(self, y):
+        """(x, text, dim) for every cell of row y, the second halves of wide characters left out."""
+        row = self.screen.buffer[y]
+        return [(x, row[x].data, row[x].blink) for x in range(self.screen.columns) if row[x].data != '']
+
+
+# The C++ emulator: native/orbitvt.cpp, built by the installer into liborbitvt.so next to this
+# file. It does pyte's job (and renders rows) many times faster: replaying a long recording
+# takes a fraction of a second instead of seconds of CPU. ORBIT_VT=pyte forces the fallback.
+import ctypes
+import operator
+_first = operator.itemgetter(0)
+_VT_ABI = 1
+
+
+def _load_vt():
+    if os.environ.get('ORBIT_VT') == 'pyte':
+        return None
+    here = os.path.dirname(os.path.abspath(globals().get('__file__') or 'x'))
+    for path in (os.environ.get('ORBIT_VT_LIB'), os.path.join(here, 'liborbitvt.so'),
+                 os.path.expanduser('~/.local/share/orbit/liborbitvt.so')):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            lib = ctypes.CDLL(path)
+            if lib.ovt_abi() != _VT_ABI:
+                continue
+        except (OSError, AttributeError):
+            continue
+        P, I, L, N = ctypes.c_void_p, ctypes.c_int, ctypes.c_long, ctypes.POINTER(ctypes.c_size_t)
+        sigs = {'ovt_new': (P, [I, I, I]), 'ovt_free': (None, [P]), 'ovt_feed': (None, [P, ctypes.c_char_p, ctypes.c_size_t]),
+                'ovt_resize': (None, [P, I, I]), 'ovt_columns': (I, [P]), 'ovt_lines': (I, [P]),
+                'ovt_cursor_x': (I, [P]), 'ovt_cursor_y': (I, [P]), 'ovt_history_len': (L, [P]),
+                'ovt_history_serial': (ctypes.c_ulonglong, [P]), 'ovt_take_dirty': (I, [P, ctypes.POINTER(I), I]),
+                'ovt_rows': (P, [P, I, L, L, N]), 'ovt_cells': (P, [P, I, N])}
+        for name, (res, args) in sigs.items():
+            fn = getattr(lib, name)
+            fn.restype, fn.argtypes = res, args
+        return lib
+    return None
+
+
+_VT = _load_vt()
+
+
+class _VtScreen:
+    """A screen in the C++ emulator, with _PyteScreen's interface."""
+
+    def __init__(self, cols, rows, history):
+        self._vt = _VT
+        self._h = _VT.ovt_new(cols, rows, history)
+        self._len = ctypes.c_size_t()
+
+    def __del__(self):
+        if getattr(self, '_h', None):
+            self._vt.ovt_free(self._h)
+            self._h = None
+
+    columns = property(lambda self: self._vt.ovt_columns(self._h))
+    lines = property(lambda self: self._vt.ovt_lines(self._h))
+
+    def cursor(self):
+        return self._vt.ovt_cursor_x(self._h), self._vt.ovt_cursor_y(self._h)
+
+    def feed(self, text):
+        data = text.encode('utf-8', 'replace')
+        self._vt.ovt_feed(self._h, data, len(data))
+
+    def resize(self, lines, columns):
+        self._vt.ovt_resize(self._h, lines, columns)
+
+    def history_len(self):
+        return self._vt.ovt_history_len(self._h)
+
+    def history_serial(self):
+        return self._vt.ovt_history_serial(self._h)
+
+    def take_dirty(self):
+        ys = (ctypes.c_int * max(1, self.lines))()
+        return ys[:self._vt.ovt_take_dirty(self._h, ys, len(ys))]
+
+    def _records(self, ptr):
+        text = ctypes.string_at(ptr, self._len.value).decode('utf-8', 'replace')
+        return text.split('\x1e')[:-1]
+
+    def rows(self, start=0, end=None):
+        end = self.lines if end is None else end
+        recs = self._records(self._vt.ovt_rows(self._h, 0, start, end, ctypes.byref(self._len)))
+        return [(p, a, c == '1') for p, a, c in (r.split('\x1f') for r in recs)]
+
+    def history_rows(self, count):
+        n = self.history_len()
+        if count <= 0 or not n:
+            return []
+        recs = self._records(self._vt.ovt_rows(self._h, 1, max(0, n - count), n, ctypes.byref(self._len)))
+        return [(p, a, c == '1') for p, a, c in (r.split('\x1f') for r in recs)]
+
+    def cells(self, y):
+        raw = ctypes.string_at(self._vt.ovt_cells(self._h, y, ctypes.byref(self._len)), self._len.value)
+        n = int.from_bytes(raw[:4], 'little')
+        xs = memoryview(raw)[4:4 + 2 * n].cast('H').tolist()
+        texts = raw[4 + 3 * n:].decode('utf-8', 'replace').split('\x1e')
+        return list(zip(xs, texts, map(bool, raw[4 + 2 * n:4 + 3 * n])))
+
+
+def _make_screen(cols, rows, history):
+    return _VtScreen(cols, rows, history) if _VT else _PyteScreen(cols, rows, history)
+
 TERM_REC_DIR = os.path.expanduser('~/.cache/orbit/term')
 TERM_REC_HISTORY = 20000
 
@@ -1461,12 +1617,23 @@ def _pinned_rows(prev, body):
     def bottom_same(n):
         # exactly the same: a log's "line 41" / "line 42" only differ in numbers, and that's content
         return n <= min(len(prev), len(body)) and all(body[-1 - j][0] == prev[-1 - j][0] for j in range(n))
-    upper = len(body) - _STATUS_MAX
+    upper = max(0, len(body) - _STATUS_MAX)
+    # for each shift d, how many text rows above the status area moved up by exactly d
+    where = {}
+    for k, (plain, _) in enumerate(prev[:upper + 40]):
+        where.setdefault(plain, []).append(k)
+    hits, texts = [0] * 40, [0]
+    for i in range(upper):
+        plain = body[i][0]
+        texts.append(texts[-1] + (1 if plain.strip() else 0))     # text rows among body[:i+1]
+        if plain.strip():
+            for k in where.get(plain, ()):
+                if 1 <= k - i < 40:
+                    hits[k - i] += 1
     scrolled = False
     for d in range(1, min(40, len(prev))):
-        pairs = [(body[i][0], prev[i + d][0]) for i in range(max(0, upper)) if i + d < len(prev) and body[i][0].strip()]
-        hits = sum(1 for a, b in pairs if a == b)
-        if hits >= 3 and hits * 2 >= len(pairs):
+        pairs = texts[max(0, min(upper, len(prev) - d))]
+        if hits[d] >= 3 and hits[d] * 2 >= pairs:
             scrolled = True
             break
     if not scrolled:
@@ -1487,15 +1654,19 @@ def _merge_frames(old, new):
         return list(new), 0
     if not new:
         return list(old), len(old)
-    ok, nk = [o[0] for o in old], [n[0] for n in new]
+    ok, nk = list(map(_first, old)), list(map(_first, new))
     n_old, n_new = len(ok), len(nk)
     anchors = [j for j, line in enumerate(nk) if line.strip()][:4]
     best_s, best_score = None, 0
+    newest_first = ok[::-1]
     for j in anchors:
-        hits = 0
-        for p in range(n_old - 1, -1, -1):      # newest first; a few candidates per anchor
-            if ok[p] != nk[j]:
-                continue
+        hits = at = 0
+        while hits < 6:                          # newest first; a few candidates per anchor
+            try:
+                at = newest_first.index(nk[j], at) + 1
+            except ValueError:
+                break
+            p = n_old - at
             hits += 1
             s = p - j
             if s >= 0:
@@ -1503,8 +1674,6 @@ def _merge_frames(old, new):
                 score = sum(1 for k in range(overlap) if ok[s + k] == nk[k] and nk[k].strip())
                 if score > best_score or (score == best_score and best_s is not None and s > best_s):
                     best_s, best_score = s, score
-            if hits >= 6:
-                break
     if best_s is not None:
         overlap = min(n_new, n_old - best_s)
         content = sum(1 for k in range(overlap) if nk[k].strip())
@@ -1549,7 +1718,7 @@ def _collapse_blank(items):
 
 
 class TermRecording:
-    """Incrementally replays one `script` recording into a pyte screen."""
+    """Incrementally replays one `script` recording into a terminal screen (see _make_screen)."""
 
     def __init__(self, base):
         self.log_path, self.timing_path = base + '.log', base + '.timing'
@@ -1583,9 +1752,7 @@ class TermRecording:
         self.update_lock = threading.Lock()   # one reader of the files at a time
 
     def _new_screen(self, history):
-        cols, rows = self.size[0] or 80, self.size[1] or 24
-        screen = _DimHistoryScreen(cols, rows, history=TERM_REC_HISTORY) if history else _DimScreen(cols, rows)
-        return screen, pyte.Stream(screen)
+        return _make_screen(self.size[0] or 80, self.size[1] or 24, TERM_REC_HISTORY if history else 0)
 
     def _feed_text(self, text):
         text = self.carry + text
@@ -1629,8 +1796,8 @@ class TermRecording:
     def _watch_main_redraws(self, text):
         """Notice an app redrawing the normal screen in place, and notice it stop (text scrolls
         normally again, e.g. back at the shell prompt)."""
-        scr = self.main[0]
-        hist = len(scr.history.top)
+        scr = self.main
+        hist = scr.history_serial()
         if hist != self.main_hist_len:
             self.main_hist_len = hist
             if self.main_tui:
@@ -1640,7 +1807,7 @@ class TermRecording:
             return
         self.main_homes += text.count('\x1b[H')
         if not self.main_tui and self.main_homes >= 3:
-            rows = [_render_row(scr.buffer[y], scr.columns) for y in range(scr.lines)]
+            rows = [r[:2] for r in scr.rows()]
             while rows and not rows[-1][0].strip():
                 rows.pop()
             if _split_footer(rows)[1]:           # an input box between rules at the bottom
@@ -1651,19 +1818,17 @@ class TermRecording:
 
     def _alt_rows(self):
         """(plain, ansi) for every row of the full-screen app; only rows that changed since
-        last time are re-rendered (pyte tracks them in `dirty`)."""
-        scr = self._tui()[0]
-        if (self.alt_rows is None or len(self.alt_rows) != scr.lines or self.alt_rows_width != scr.columns
-                or self.alt_rows_src is not scr):
-            self.alt_rows_src = scr
-            self.alt_rows, self.alt_rows_width = [None] * scr.lines, scr.columns
-            self.alt_rows, self.alt_rows_width = [None] * scr.lines, scr.columns
-            dirty = range(scr.lines)
+        last time are re-rendered."""
+        scr = self._tui()
+        lines, cols = scr.lines, scr.columns
+        dirty = scr.take_dirty()
+        if (self.alt_rows is None or len(self.alt_rows) != lines or self.alt_rows_width != cols
+                or self.alt_rows_src is not scr or len(dirty) > lines // 2):
+            self.alt_rows_src, self.alt_rows_width = scr, cols
+            self.alt_rows = [r[:2] for r in scr.rows()]
         else:
-            dirty = [y for y in scr.dirty if 0 <= y < scr.lines]
-        for y in dirty:
-            self.alt_rows[y] = _render_row(scr.buffer[y], scr.columns)
-        scr.dirty.clear()
+            for y in dirty:
+                self.alt_rows[y] = scr.rows(y, y + 1)[0][:2]
         return self.alt_rows
 
     def _snapshot_alt(self):
@@ -1772,7 +1937,7 @@ class TermRecording:
         text = _PRIVATE_CSI.sub('', text)
         if text:
             self.revision += 1
-            (self.alt or self.main)[1].feed(text)
+            (self.alt or self.main).feed(text)
             if not self.alt:
                 self._watch_main_redraws(text)
 
@@ -1837,7 +2002,7 @@ class TermRecording:
                             with self.lock:
                                 for scr in (self.main, self.alt):
                                     if scr:
-                                        scr[0].resize(lines=rows, columns=cols)
+                                        scr.resize(lines=rows, columns=cols)
                     consumed += len(raw) + 1
                 self.timing_pos += consumed
                 if consumed and self._tui():
@@ -1859,24 +2024,31 @@ class TermRecording:
         if True:
             if self.main is None:
                 return None
-            scr = (self.alt or self.main)[0]
-            cy = min(max(scr.cursor.y, 0), scr.lines - 1)
+            scr = self.alt or self.main
+            cx, cy = scr.cursor()
+            cy = min(max(cy, 0), scr.lines - 1)
+            cols = scr.columns
+            cached = {}
 
-            def cells(y):
-                row = scr.buffer[y]
-                return [(x, row[x]) for x in range(scr.columns) if row[x].data != '']
+            def cells(y):          # (x, text, dim) per cell
+                if y not in cached:
+                    cached[y] = scr.cells(y)
+                return cached[y]
+
+            def text_of(y):
+                return ''.join(d for _, d, _ in cells(y))
 
             start = None
             for y in range(cy, max(-1, cy - 12), -1):
                 chars = cells(y)
-                line = ''.join(c.data for _, c in chars)
-                limit = len(chars) if y < cy else sum(1 for x, _ in chars if x < scr.cursor.x)
+                line = ''.join(d for _, d, _ in chars)
+                limit = len(chars) if y < cy else sum(1 for x, _, _ in chars if x < cx)
                 i = _prompt_end(line, limit)
                 if i >= 0:
                     start = (y, chars[i][0] + 1)
                     break
                 # a shell's input only continues upward through wrapped (full-width) rows
-                if not self.alt and (y == 0 or len(''.join(c.data for _, c in cells(y - 1)).rstrip()) < scr.columns - 1):
+                if not self.alt and (y == 0 or len(text_of(y - 1).rstrip()) < cols - 1):
                     break
             if not start:
                 return None
@@ -1884,17 +2056,17 @@ class TermRecording:
             end = cy
             if self.alt:     # the input may continue below the cursor, up to the box's edge
                 while end + 1 < scr.lines:
-                    nxt = ''.join(c.data for _, c in cells(end + 1))
+                    nxt = text_of(end + 1)
                     if not nxt.strip() or _RULE_LINE.match(nxt) or nxt.lstrip()[:1] in '╰└' or not nxt.startswith(' '):
                         break
                     end += 1
             parts, prev_full = [], False
             for y in range(y0, end + 1):
                 row = cells(y)
-                text = ''.join(c.data for x, c in row if x >= (x0 if y == y0 else 0) and not c.blink)
+                text = ''.join(d for x, d, dim in row if x >= (x0 if y == y0 else 0) and not dim)
                 if not self.alt and y == cy:
                     # a right-hand prompt sits after a wide gap past the cursor: not part of the input
-                    gap = re.search(r' {8,}', text[max(0, sum(1 for x, _ in row if x0 <= x < scr.cursor.x) if y == y0 else 0):])
+                    gap = re.search(r' {8,}', text[max(0, sum(1 for x, _, _ in row if x0 <= x < cx) if y == y0 else 0):])
                     if gap:
                         text = text[:len(text) - len(gap.string) + gap.start()]
                 text = text.replace('\xa0', ' ').replace('\u200b', '').rstrip()
@@ -1903,7 +2075,7 @@ class TermRecording:
                 if y > y0:
                     text = text[min(x0, len(text) - len(text.lstrip(' '))):]   # continuation indent
                     parts.append(' ' if prev_full and not text.startswith(' ') else '\n')
-                prev_full = len(''.join(c.data for _, c in cells(y)).rstrip()) >= scr.columns - 12
+                prev_full = len(text_of(y).rstrip()) >= cols - 12
                 parts.append(text)
             return ''.join(parts).strip('\n')
 
@@ -1952,30 +2124,27 @@ class TermRecording:
             frames = [ansi for _, ansi in _collapse_blank(above + rows[:end])]
             if not self.alt:
                 # redrawing the normal screen: what the shell printed before it is still above
-                width = self.main[0].columns
-                frames = [_render_line(l, width) for l in list(self.main[0].history.top)[-2000:]] + frames
+                frames = [ansi for _, ansi, _ in self.main.history_rows(2000)] + frames
             take = frames[-max_lines:]
             return take, len(frames), len(frames) > len(take)
-        screen = (self.alt or self.main)[0]
+        screen = self.alt or self.main
         width = screen.columns
-        history = list(screen.history.top) if hasattr(screen, 'history') else []
-        rows = [screen.buffer[y] for y in range(screen.lines)]
+        rows = screen.rows()               # (plain, ansi, wrapped-from-above)
         # drop empty rows below the cursor
-        last = max(screen.cursor.y, 0)
-        for y in range(screen.lines - 1, last, -1):
-            if any(rows[y][x].data.strip() for x in rows[y].keys()):
+        last = min(max(screen.cursor()[1], 0), len(rows) - 1)
+        for y in range(len(rows) - 1, last, -1):
+            if rows[y][0].strip():
                 last = y
                 break
         rows = rows[:last + 1]
-        total = len(history) + len(rows)
-        take = rows[-max_lines:] if len(rows) >= max_lines else history[-(max_lines - len(rows)):] + rows
+        total = screen.history_len() + len(rows)
+        take = rows[-max_lines:] if len(rows) >= max_lines else screen.history_rows(max_lines - len(rows)) + rows
         if not join:
-            lines = [_render_line(l, width) for l in take]
+            lines = [ansi for _, ansi, _ in take]
             return lines, total, total > len(lines)
         out, last_row_len = [], 0
-        for l in take:
-            plain, ansi = _render_row(l, width)
-            if out and getattr(l, 'cont', False):
+        for plain, ansi, cont in take:
+            if out and cont:
                 # the row above filled the width and continued here: its trailing blanks
                 # were part of the text (a space between words), so put them back
                 out[-1] += ' ' * max(0, width - last_row_len) + ansi
@@ -2010,7 +2179,7 @@ TERM_RECORDINGS_LOCK = threading.Lock()
 
 def recording_for(pid):
     """The replayed recording of the Konsole tab whose shell process is `pid`, if it records."""
-    if pyte is None or not pid:
+    if (pyte is None and _VT is None) or not pid:
         return None
     base = os.path.join(TERM_REC_DIR, str(pid))
     if not os.path.exists(base + '.timing'):
@@ -2019,6 +2188,8 @@ def recording_for(pid):
         rec = TERM_RECORDINGS.get(pid)
         if rec is None:
             rec = TERM_RECORDINGS[pid] = TermRecording(base)
+            # Claude Code shows its own log: no need to stitch its screens on the first replay
+            rec.log_backed = bool(_claude_pid_under(pid))
     rec.update()
     return rec
 
@@ -3314,6 +3485,13 @@ def show_phone_notification(note):
     as read when the phone's app offers them), or who is calling (stays until the call ends).
     `removed` closes the one shown for that key."""
     key = str(note.get('key', ''))[:300]
+    try:
+        late = time.time() - float(note.get('posted_at', 0)) / 1000
+        if note.get('posted_at') and late > 2:
+            sys.stderr.write(f"Phone notification arrived {late:.0f} s after the phone got it "
+                             f"({str(note.get('app', ''))[:30]})\n")
+    except (TypeError, ValueError):
+        pass
     if note.get('removed'):
         PHONE_NOTES.send({"cmd": "close", "key": key})
         return {"status": "ok"}
@@ -3339,10 +3517,25 @@ def show_phone_notification(note):
             return {"status": "error", "message": "No notification service (nobody logged in?)"}
     return {"status": "ok"}
 
-WEBCAM_SIZE = (1280, 720)          # one fixed format for everything the camera shows
-WEBCAM_FRAME = WEBCAM_SIZE[0] * WEBCAM_SIZE[1] * 3 // 2      # bytes in one yuv420p frame
-STANDBY_FRAMES = os.path.expanduser('~/.cache/orbit/orbit-cam-standby.yuv')
+# ---- Orbit Cam: the phone's camera as this computer's webcam ----
+# The camera has one format while apps use it, set by its mode (config.json orbit_cam_format,
+# switched from the tray):
+#   sharp       MJPEG 1920x1080: what real webcams send at 1080p. Each frame is a ~100 KB JPEG
+#               made by the GPU instead of a 3 MB raw frame, so moving frames costs little
+#   raw         NV12 1280x720: uncompressed, what the GPU decoder makes
+#   compatible  I420 1280x720: for an older app that takes nothing else
+WEBCAM_MODES = {'sharp': ('mjpeg', (1920, 1080)), 'raw': ('nv12', (1280, 720)),
+                'compatible': ('yuv420p', (1280, 720))}
+
+def _mode_from_config():
+    m = str(load_config().get('orbit_cam_format', '')).lower()
+    return {'i420': 'compatible', 'yuv420p': 'compatible', 'nv12': 'raw', 'mjpeg': 'sharp'}.get(m, m if m in WEBCAM_MODES else 'sharp')
+
+WEBCAM_MODE = _mode_from_config()
 STANDBY_COUNT, STANDBY_FPS = 10, 4
+
+def _cam_format():
+    return WEBCAM_MODES[WEBCAM_MODE]
 
 def webcam_device():
     """A virtual camera to write the phone's video into (v4l2loopback), or None. One named
@@ -3363,30 +3556,44 @@ def webcam_device():
         return None
     return sorted(found)[0][1:] if found else None
 
-def _standby_frame():
+
+def _standby_frames():
     """What the camera shows while the phone isn't streaming: soft blurred colour with a
-    moving film grain and the name, as a few raw frames made once and then looped, so
-    showing it costs next to nothing."""
-    if os.path.exists(STANDBY_FRAMES):
-        return STANDBY_FRAMES
-    os.makedirs(os.path.dirname(STANDBY_FRAMES), exist_ok=True)
-    bold, regular = '/usr/share/fonts/noto/NotoSans-Bold.ttf', '/usr/share/fonts/noto/NotoSans-Regular.ttf'
-    fb = f":fontfile={bold}" if os.path.exists(bold) else ''
-    fr = f":fontfile={regular}" if os.path.exists(regular) else ''
-    w, h = WEBCAM_SIZE
-    src = (f"gradients=s={w}x{h}:c0=0x1b1446:c1=0x0b3a4a:c2=0x3a1240:c3=0x0b0d12:nb_colors=4"
-           ":x0=200:y0=120:x1=1100:y1=650:type=radial:speed=0")
-    vf = ("boxblur=40:2,noise=alls=22:allf=t+u,"
-          f"drawtext=text='Orbit Cam'{fb}:fontsize=56:fontcolor=0xf2f3f7:x=(w-tw)/2:y=h/2-60,"
-          f"drawtext=text='Off for now · start it from Orbit on your phone'{fr}:fontsize=24:fontcolor=0xb8bccb:x=(w-tw)/2:y=h/2+18")
-    tmp = STANDBY_FRAMES + '.part'
-    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', src,
-                    '-frames:v', str(STANDBY_COUNT), '-vf', vf, '-pix_fmt', 'yuv420p', '-f', 'rawvideo', tmp],
-                   capture_output=True, timeout=60)
-    if os.path.exists(tmp) and os.path.getsize(tmp) == w * h * 3 // 2 * STANDBY_COUNT:
-        os.replace(tmp, STANDBY_FRAMES)
-        return STANDBY_FRAMES
-    return None
+    moving film grain and the name. A few frames, made once per mode and then looped, so
+    showing it costs next to nothing. A list of frames (bytes), or None."""
+    pix, (w, h) = _cam_format()
+    base = os.path.expanduser(f'~/.cache/orbit/orbit-cam-standby-{WEBCAM_MODE}')
+    frame_size = w * h * 3 // 2
+    if not os.path.exists(base + ('.0' if pix == 'mjpeg' else '.raw')):
+        os.makedirs(os.path.dirname(base), exist_ok=True)
+        bold, regular = '/usr/share/fonts/noto/NotoSans-Bold.ttf', '/usr/share/fonts/noto/NotoSans-Regular.ttf'
+        fb = f":fontfile={bold}" if os.path.exists(bold) else ''
+        fr = f":fontfile={regular}" if os.path.exists(regular) else ''
+        k = w / 1280                            # the text scales with the frame
+        src = (f"gradients=s={w}x{h}:c0=0x1b1446:c1=0x0b3a4a:c2=0x3a1240:c3=0x0b0d12:nb_colors=4"
+               f":x0={int(200*k)}:y0={int(120*k)}:x1={int(1100*k)}:y1={int(650*k)}:type=radial:speed=0")
+        vf = (f"boxblur={int(40*k)}:2,noise=alls=22:allf=t+u,"
+              f"drawtext=text='Orbit Cam'{fb}:fontsize={int(56*k)}:fontcolor=0xf2f3f7:x=(w-tw)/2:y=h/2-{int(60*k)},"
+              f"drawtext=text='Off for now · start it from Orbit on your phone'{fr}:fontsize={int(24*k)}"
+              f":fontcolor=0xb8bccb:x=(w-tw)/2:y=h/2+{int(18*k)}")
+        out = ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '4', '-f', 'image2', base + '.%d'] if pix == 'mjpeg' else \
+              ['-pix_fmt', pix, '-f', 'rawvideo', base + '.raw']
+        subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', src,
+                        '-frames:v', str(STANDBY_COUNT), '-vf', vf, '-start_number', '0'] + out,
+                       capture_output=True, timeout=90)
+    frames = []
+    try:
+        if pix == 'mjpeg':
+            for n in range(STANDBY_COUNT):
+                with open(f'{base}.{n}', 'rb') as f:
+                    frames.append(f.read())
+        else:
+            with open(base + '.raw', 'rb') as f:
+                data = f.read()
+            frames = [data[k:k + frame_size] for k in range(0, len(data) - frame_size + 1, frame_size)]
+    except OSError:
+        pass
+    return frames or None
 
 def _request_chunks(handler):
     """The request body as it arrives (chunked, or up to Content-Length)."""
@@ -3455,13 +3662,14 @@ def _vaapi_device():
     sys.stderr.write("Orbit Cam: no GPU decoding, using the CPU\n")
     return None
 
+
 class OrbitCam:
     """The virtual camera, fed by one writer that never lets go of it: closing and reopening
     the device between pictures fails ("Invalid argument") and makes apps lose the camera.
-    It shows the standby picture, or the phone's decoded video while the phone streams."""
+    It shows the standby picture, or the phone's video while the phone streams."""
 
     def __init__(self):
-        self.lock = threading.Lock()          # one frame at a time into the writer
+        self.lock = threading.Lock()          # one frame (or piece of stream) at a time
         self.sink = None
         self.live = False                      # the phone's video is showing
         self.streaming = threading.Lock()      # one phone stream at a time
@@ -3472,54 +3680,113 @@ class OrbitCam:
         dev = webcam_device()
         if not dev:
             return False
-        w, h = WEBCAM_SIZE
-        self.sink = subprocess.Popen(
-            ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'yuv420p',
-             '-video_size', f'{w}x{h}', '-framerate', '30', '-i', 'pipe:0', '-c:v', 'rawvideo', '-f', 'v4l2', dev[0]],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0)
+        pix, (w, h) = _cam_format()
+        if pix == 'mjpeg':
+            # JPEG frames, copied in as they are (no decoding here)
+            inp = ['-f', 'mjpeg', '-i', 'pipe:0', '-c:v', 'copy']
+        else:
+            inp = ['-f', 'rawvideo', '-pix_fmt', pix, '-video_size', f'{w}x{h}', '-framerate', '30',
+                   '-i', 'pipe:0', '-c:v', 'rawvideo']
+        self.sink = subprocess.Popen(['ffmpeg', '-hide_banner', '-loglevel', 'error'] + inp + ['-f', 'v4l2', dev[0]],
+                                     stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     bufsize=0)
         return True
 
-    def pass_frame(self, src_fd):
-        """Move one whole frame from a pipe (the decoder) into the camera without copying it
-        through Python (splice). False at the end of the stream."""
-        with self.lock:
-            if not self._sink_ready():
-                return False
-            left = WEBCAM_FRAME
-            try:
-                while left:
-                    n = os.splice(src_fd, self.sink.stdin.fileno(), left)
-                    if n == 0:
-                        return False
-                    left -= n
-                return True
-            except OSError:
-                if left != WEBCAM_FRAME:
-                    self.sink = None           # cut mid-frame: start the writer afresh
-                return False
+    def _write_all(self, data):
+        view = memoryview(data)
+        while view:
+            n = self.sink.stdin.write(view)
+            view = view[n:]
 
     def write(self, frame):
         with self.lock:
             if not self._sink_ready():
                 return False
             try:
-                self.sink.stdin.write(frame)
+                self._write_all(frame)
                 return True
-            except OSError:
+            except (OSError, ValueError):
                 self.sink = None               # it died: a new one next frame
                 return False
 
+    def pass_through(self, src_fd):
+        """Move the decoder's output into the camera without copying it through Python
+        (splice): raw frames a whole frame at a time, JPEGs as they come. False at the end."""
+        pix, (w, h) = _cam_format()
+        with self.lock:
+            if not self._sink_ready():
+                return False
+            dst = self.sink.stdin.fileno()
+            try:
+                if pix == 'mjpeg':
+                    return os.splice(src_fd, dst, 1 << 20) > 0
+                left = w * h * 3 // 2
+                while left:
+                    n = os.splice(src_fd, dst, left)
+                    if n == 0:
+                        return False
+                    left -= n
+                return True
+            except OSError:
+                self.sink = None
+                return False
+
+    def users(self):
+        """Programs that have the camera open now (not our own writer)."""
+        dev = webcam_device()
+        if not dev:
+            return []
+        mine = self.sink.pid if self.sink and self.sink.poll() is None else None
+        names = []
+        for pid in os.listdir('/proc'):
+            if not pid.isdigit() or int(pid) in (mine, os.getpid()):
+                continue
+            try:
+                for fd in os.listdir(f'/proc/{pid}/fd'):
+                    if os.readlink(f'/proc/{pid}/fd/{fd}') == dev[0]:
+                        with open(f'/proc/{pid}/comm') as f:
+                            names.append(f.read().strip())
+                        break
+            except OSError:
+                continue
+        return sorted(set(names))
+
+    def switch_mode(self, mode):
+        """Sharp / raw / compatible. A camera's format can't change while an app has it open,
+        so this refuses then and says which apps."""
+        global WEBCAM_MODE
+        if mode not in WEBCAM_MODES:
+            return {"status": "error", "message": "Unknown mode"}
+        if mode == WEBCAM_MODE:
+            return {"status": "ok", "mode": mode}
+        if self.live:
+            return {"status": "error", "message": "Stop Orbit Cam on the phone first."}
+        busy = self.users()
+        if busy:
+            return {"status": "error", "message": "Close " + ", ".join(busy) + " first: the camera is in use."}
+        with self.lock:
+            WEBCAM_MODE = mode
+            if self.sink and self.sink.poll() is None:
+                self.sink.terminate()
+                try:
+                    self.sink.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.sink.kill()
+            self.sink = None                   # the next frame starts it in the new format
+        cfg = load_config()
+        cfg['orbit_cam_format'] = mode
+        save_config(cfg)
+        return {"status": "ok", "mode": mode}
+
     def standby(self):
         """While the phone isn't streaming: the standby frames, STANDBY_FPS a second."""
-        frames, n = [], 0
+        frames, n, mode = [], 0, WEBCAM_MODE
         while True:
             try:
-                if not frames:
-                    path = _standby_frame() if webcam_device() else None
-                    if path:
-                        with open(path, 'rb') as f:
-                            data = f.read()
-                        frames = [data[k:k + WEBCAM_FRAME] for k in range(0, len(data), WEBCAM_FRAME)]
+                if mode != WEBCAM_MODE:        # switched: that mode's own standby frames
+                    frames, mode = [], WEBCAM_MODE
+                if not frames and webcam_device():
+                    frames = _standby_frames() or []
                 if frames and not self.live:
                     self.write(frames[n % len(frames)])
                     n += 1
@@ -3533,75 +3800,154 @@ def start_webcam_standby():
     threading.Thread(target=ORBIT_CAM.standby, daemon=True, name='orbit-cam').start()
     threading.Thread(target=_vaapi_device, daemon=True, name='orbit-cam-gpu').start()    # checked ahead of the first stream
 
-def stream_phone_webcam(handler, rot):
-    """Decode the phone's H.264 stream into the camera until the phone stops."""
+def _decode_ladder(fmt, rot):
+    """Ways to turn the phone's stream into camera frames, cheapest first. The first that
+    produces a picture is kept (stream_phone_webcam tries them in turn), so any phone works:
+      gpu         decode, turn, fit and (Sharp) make JPEGs on the GPU
+      gpu-range   the same, with the stream's colour labels set to plain video ones: some
+                  phones send full-range colour that the GPU chain won't take as labelled
+      cpu         everything on the CPU: works with anything, costs the most
+    Each is (name, ffmpeg command)."""
+    pix, (w, h) = _cam_format()
+    gpu = _vaapi_device()
+    # Fast start. (HEVC loses its start-up info with nobuffer / low_delay, so not for it.)
+    start = ['-probesize', '32', '-analyzeduration', '0'] + \
+            (['-fflags', 'nobuffer', '-flags', 'low_delay'] if fmt == 'h264' else [])
+    # Raw H.264 and HEVC have no clock: frames pass straight through as they come
+    def cmd(hw, vf, enc):
+        return (['ffmpeg', '-hide_banner', '-loglevel', 'warning'] + hw + start + ['-f', fmt, '-i', 'pipe:0',
+                '-vf', vf] + enc[:-2] + ['-fps_mode', 'passthrough'] + enc[-2:] + ['pipe:1'])
+    ladder = []
+    if gpu:
+        turn = {90: 'transpose_vaapi=dir=clock,', 180: 'transpose_vaapi=dir=reversal,',
+                270: 'transpose_vaapi=dir=cclock,'}.get(rot, '')
+        hw = ['-init_hw_device', f'vaapi=va:{gpu}', '-filter_hw_device', 'va',
+              '-hwaccel', 'vaapi', '-hwaccel_device', 'va', '-hwaccel_output_format', 'vaapi']
+        # upright, then fitted into the camera's one size (a portrait picture gets side bars).
+        # Frames the CPU decoded instead (an unusual stream) are uploaded first
+        fit = (f'format=nv12|vaapi,hwupload,{turn}scale_vaapi=w={w}:h={h}:force_original_aspect_ratio=decrease'
+               f':format={"nv12" if pix == "mjpeg" else pix},pad_vaapi=w={w}:h={h}:x=(ow-iw)/2:y=(oh-ih)/2')
+        if pix == 'mjpeg':
+            enc, tail = ['-c:v', 'mjpeg_vaapi', '-global_quality', '85', '-f', 'mjpeg'], ''
+        else:
+            enc, tail = ['-pix_fmt', pix, '-f', 'rawvideo'], f',hwdownload,format={pix}'
+        relabel = 'setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709,'
+        ladder += [('gpu', cmd(hw, fit + tail, enc)), ('gpu-range', cmd(hw, relabel + fit + tail, enc))]
+    turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
+    fit = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
+    enc = ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '5', '-f', 'mjpeg'] if pix == 'mjpeg' \
+        else ['-pix_fmt', pix, '-f', 'rawvideo']
+    ladder.append(('cpu', cmd([], fit, enc)))
+    return ladder
+
+def stream_phone_webcam(handler, rot, codec='h264'):
+    """Decode the phone's stream (H.264 or HEVC) into the camera until the phone stops. What
+    arrives is kept until a way of decoding it produces a picture; if one fails first, the next
+    is tried with all of it, so nothing the phone sent is lost."""
     dev = webcam_device()
     if dev is None:
         return {"status": "error", "message": "No virtual camera on this computer (install v4l2loopback)."}
     device, label = dev
     if not ORBIT_CAM.streaming.acquire(blocking=False):
         return {"status": "error", "message": "Orbit Cam is already streaming."}
-    w, h = WEBCAM_SIZE
-    pad = f'pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
-    gpu = _vaapi_device()
-    # upright, then fitted into the camera's one format (a portrait picture gets side bars):
-    # on the GPU when it can, else on the CPU. Raw H.264 has no clock: frames pass as they come
-    if gpu:
-        turn = {90: 'transpose_vaapi=dir=clock,', 180: 'transpose_vaapi=dir=reversal,',
-                270: 'transpose_vaapi=dir=cclock,'}.get(rot, '')
-        hw = ['-hwaccel', 'vaapi', '-hwaccel_device', gpu, '-hwaccel_output_format', 'vaapi']
-        vf = f'{turn}scale_vaapi=w={w}:h={h}:force_original_aspect_ratio=decrease,hwdownload,format=nv12,{pad}'
-    else:
-        turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
-        hw = []
-        vf = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,{pad}'
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error'] + hw + [
-           '-fflags', 'nobuffer', '-flags', 'low_delay',
-           '-probesize', '32', '-analyzeduration', '0', '-f', 'h264', '-i', 'pipe:0',
-           '-vf', vf, '-fps_mode', 'passthrough', '-pix_fmt', 'yuv420p', '-f', 'rawvideo', 'pipe:1']
-    decoder = copier = None
-    started, received = time.time(), 0
+    fmt = 'hevc' if codec == 'hevc' else 'h264'
+    ladder = _decode_ladder(fmt, rot)
     errpath = os.path.expanduser('~/.cache/orbit/orbit-cam.log')
-    try:
-        handler.connection.settimeout(10)      # a phone that went quiet ends the stream
+    state = {'decoder': None, 'copier': None, 'picture': threading.Event(), 'way': None}
+    held = bytearray()                         # everything so far, until a picture comes out
+
+    def launch(name, cmd):
         with open(errpath, 'wb') as errlog:
-            decoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, bufsize=0)
+            dec = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, bufsize=0)
+        picture = threading.Event()
 
         def copy():
-            # decoded frames into the camera, a whole frame at a time
-            fd = decoder.stdout.fileno()
+            fd = dec.stdout.fileno()
+            first = True
             while True:
-                select.select([fd], [], [])       # wait for the next frame before taking the camera
+                select.select([fd], [], [])       # wait for output before taking the camera
                 ORBIT_CAM.live = True
-                if not ORBIT_CAM.pass_frame(fd):
+                if not ORBIT_CAM.pass_through(fd):
+                    if first:
+                        ORBIT_CAM.live = False    # it ended without a picture: standby stays
                     return
+                first = False
+                picture.set()                     # a real frame went in: this way works
 
-        copier = threading.Thread(target=copy, daemon=True, name='orbit-cam-live')
-        copier.start()
+        t = threading.Thread(target=copy, daemon=True, name='orbit-cam-live')
+        t.start()
+        state.update(decoder=dec, copier=t, picture=picture, way=name)
+        sys.stderr.write(f"Orbit Cam: decoding with '{name}'\n")
+
+    def next_way():
+        """The current way failed before showing anything: the next one, fed all that came."""
+        dec = state['decoder']
+        try:
+            dec.kill()
+        except OSError:
+            pass
+        while ladder:
+            name, cmd = ladder.pop(0)
+            launch(name, cmd)
+            try:
+                state['decoder'].stdin.write(bytes(held))
+                return True
+            except OSError:
+                continue
+        return False
+
+    started, received = time.time(), 0
+    pix, (w, h) = _cam_format()
+    try:
+        handler.connection.settimeout(10)      # a phone that went quiet ends the stream
+        name, cmd = ladder.pop(0)
+        launch(name, cmd)
         subprocess.Popen(['notify-send', '-i', 'camera-web', '-a', 'Orbit', 'Orbit Cam on',
                           f'Your phone is the camera "{label}"'], stderr=subprocess.DEVNULL)
-        sys.stderr.write(f"Orbit Cam: stream started (turn {rot})\n")
+        sys.stderr.write(f"Orbit Cam: stream started ({fmt}, turn {rot}, {WEBCAM_MODE} {w}x{h})\n")
+        # the start of the latest stream, kept privately, to see why a phone's video won't decode
+        sample = open(os.open(os.path.expanduser('~/.cache/orbit/orbit-cam-last.' + fmt),
+                              os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb')
         for chunk in _request_chunks(handler):
+            if received < 2 << 20:
+                sample.write(chunk)
             received += len(chunk)
-            decoder.stdin.write(chunk)
+            confirmed = state['picture'].is_set()
+            if not confirmed:
+                held.extend(chunk)
+            dec = state['decoder']
+            ok = True
+            try:
+                dec.stdin.write(chunk)
+            except OSError:
+                ok = False
+            if not confirmed and (not ok or dec.poll() is not None):
+                if not next_way():
+                    return {"status": "error", "message": "This computer can't decode the phone's video."}
+            elif confirmed and held:
+                held.clear()                   # a picture: nothing more to keep
+            elif not ok:
+                return {"status": "error", "message": "The decoder stopped."}
+        sample.close()
         return {"status": "ok"}
     except (OSError, ValueError) as e:
         return {"status": "error", "message": f"Stream ended: {e}"}
     finally:
         took = time.time() - started
         sys.stderr.write(f"Orbit Cam: stream ended after {took:.0f} s, {received // 1024} KB "
-                         f"({received * 8 / max(took, 0.1) / 1e6:.1f} Mbit/s)\n")
-        if decoder:
+                         f"({received * 8 / max(took, 0.1) / 1e6:.1f} Mbit/s), decoded with '{state['way']}'\n")
+        dec = state['decoder']
+        if dec:
             try:
-                decoder.stdin.close()
+                dec.stdin.close()
             except OSError:
                 pass
             try:
-                decoder.wait(timeout=3)
+                dec.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                decoder.kill()
-        if copier:
-            copier.join(timeout=3)
+                dec.kill()
+        if state['copier']:
+            state['copier'].join(timeout=3)
         ORBIT_CAM.live = False                 # the standby picture again
         ORBIT_CAM.streaming.release()
         try:
@@ -4870,6 +5216,16 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok", "enabled": keep_awake_active()})
             return
 
+        elif path == '/api/webcam/format':
+            cfg = load_config()
+            client_info, token = authenticate_client(self, cfg)
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json({"status": "ok", "mode": WEBCAM_MODE,
+                            "live": ORBIT_CAM.live, "users": ORBIT_CAM.users()})
+            return
+
         elif path == '/api/terminals/input_log':
             # Only for this computer's own tools (debugging what the phone typed)
             cfg = load_config()
@@ -5407,6 +5763,18 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok", "ticket": make_stream_ticket(req_path)})
             return
 
+        # Orbit Cam's format, switched from this computer's own Orbit window (not the phone)
+        if path == '/api/webcam/format':
+            cfg = load_config()
+            client_info, token = authenticate_client(self, cfg)
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            body = self.read_json()
+            mode = str((body or {}).get('mode', '')).lower() if isinstance(body, dict) else ''
+            self.send_json(ORBIT_CAM.switch_mode(mode))
+            return
+
         # The phone's camera as this computer's webcam: H.264 from the phone, decoded into a
         # virtual camera (v4l2loopback) that video-call apps and browsers can pick
         if path == '/api/webcam/stream':
@@ -5422,7 +5790,8 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 rot = int(qs.get('rot', ['0'])[0]) % 360
             except ValueError:
                 rot = 0
-            self.send_json(stream_phone_webcam(self, rot))
+            codec = 'hevc' if qs.get('codec', [''])[0] == 'hevc' else 'h264'
+            self.send_json(stream_phone_webcam(self, rot, codec))
             return
 
         # 1. File Upload (Phone -> PC)

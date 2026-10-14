@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from PyQt6.QtCore import (Qt, QTimer, QThread, QObject, pyqtSignal, QSize,
                           QRectF, QPointF, QByteArray)
-from PyQt6.QtGui import (QIcon, QFont, QColor, QPainter, QPixmap, QPainterPath,
+from PyQt6.QtGui import (QActionGroup, QIcon, QFont, QColor, QPainter, QPixmap, QPainterPath,
                          QPainterPathStroker, QTransform, QFontDatabase, QPen,
                          QRadialGradient, QShortcut, QKeySequence, QDragEnterEvent,
                          QDropEvent, QGuiApplication)
@@ -525,12 +525,11 @@ def line_icon(name, color=C.T2, size=20):
     return ic
 
 
-APP_ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
-                '<rect width="200" height="200" rx="46" fill="#15181D"/>'
-                '<circle cx="100" cy="100" r="30" fill="#ECEEF1"/>'
-                '<ellipse cx="100" cy="100" rx="70" ry="28" fill="none" stroke="#8EA8FF" stroke-width="8" '
-                'transform="rotate(-28 100 100)"/>'
-                '<circle cx="160" cy="68" r="11" fill="#8EA8FF"/></svg>')
+# The Orbit mark: a planet, its circular orbit, and a satellite on it (a gap in the orbit
+# around the satellite shows it moving along)
+APP_ICON_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" rx="46" fill="#15181D"/><path d="M73.00,100.00a27.00,27.00 0 1,0 54.00,0a27.00,27.00 0 1,0 -54.00,0" fill="#ECEEF1"/><path d="M158.97,80.84A62.00,62.00 0 1,1 125.22,43.36" fill="none" stroke="#8EA8FF" stroke-width="9.0" stroke-linecap="round"/><path d="M134.07,58.51a12.00,12.00 0 1,0 24.00,0a12.00,12.00 0 1,0 -24.00,0" fill="#8EA8FF"/></svg>')
+
+TRAY_MARK_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><path d="M67.06,100.00a32.94,32.94 0 1,0 65.88,0a32.94,32.94 0 1,0 -65.88,0" fill="COLOR"/><path d="M171.94,76.63A75.64,75.64 0 1,1 130.77,30.90" fill="none" stroke="COLOR" stroke-width="14.6" stroke-linecap="round"/><path d="M137.91,49.39a18.30,18.30 0 1,0 36.60,0a18.30,18.30 0 1,0 -36.60,0" fill="COLOR"/></svg>')
 
 
 def app_icon():
@@ -540,53 +539,11 @@ def app_icon():
     return ic
 
 
-def _mono_mark_path():
-    """Planet + tilted ring + satellite as one fill path (200x200 space). The front
-    half of the ring cuts a small gap into the planet so it reads at panel sizes."""
-    ring_w, gap = 13.0, 7.0
-    rect = QRectF(-70, -28, 140, 56)
-    t = QTransform()
-    t.translate(100, 100)
-    t.rotate(-28)
-    full = QPainterPath()
-    full.addEllipse(rect)
-    front = QPainterPath()
-    front.arcMoveTo(rect, 180)
-    front.arcTo(rect, 180, 180)
-    full, front = t.map(full), t.map(front)
-
-    def stroke(path, w):
-        s = QPainterPathStroker()
-        s.setWidth(w)
-        s.setCapStyle(Qt.PenCapStyle.FlatCap)
-        return s.createStroke(path)
-
-    planet = QPainterPath()
-    planet.addEllipse(QPointF(100, 100), 33, 33)
-    ring_all = stroke(full, ring_w)
-    ring_front = stroke(front, ring_w)
-    gap_front = stroke(front, ring_w + 2 * gap)
-    shape = planet.subtracted(gap_front)
-    shape = shape.united(ring_all.subtracted(planet))
-    shape = shape.united(ring_front)
-    dot = QPainterPath()
-    dot.addEllipse(QPointF(160, 68), 13, 13)
-    return shape.united(dot)
-
-
 def tray_icon_mono(color=C.T1):
-    path = _mono_mark_path()
+    svg = TRAY_MARK_SVG.replace('COLOR', QColor(color).name())
     ic = QIcon()
     for s in (16, 22, 24, 32, 44, 48, 64, 128):
-        pm = QPixmap(s, s)
-        pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.scale(s / 160.0, s / 160.0)
-        p.translate(-20, -20)
-        p.fillPath(path, QColor(color))
-        p.end()
-        ic.addPixmap(pm)
+        ic.addPixmap(render_svg(svg, s, s))
     return ic
 
 
@@ -2335,11 +2292,43 @@ class OrbitApp:
         self.act_browse = self.menu.addAction("Browse phone files", self.open_explorer)
         self.act_clip = self.menu.addAction("Send clipboard to phone", self.sync_clipboard)
         self.act_ring = self.menu.addAction("Ring phone", self._toggle_ring)
+        # Orbit Cam's format, one at a time: Sharp suits current apps; Raw and Compatible are for
+        # an app that doesn't see the camera or shows a broken picture
+        self.cam_menu = self.menu.addMenu("Orbit Cam")
+        self.cam_group = QActionGroup(self.cam_menu)
+        self.cam_actions = {}
+        for mode, label in (("sharp", "Sharp · 1080p"), ("raw", "Raw · 720p"),
+                            ("compatible", "Compatible · for older apps")):
+            a = self.cam_menu.addAction(label)
+            a.setCheckable(True)
+            self.cam_group.addAction(a)
+            a.triggered.connect(lambda checked, m=mode: self._switch_cam_mode(m))
+            self.cam_actions[mode] = a
+        self.menu.aboutToShow.connect(self._refresh_cam_format)
         self.menu.addSeparator()
         self.act_pair = self.menu.addAction("Pair a phone…", self.pair_new_device)
         self.menu.addAction("Quit Orbit", self.app.quit)
 
     _ringing = False
+
+    def _refresh_cam_format(self):
+        res = fetch_json('/api/webcam/format', timeout=1)
+        self._cam_mode = res.get('mode') if res.get('status') == 'ok' else None
+        for mode, a in self.cam_actions.items():
+            a.setChecked(mode == self._cam_mode)
+        self.cam_menu.setEnabled(self._cam_mode is not None)
+
+    def _switch_cam_mode(self, mode):
+        res = post_json('/api/webcam/format', {"mode": mode})
+        if res.get('status') == 'ok':
+            self.tray.showMessage("Orbit Cam", {"sharp": "Sharp: 1080p, as real webcams send it.",
+                                                "raw": "Raw: 720p, uncompressed.",
+                                                "compatible": "Compatible: 720p for older apps."}[mode],
+                                  QSystemTrayIcon.MessageIcon.Information, 4000)
+        else:
+            self._refresh_cam_format()          # back to the mode it still has
+            self.tray.showMessage("Orbit Cam", res.get('message') or res.get('error') or "Couldn't switch the format",
+                                  QSystemTrayIcon.MessageIcon.Warning, 6000)
 
     def _toggle_ring(self):
         if self._ringing:
