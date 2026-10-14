@@ -2141,7 +2141,7 @@ public class MainActivity extends Activity {
         String url = active.getBaseUrl();
 
         new Thread(() -> {
-            boolean ok = NetworkUtils.httpPostWithAuth(url + "/api/approve_current", active.authToken, active.secretKey, activeChallengeId, "approve", 5000);
+            boolean ok = ActionReceiver.approveCurrent(active, activeChallengeId);
             runOnUiThread(() -> {
                 if (ok) {
                     Toast.makeText(MainActivity.this, "Verified! " + active.hostname + " Unlocked", Toast.LENGTH_LONG).show();
@@ -2152,7 +2152,7 @@ public class MainActivity extends Activity {
                         }, 1200);
                     }
                 } else {
-                    Toast.makeText(MainActivity.this, "Unlock failed: check pairing or challenge expired", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Couldn't approve: the computer stopped asking", Toast.LENGTH_SHORT).show();
                 }
             });
         }).start();

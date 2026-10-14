@@ -39,7 +39,9 @@ import java.util.Arrays;
  * The screen stays on while it streams; leaving this screen stops it.
  */
 public class WebcamActivity extends Activity {
-    private static final int WIDTH = 1280, HEIGHT = 720, FPS = 30, BITRATE = 4_000_000;
+    private static final int WANT_W = 1280, WANT_H = 720, FPS = 30, BITRATE = 4_000_000;
+    // the size the camera really delivers (one it supports, so nothing gets stretched)
+    private int width = WANT_W, height = WANT_H;
     private static final int REQ_CAMERA = 41;
 
     private TextureView preview;
@@ -53,7 +55,11 @@ public class WebcamActivity extends Activity {
     private Thread sender;
     private volatile boolean streaming;
     private volatile HttpURLConnection conn;
-    private boolean front = false;
+    private boolean front = true;               // the last one used; the front camera at first
+    private static final String PREF_FRONT = "webcam_front";
+    private static final long DIM_AFTER_MS = 3000, BRIGHT_FOR_MS = 5000;
+    private final Handler ui = new Handler(android.os.Looper.getMainLooper());
+    private final Runnable dim = () -> setDimmed(true);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,10 +80,19 @@ public class WebcamActivity extends Activity {
         });
         findViewById(R.id.btn_webcam_switch).setOnClickListener(v -> {
             front = !front;
+            getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).edit().putBoolean(PREF_FRONT, front).apply();
             if (streaming) { stopStreaming(); startStreaming(); }
         });
+        front = getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).getBoolean(PREF_FRONT, true);
         PairedDevice active = DeviceManager.getActiveDevice(this);
         tvTarget.setText(active != null ? "Your camera, beamed to " + active.hostname : "No computer paired");
+    }
+
+    /** A tap anywhere (buttons too) brightens a dimmed screen for a moment, to check the picture. */
+    @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+        if (e.getAction() == android.view.MotionEvent.ACTION_DOWN && streaming) brightenForAMoment();
+        return super.dispatchTouchEvent(e);
     }
 
     @Override
@@ -130,11 +145,15 @@ public class WebcamActivity extends Activity {
             CameraManager cm = (CameraManager) getSystemService(CAMERA_SERVICE);
             String id = pickCamera(cm);
             if (id == null) { showError("No camera found."); return; }
-            int rotation = pictureRotation(cm.getCameraCharacteristics(id));
+            CameraCharacteristics cc = cm.getCameraCharacteristics(id);
+            android.util.Size size = pictureSize(cc);
+            width = size.getWidth();
+            height = size.getHeight();
+            int rotation = pictureRotation(cc);
             fitPreview(rotation);
 
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-            MediaFormat fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, WIDTH, HEIGHT);
+            MediaFormat fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
             fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
             fmt.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE);
             fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
@@ -145,7 +164,7 @@ public class WebcamActivity extends Activity {
             encoder.start();
 
             SurfaceTexture st = preview.getSurfaceTexture();
-            st.setDefaultBufferSize(WIDTH, HEIGHT);
+            st.setDefaultBufferSize(width, height);
             previewSurface = new Surface(st);
 
             streaming = true;
@@ -219,7 +238,11 @@ public class WebcamActivity extends Activity {
                     buf.get(chunk, 0, info.size);
                     out.write(chunk, 0, info.size);
                     out.flush();
-                    if (first) { first = false; setStatus("Live", R.color.o_online); }
+                    if (first) {
+                        first = false;
+                        setStatus("Live", R.color.o_online);
+                        runOnUiThread(this::brightenForAMoment);     // then it dims to save battery
+                    }
                 }
                 enc.releaseOutputBuffer(idx, false);
             }
@@ -257,10 +280,47 @@ public class WebcamActivity extends Activity {
         if (cameraThread != null) cameraThread.quitSafely();
         cameraThread = null;
         setStatus("Off", R.color.o_text_2);
+        runOnUiThread(() -> { ui.removeCallbacks(dim); setDimmed(false); });
+    }
+
+    /** While streaming, the screen sits nearly black: the camera and encoder keep working,
+     *  the display doesn't need to. */
+    private void setDimmed(boolean dimmed) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = dimmed ? 0.01f : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+        getWindow().setAttributes(lp);
+    }
+
+    private void brightenForAMoment() {
+        setDimmed(false);
+        ui.removeCallbacks(dim);
+        ui.postDelayed(dim, streaming ? BRIGHT_FOR_MS : DIM_AFTER_MS);
     }
 
     private void setStatus(String text, int color) {
         runOnUiThread(() -> { tvStatus.setText(text); tvStatus.setTextColor(getColor(color)); });
+    }
+
+    /** A size this camera delivers to both the preview and the encoder: 16:9 and closest to
+     *  720p if it has one, else the size closest to 720p. Asking for a size the camera doesn't
+     *  have makes it stretch another one into it (a squeezed face). */
+    private android.util.Size pictureSize(CameraCharacteristics cc) {
+        android.hardware.camera2.params.StreamConfigurationMap map =
+                cc.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        if (map == null) return new android.util.Size(WANT_W, WANT_H);
+        java.util.Set<String> preview = new java.util.HashSet<>();
+        for (android.util.Size z : map.getOutputSizes(SurfaceTexture.class)) preview.add(z.toString());
+        android.util.Size best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (android.util.Size z : map.getOutputSizes(MediaCodec.class)) {
+            if (!preview.contains(z.toString()) || z.getWidth() % 16 != 0 || z.getHeight() % 2 != 0) continue;
+            if (z.getWidth() > 1920) continue;               // more than needed: heat and battery
+            boolean wide = Math.abs((double) z.getWidth() / z.getHeight() - 16.0 / 9) < 0.02;
+            double score = Math.abs(z.getWidth() * z.getHeight() - WANT_W * WANT_H) / (double) (WANT_W * WANT_H)
+                    + (wide ? 0 : 10);
+            if (score < bestScore) { bestScore = score; best = z; }
+        }
+        return best != null ? best : new android.util.Size(WANT_W, WANT_H);
     }
 
     private String pickCamera(CameraManager cm) throws CameraAccessException {
@@ -294,7 +354,7 @@ public class WebcamActivity extends Activity {
         View frame = findViewById(R.id.frame_webcam_preview);
         frame.post(() -> {
             boolean tall = rotation == 90 || rotation == 270;
-            float aspect = tall ? (float) HEIGHT / WIDTH : (float) WIDTH / HEIGHT;     // width / height
+            float aspect = tall ? (float) height / width : (float) width / height;     // width / height
             int fw = frame.getWidth(), fh = frame.getHeight();
             int w = fw, h = Math.round(fw / aspect);
             if (h > fh) { h = fh; w = Math.round(fh * aspect); }

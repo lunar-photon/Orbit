@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 import socket
+import select
 import subprocess
 import signal
 import threading
@@ -3292,6 +3293,47 @@ def _request_chunks(handler):
             left -= len(data)
             yield data
 
+_VAAPI = {'checked': False, 'device': None}
+
+def _vaapi_device():
+    """A GPU that decodes H.264 itself (VA-API), checked once with a tiny test stream, or None.
+    Decoding, turning and resizing 720p on the CPU takes most of a core; on the GPU about a
+    fifth of that."""
+    if _VAAPI['checked']:
+        return _VAAPI['device']
+    _VAAPI['checked'] = True
+    nodes = []
+    try:
+        for name in sorted(os.listdir('/sys/class/drm')):
+            if name.startswith('renderD'):
+                try:
+                    with open(f'/sys/class/drm/{name}/device/vendor') as f:
+                        vendor = f.read().strip()
+                except OSError:
+                    vendor = ''
+                if vendor in ('0x8086', '0x1002'):          # Intel, AMD: VA-API drivers
+                    nodes.append('/dev/dri/' + name)
+    except OSError:
+        return None
+    for node in nodes:
+        try:
+            test = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+                                   'testsrc2=size=320x240:rate=10', '-t', '1', '-c:v', 'libx264', '-f', 'h264', '-'],
+                                  capture_output=True, timeout=20).stdout
+            r = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-hwaccel', 'vaapi',
+                                '-hwaccel_device', node, '-hwaccel_output_format', 'vaapi', '-f', 'h264', '-i', 'pipe:0',
+                                '-vf', 'transpose_vaapi=dir=clock,scale_vaapi=w=640:h=360:force_original_aspect_ratio=decrease,'
+                                       'hwdownload,format=nv12', '-f', 'null', '-'],
+                               input=test, capture_output=True, timeout=20)
+            if r.returncode == 0 and test:
+                _VAAPI['device'] = node
+                sys.stderr.write(f"Orbit Cam: decoding on the GPU ({node})\n")
+                return node
+        except (OSError, subprocess.SubprocessError):
+            continue
+    sys.stderr.write("Orbit Cam: no GPU decoding, using the CPU\n")
+    return None
+
 class OrbitCam:
     """The virtual camera, fed by one writer that never lets go of it: closing and reopening
     the device between pictures fails ("Invalid argument") and makes apps lose the camera.
@@ -3315,6 +3357,25 @@ class OrbitCam:
              '-video_size', f'{w}x{h}', '-framerate', '30', '-i', 'pipe:0', '-c:v', 'rawvideo', '-f', 'v4l2', dev[0]],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0)
         return True
+
+    def pass_frame(self, src_fd):
+        """Move one whole frame from a pipe (the decoder) into the camera without copying it
+        through Python (splice). False at the end of the stream."""
+        with self.lock:
+            if not self._sink_ready():
+                return False
+            left = WEBCAM_FRAME
+            try:
+                while left:
+                    n = os.splice(src_fd, self.sink.stdin.fileno(), left)
+                    if n == 0:
+                        return False
+                    left -= n
+                return True
+            except OSError:
+                if left != WEBCAM_FRAME:
+                    self.sink = None           # cut mid-frame: start the writer afresh
+                return False
 
     def write(self, frame):
         with self.lock:
@@ -3349,6 +3410,7 @@ ORBIT_CAM = OrbitCam()
 
 def start_webcam_standby():
     threading.Thread(target=ORBIT_CAM.standby, daemon=True, name='orbit-cam').start()
+    threading.Thread(target=_vaapi_device, daemon=True, name='orbit-cam-gpu').start()    # checked ahead of the first stream
 
 def stream_phone_webcam(handler, rot):
     """Decode the phone's H.264 stream into the camera until the phone stops."""
@@ -3358,12 +3420,22 @@ def stream_phone_webcam(handler, rot):
     device, label = dev
     if not ORBIT_CAM.streaming.acquire(blocking=False):
         return {"status": "error", "message": "Orbit Cam is already streaming."}
-    turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
     w, h = WEBCAM_SIZE
-    # upright, then fitted into the camera's one format (a portrait picture gets side bars).
-    # Raw H.264 has no clock: frames pass straight through as they come
-    vf = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-fflags', 'nobuffer', '-flags', 'low_delay',
+    pad = f'pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
+    gpu = _vaapi_device()
+    # upright, then fitted into the camera's one format (a portrait picture gets side bars):
+    # on the GPU when it can, else on the CPU. Raw H.264 has no clock: frames pass as they come
+    if gpu:
+        turn = {90: 'transpose_vaapi=dir=clock,', 180: 'transpose_vaapi=dir=reversal,',
+                270: 'transpose_vaapi=dir=cclock,'}.get(rot, '')
+        hw = ['-hwaccel', 'vaapi', '-hwaccel_device', gpu, '-hwaccel_output_format', 'vaapi']
+        vf = f'{turn}scale_vaapi=w={w}:h={h}:force_original_aspect_ratio=decrease,hwdownload,format=nv12,{pad}'
+    else:
+        turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
+        hw = []
+        vf = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,{pad}'
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error'] + hw + [
+           '-fflags', 'nobuffer', '-flags', 'low_delay',
            '-probesize', '32', '-analyzeduration', '0', '-f', 'h264', '-i', 'pipe:0',
            '-vf', vf, '-fps_mode', 'passthrough', '-pix_fmt', 'yuv420p', '-f', 'rawvideo', 'pipe:1']
     decoder = copier = None
@@ -3375,19 +3447,13 @@ def stream_phone_webcam(handler, rot):
             decoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, bufsize=0)
 
         def copy():
-            # decoded frames into the camera, whole frames only
-            out = decoder.stdout
+            # decoded frames into the camera, a whole frame at a time
+            fd = decoder.stdout.fileno()
             while True:
-                frame = out.read(WEBCAM_FRAME)
-                while frame and len(frame) < WEBCAM_FRAME:
-                    more = out.read(WEBCAM_FRAME - len(frame))
-                    if not more:
-                        return
-                    frame += more
-                if not frame:
-                    return
+                select.select([fd], [], [])       # wait for the next frame before taking the camera
                 ORBIT_CAM.live = True
-                ORBIT_CAM.write(frame)
+                if not ORBIT_CAM.pass_frame(fd):
+                    return
 
         copier = threading.Thread(target=copy, daemon=True, name='orbit-cam-live')
         copier.start()
@@ -4001,7 +4067,7 @@ def get_best_camera(preferred=''):
 class AuthManager:
     def __init__(self):
         self.lock = threading.RLock()
-        self.current_session = None
+        self.current_session = self._restore()
         self.sse_clients = []
         self.ndjson_clients = []
         self.pending_pairings = {}
@@ -4107,17 +4173,44 @@ class AuthManager:
                 "expires_at": now + duration,
                 "status": "pending"
             }
+            self._persist()
         
         self.broadcast_sse("auth_request", self.current_session)
         app_notification = self.build_app_notification(self.current_session, topic="login")
         self.broadcast_ndjson(json.dumps(app_notification) + "\n")
         return self.current_session
 
+    # The waiting sign-in is kept in a file too, so restarting this service (an update) in the
+    # middle of an unlock doesn't lose it: the phone's approval still finds it
+    _SESSION_FILE = os.path.expanduser('~/.cache/orbit/pending_auth.json')
+
+    def _persist(self):
+        try:
+            os.makedirs(os.path.dirname(self._SESSION_FILE), exist_ok=True)
+            fd = os.open(self._SESSION_FILE + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                json.dump(self.current_session, f)
+            os.replace(self._SESSION_FILE + '.tmp', self._SESSION_FILE)
+        except (OSError, TypeError, ValueError):
+            pass
+
+    @classmethod
+    def _restore(cls):
+        try:
+            with open(cls._SESSION_FILE) as f:
+                saved = json.load(f)
+            if isinstance(saved, dict) and time.time() <= saved.get("expires_at", 0):
+                return saved
+        except (OSError, ValueError):
+            pass
+        return None
+
     def approve(self, session_id):
         with self.lock:
             if self.current_session and self.current_session["session_id"] == session_id:
                 if time.time() <= self.current_session["expires_at"]:
                     self.current_session["status"] = "approved"
+                    self._persist()
                     self.broadcast_sse("auth_cancelled", {"reason": "approved"})
                     self.broadcast_ndjson(json.dumps({"event": "cancelled", "reason": "approved", "id": session_id}) + "\n")
                     return True
@@ -4128,6 +4221,7 @@ class AuthManager:
             if self.current_session and self.current_session["status"] == "pending":
                 if time.time() <= self.current_session["expires_at"]:
                     self.current_session["status"] = "approved"
+                    self._persist()
                     sid = self.current_session.get("session_id", "")
                     self.broadcast_sse("auth_cancelled", {"reason": "approved"})
                     self.broadcast_ndjson(json.dumps({"event": "cancelled", "reason": "approved", "id": sid}) + "\n")
@@ -4138,6 +4232,7 @@ class AuthManager:
         with self.lock:
             if self.current_session and self.current_session["session_id"] == session_id:
                 self.current_session["status"] = "denied"
+                self._persist()
                 self.broadcast_sse("auth_cancelled", {"reason": "denied"})
                 self.broadcast_ndjson(json.dumps({"event": "cancelled", "reason": "denied", "id": session_id}) + "\n")
                 return True
@@ -4147,6 +4242,7 @@ class AuthManager:
         with self.lock:
             if self.current_session and self.current_session["status"] == "pending":
                 self.current_session["status"] = "denied"
+                self._persist()
                 sid = self.current_session.get("session_id", "")
                 self.broadcast_sse("auth_cancelled", {"reason": "denied"})
                 self.broadcast_ndjson(json.dumps({"event": "cancelled", "reason": "denied", "id": sid}) + "\n")

@@ -61,7 +61,11 @@ public class ActionReceiver extends BroadcastReceiver {
             AuthService.cancelChallengeNotification(context);
             vibrate(context, 100);
             new Thread(() -> {
-                boolean ok = NetworkUtils.httpPostWithAuth(serverUrl + "/api/approve_current", authToken, secretKey, sessionId, "approve", 5000);
+                boolean ok = approveCurrent(active, sessionId);
+                if (!ok) {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
+                            android.widget.Toast.makeText(context, "Couldn't approve: the computer stopped asking", android.widget.Toast.LENGTH_SHORT).show());
+                }
                 if (ok) {
                     Intent updateIntent = new Intent("com.lunarphoton.pcauthenticator.CHALLENGE_RESOLVED");
                     updateIntent.putExtra("status", "approved");
@@ -77,6 +81,31 @@ public class ActionReceiver extends BroadcastReceiver {
                 updateIntent.putExtra("status", "denied");
                 context.sendBroadcast(updateIntent);
             }).start();
+        }
+    }
+
+    /**
+     * Approve the sign-in waiting on the computer. If the one we were asked about is gone (the
+     * computer asked again, or its service restarted and lost it), approve the one it asks about
+     * now, if there is one: you've just approved this unlock, it's the same unlock asked again.
+     */
+    static boolean approveCurrent(PairedDevice active, String sessionId) {
+        if (active == null) return false;
+        String url = active.getBaseUrl();
+        if (NetworkUtils.httpPostWithAuth(url + "/api/approve_current", active.authToken, active.secretKey, sessionId, "approve", 5000)) {
+            return true;
+        }
+        try {
+            String res = NetworkUtils.httpGetWithAuth(url + "/api/current_challenge", active.authToken, 3000);
+            if (res == null) return false;
+            org.json.JSONObject json = new org.json.JSONObject(res);
+            if (!json.optBoolean("has_challenge", false)) return false;
+            org.json.JSONObject ch = json.getJSONObject("challenge");
+            String now = ch.optString("session_id", ch.optString("id", ""));
+            if (now.isEmpty() || now.equals(sessionId)) return false;
+            return NetworkUtils.httpPostWithAuth(url + "/api/approve_current", active.authToken, active.secretKey, now, "approve", 5000);
+        } catch (Exception e) {
+            return false;
         }
     }
 
