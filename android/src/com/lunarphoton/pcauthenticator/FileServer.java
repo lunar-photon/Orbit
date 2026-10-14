@@ -60,6 +60,7 @@ public class FileServer {
     private final Context context;
     private ServerSocket serverSocket;
     private volatile boolean isRunning = false;
+    private volatile Thread serverThread;
     private final ExecutorService threadPool = Executors.newCachedThreadPool();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -105,7 +106,14 @@ public class FileServer {
         }
     }
 
+    /** Is it accepting connections? (It stops for good if its socket fails.) */
+    public boolean isAlive() {
+        ServerSocket ss = serverSocket;
+        return isRunning && ss != null && !ss.isClosed() && serverThread != null && serverThread.isAlive();
+    }
+
     private void runServer() {
+        serverThread = Thread.currentThread();
         try {
             serverSocket = new ServerSocket(PORT);
             serverSocket.setReuseAddress(true);
@@ -122,6 +130,8 @@ public class FileServer {
             }
         } catch (Exception e) {
             Log.e(TAG, "Server error on port " + PORT, e);
+        } finally {
+            serverThread = null;            // its pool thread lives on: isAlive must not count it
         }
     }
 

@@ -2203,6 +2203,10 @@ public class MainActivity extends Activity {
                 startActivity(intent);
             });
         }
+        View btnPhoneWebcam = findViewById(R.id.btn_phone_webcam);
+        if (btnPhoneWebcam != null) {
+            btnPhoneWebcam.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, WebcamActivity.class)));
+        }
         if (btnCameraView != null) {
             btnCameraView.setOnClickListener(v -> {
                 Intent intent = new Intent(MainActivity.this, CameraActivity.class);
@@ -4012,9 +4016,58 @@ public class MainActivity extends Activity {
     private void showKeepAwake(boolean on) {
         keepAwakeOn = on;
         if (btnKeepAwake != null) {
-            btnKeepAwake.setText(on ? "Keep awake · on" : "Keep awake");
+            // the label stays short; "ON" sits beside the cup, so the tile isn't crowded
+            btnKeepAwake.setText("Keep awake");
+            btnKeepAwake.setContentDescription(on ? "Keep awake, on" : "Keep awake, off");
             btnKeepAwake.setBackgroundResource(on ? R.drawable.btn_tint_amber_on : R.drawable.btn_tint_amber);
+            android.graphics.drawable.Drawable cup = getDrawable(R.drawable.ic_o_coffee).mutate();
+            cup.setTint(getColor(R.color.o_amber));
+            android.graphics.drawable.Drawable top = on ? new OnBadgeDrawable(cup, getColor(R.color.o_amber),
+                    getColor(R.color.o_on_accent), getResources().getDisplayMetrics().density) : cup;
+            int size = dpToPx(24);
+            top.setBounds(0, 0, on ? top.getIntrinsicWidth() : size, size);
+            btnKeepAwake.setCompoundDrawablesRelative(null, top, null, null);
         }
+    }
+
+    /** An icon with a small "ON" pill to its right. */
+    private static class OnBadgeDrawable extends android.graphics.drawable.Drawable {
+        private final android.graphics.drawable.Drawable icon;
+        private final android.graphics.Paint pill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint text = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final float d;
+
+        OnBadgeDrawable(android.graphics.drawable.Drawable icon, int pillColor, int textColor, float density) {
+            this.icon = icon;
+            this.d = density;
+            pill.setColor(pillColor);
+            text.setColor(textColor);
+            text.setTextSize(9 * density);
+            text.setFakeBoldText(true);
+            text.setTextAlign(android.graphics.Paint.Align.CENTER);
+        }
+
+        @Override public int getIntrinsicWidth() { return Math.round(24 * d + 5 * d + 24 * d); }
+        @Override public int getIntrinsicHeight() { return Math.round(24 * d); }
+
+        @Override
+        public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            int s = Math.round(24 * d);
+            icon.setBounds(b.left, b.top, b.left + s, b.top + s);
+            icon.draw(c);
+            float left = b.left + s + 5 * d, right = left + 24 * d;
+            float cy = b.top + s / 2f, h = 14 * d;
+            c.drawRoundRect(left, cy - h / 2, right, cy + h / 2, h / 2, h / 2, pill);
+            android.graphics.Paint.FontMetrics fm = text.getFontMetrics();
+            c.drawText("ON", (left + right) / 2, cy - (fm.ascent + fm.descent) / 2, text);
+        }
+
+        @Override public void setAlpha(int a) { pill.setAlpha(a); text.setAlpha(a); icon.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { icon.setColorFilter(f); }
+        // the tile tints its icon: only the cup, or the pill's "ON" would vanish into it
+        @Override public void setTintList(android.content.res.ColorStateList t) { icon.setTintList(t); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     private void refreshKeepAwake() {

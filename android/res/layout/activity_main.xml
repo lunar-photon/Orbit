@@ -537,12 +537,14 @@
 
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="horizontal">
                             <Button android:id="@+id/btn_remote_trackpad" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_violet" android:drawableTop="@drawable/ic_o_control" android:drawableTint="@color/o_violet" android:text="Trackpad" />
-                            <Button android:id="@+id/btn_camera_view" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_pink" android:drawableTop="@drawable/ic_o_video" android:drawableTint="@color/o_pink" android:text="Camera" />
+                            <Button android:id="@+id/btn_task_manager" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_mint" android:drawableTop="@drawable/ic_o_cpu" android:drawableTint="@color/o_mint" android:text="Running apps" />
+                            <Button android:id="@+id/btn_keep_awake" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_amber" android:drawableTop="@drawable/ic_o_coffee" android:drawableTint="@color/o_amber" android:text="Keep awake" />
                         </LinearLayout>
 
+                        <!-- the two cameras, side by side: watch the computer's, or be its webcam -->
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:baselineAligned="false" android:orientation="horizontal">
-                            <Button android:id="@+id/btn_task_manager" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_mint" android:drawableTop="@drawable/ic_o_cpu" android:drawableTint="@color/o_mint" android:text="Running apps" />
-                            <Button android:id="@+id/btn_keep_awake" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_amber" android:drawableTop="@drawable/ic_o_coffee" android:drawableTint="@color/o_amber" android:text="Keep awake" />
+                            <Button android:id="@+id/btn_camera_view" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_pink" android:drawableTop="@drawable/ic_o_video" android:drawableTint="@color/o_pink" android:text="Computer cam" />
+                            <Button android:id="@+id/btn_phone_webcam" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_sky" android:drawableTop="@drawable/ic_o_camera" android:drawableTint="@color/o_sky" android:text="Orbit Cam" />
                         </LinearLayout>
                     </LinearLayout>
 

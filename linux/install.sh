@@ -27,6 +27,8 @@ PAM_NAMES=(kde plasmalogin sddm)
 UDEV_RULE=/etc/udev/rules.d/99-orbit-uinput.rules
 OLD_UDEV_RULE=/etc/udev/rules.d/99-pc-connect-uinput.rules
 MODLOAD=/etc/modules-load.d/orbit-uinput.conf
+CAM_MODPROBE=/etc/modprobe.d/orbit-cam.conf
+CAM_MODLOAD=/etc/modules-load.d/orbit-cam.conf
 DM_DROPIN_DIR=/etc/systemd/system/plasmalogin.service.d
 DM_DROPIN="$DM_DROPIN_DIR/orbit.conf"
 MARK_BEGIN='# >>> orbit >>>'
@@ -335,6 +337,17 @@ root_common() {   # uinput access for the virtual trackpad, firewall, linger
         skip "no active firewall (ufw / firewalld)"
     fi
 
+    # Orbit Cam: a virtual camera (v4l2loopback) that the phone's camera streams into, named
+    # so in video-call apps. exclusive_caps: apps see it as a camera (Orbit keeps it fed).
+    if modinfo v4l2loopback >/dev/null 2>&1; then
+        write_file "$CAM_MODPROBE" 644 'options v4l2loopback devices=1 exclusive_caps=1 card_label="Orbit Cam"'
+        write_file "$CAM_MODLOAD" 644 "v4l2loopback"
+        # takes effect now if no app has the camera open, otherwise at the next boot
+        if try modprobe -r v4l2loopback; then try modprobe v4l2loopback; fi
+    else
+        skip "v4l2loopback not installed: Orbit Cam needs it (v4l2loopback-dkms)"
+    fi
+
     # The daemon must run before anyone logs in (boot login screen approval).
     try loginctl enable-linger "$TARGET_USER"
     ((DRY)) || ok "lingering enabled for $TARGET_USER"
@@ -458,7 +471,7 @@ root_uninstall() {
     if ((PURGE)); then remove "$ETC_DIR"
     elif [[ -d "$ETC_DIR" ]] && [[ -z "$(ls -A -- "$ETC_DIR")" ]]; then run rmdir -- "$ETC_DIR"
     elif [[ -d "$ETC_DIR" ]]; then info "kept $ETC_DIR (PAM backups; --purge removes it)"; fi
-    remove "$UDEV_RULE" "$OLD_UDEV_RULE" "$MODLOAD"
+    remove "$UDEV_RULE" "$OLD_UDEV_RULE" "$MODLOAD" "$CAM_MODPROBE" "$CAM_MODLOAD"
     try udevadm control --reload-rules
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
         try ufw delete allow 1760/tcp

@@ -384,7 +384,14 @@ public class AuthService extends Service {
                         String msg = new String(packet.getData(), 0, packet.getLength(), "UTF-8");
                         JSONObject json = new JSONObject(msg);
                         String type = json.optString("type", "");
-                        if ("pc_auth_discovery_reply".equals(type) || "pc_auth_beacon".equals(type)) {
+                        if ("pc_auth_wake".equals(type)) {
+                            // the computer can't reach us: report where we are, to the computer we're
+                            // paired with (not to whoever sent this; anyone on the Wi-Fi could)
+                            PairedDevice active = DeviceManager.getActiveDevice(this);
+                            if (active != null && json.optString("device_id", "").equals(active.deviceId)) {
+                                checkInWithComputer("wake note");
+                            }
+                        } else if ("pc_auth_discovery_reply".equals(type) || "pc_auth_beacon".equals(type)) {
                             String host = json.optString("hostname", "");
                             String newIp = packet.getAddress().getHostAddress();
                             int port = json.optInt("port", 1760);
@@ -574,6 +581,8 @@ public class AuthService extends Service {
                                     RingManager.stopAlarm(AuthService.this);
                                 } else if ("clipboard".equals(event)) {
                                     handleClipboardEvent(json);
+                                } else if ("check_in".equals(event)) {
+                                    checkInWithComputer("live link");
                                 } else if ("incoming_file".equals(event)) {
                                     handleIncomingFileEvent(json);
                                 } else if ("tunnel_update".equals(event)) {
@@ -943,6 +952,27 @@ public class AuthService extends Service {
             chChan.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(chChan);
         }
+    }
+
+    private long lastCheckIn = 0;
+
+    /** The computer asked where we are: make sure our file server runs and report our address
+     *  (at most every 3 s, however many asks arrive). */
+    private void checkInWithComputer(String how) {
+        long now = System.currentTimeMillis();
+        if (now - lastCheckIn < 3000) return;
+        lastCheckIn = now;
+        Log.i(TAG, "Computer asked us to check in (" + how + ")");
+        try {
+            if (fileServer == null || !fileServer.isAlive()) {
+                fileServer = new FileServer(this);
+                fileServer.start();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Couldn't restart the file server: " + e.getMessage());
+        }
+        PairedDevice active = DeviceManager.getActiveDevice(this);
+        if (active != null) sendPhoneStatusToPc(active);
     }
 
     private void sendPhoneStatusToPc(PairedDevice active) {

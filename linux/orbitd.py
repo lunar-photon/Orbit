@@ -3217,6 +3217,216 @@ def show_phone_notification(note):
                 _PHONE_NOTES.popitem(last=False)
     return {"status": "ok"}
 
+WEBCAM_SIZE = (1280, 720)          # one fixed format for everything the camera shows
+WEBCAM_FRAME = WEBCAM_SIZE[0] * WEBCAM_SIZE[1] * 3 // 2      # bytes in one yuv420p frame
+STANDBY_FRAMES = os.path.expanduser('~/.cache/orbit/orbit-cam-standby.yuv')
+STANDBY_COUNT, STANDBY_FPS = 10, 4
+
+def webcam_device():
+    """A virtual camera to write the phone's video into (v4l2loopback), or None. One named
+    Orbit Cam is preferred; any other v4l2loopback camera works the same way."""
+    found = []
+    base = '/sys/devices/virtual/video4linux'
+    try:
+        for name in sorted(os.listdir(base)):
+            try:
+                with open(os.path.join(base, name, 'name')) as f:
+                    label = f.read().strip()
+            except OSError:
+                label = ''
+            dev = '/dev/' + name
+            if os.access(dev, os.W_OK):
+                found.append(('orbit' not in label.lower(), dev, label))
+    except OSError:
+        return None
+    return sorted(found)[0][1:] if found else None
+
+def _standby_frame():
+    """What the camera shows while the phone isn't streaming: soft blurred colour with a
+    moving film grain and the name, as a few raw frames made once and then looped, so
+    showing it costs next to nothing."""
+    if os.path.exists(STANDBY_FRAMES):
+        return STANDBY_FRAMES
+    os.makedirs(os.path.dirname(STANDBY_FRAMES), exist_ok=True)
+    bold, regular = '/usr/share/fonts/noto/NotoSans-Bold.ttf', '/usr/share/fonts/noto/NotoSans-Regular.ttf'
+    fb = f":fontfile={bold}" if os.path.exists(bold) else ''
+    fr = f":fontfile={regular}" if os.path.exists(regular) else ''
+    w, h = WEBCAM_SIZE
+    src = (f"gradients=s={w}x{h}:c0=0x1b1446:c1=0x0b3a4a:c2=0x3a1240:c3=0x0b0d12:nb_colors=4"
+           ":x0=200:y0=120:x1=1100:y1=650:type=radial:speed=0")
+    vf = ("boxblur=40:2,noise=alls=22:allf=t+u,"
+          f"drawtext=text='Orbit Cam'{fb}:fontsize=56:fontcolor=0xf2f3f7:x=(w-tw)/2:y=h/2-60,"
+          f"drawtext=text='Off for now · start it from Orbit on your phone'{fr}:fontsize=24:fontcolor=0xb8bccb:x=(w-tw)/2:y=h/2+18")
+    tmp = STANDBY_FRAMES + '.part'
+    subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', src,
+                    '-frames:v', str(STANDBY_COUNT), '-vf', vf, '-pix_fmt', 'yuv420p', '-f', 'rawvideo', tmp],
+                   capture_output=True, timeout=60)
+    if os.path.exists(tmp) and os.path.getsize(tmp) == w * h * 3 // 2 * STANDBY_COUNT:
+        os.replace(tmp, STANDBY_FRAMES)
+        return STANDBY_FRAMES
+    return None
+
+def _request_chunks(handler):
+    """The request body as it arrives (chunked, or up to Content-Length)."""
+    rfile = handler.rfile
+    if 'chunked' in handler.headers.get('Transfer-Encoding', '').lower():
+        while True:
+            line = rfile.readline(64)
+            if not line:
+                return
+            size = int(line.split(b';')[0].strip() or b'0', 16)
+            if size == 0:
+                rfile.readline(64)
+                return
+            data = rfile.read(size)
+            rfile.readline(64)                 # the CRLF after each chunk
+            if not data:
+                return
+            yield data
+    else:
+        left = int(handler.headers.get('Content-Length', '0') or 0)
+        while left > 0:
+            data = rfile.read(min(65536, left))
+            if not data:
+                return
+            left -= len(data)
+            yield data
+
+class OrbitCam:
+    """The virtual camera, fed by one writer that never lets go of it: closing and reopening
+    the device between pictures fails ("Invalid argument") and makes apps lose the camera.
+    It shows the standby picture, or the phone's decoded video while the phone streams."""
+
+    def __init__(self):
+        self.lock = threading.Lock()          # one frame at a time into the writer
+        self.sink = None
+        self.live = False                      # the phone's video is showing
+        self.streaming = threading.Lock()      # one phone stream at a time
+
+    def _sink_ready(self):
+        if self.sink and self.sink.poll() is None:
+            return True
+        dev = webcam_device()
+        if not dev:
+            return False
+        w, h = WEBCAM_SIZE
+        self.sink = subprocess.Popen(
+            ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'yuv420p',
+             '-video_size', f'{w}x{h}', '-framerate', '30', '-i', 'pipe:0', '-c:v', 'rawvideo', '-f', 'v4l2', dev[0]],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0)
+        return True
+
+    def write(self, frame):
+        with self.lock:
+            if not self._sink_ready():
+                return False
+            try:
+                self.sink.stdin.write(frame)
+                return True
+            except OSError:
+                self.sink = None               # it died: a new one next frame
+                return False
+
+    def standby(self):
+        """While the phone isn't streaming: the standby frames, STANDBY_FPS a second."""
+        frames, n = [], 0
+        while True:
+            try:
+                if not frames:
+                    path = _standby_frame() if webcam_device() else None
+                    if path:
+                        with open(path, 'rb') as f:
+                            data = f.read()
+                        frames = [data[k:k + WEBCAM_FRAME] for k in range(0, len(data), WEBCAM_FRAME)]
+                if frames and not self.live:
+                    self.write(frames[n % len(frames)])
+                    n += 1
+            except Exception as e:
+                sys.stderr.write(f"Orbit Cam standby: {e}\n")
+            time.sleep(1 / STANDBY_FPS if frames else 15)
+
+ORBIT_CAM = OrbitCam()
+
+def start_webcam_standby():
+    threading.Thread(target=ORBIT_CAM.standby, daemon=True, name='orbit-cam').start()
+
+def stream_phone_webcam(handler, rot):
+    """Decode the phone's H.264 stream into the camera until the phone stops."""
+    dev = webcam_device()
+    if dev is None:
+        return {"status": "error", "message": "No virtual camera on this computer (install v4l2loopback)."}
+    device, label = dev
+    if not ORBIT_CAM.streaming.acquire(blocking=False):
+        return {"status": "error", "message": "Orbit Cam is already streaming."}
+    turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
+    w, h = WEBCAM_SIZE
+    # upright, then fitted into the camera's one format (a portrait picture gets side bars).
+    # Raw H.264 has no clock: frames pass straight through as they come
+    vf = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-fflags', 'nobuffer', '-flags', 'low_delay',
+           '-probesize', '32', '-analyzeduration', '0', '-f', 'h264', '-i', 'pipe:0',
+           '-vf', vf, '-fps_mode', 'passthrough', '-pix_fmt', 'yuv420p', '-f', 'rawvideo', 'pipe:1']
+    decoder = copier = None
+    started, received = time.time(), 0
+    errpath = os.path.expanduser('~/.cache/orbit/orbit-cam.log')
+    try:
+        handler.connection.settimeout(10)      # a phone that went quiet ends the stream
+        with open(errpath, 'wb') as errlog:
+            decoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog, bufsize=0)
+
+        def copy():
+            # decoded frames into the camera, whole frames only
+            out = decoder.stdout
+            while True:
+                frame = out.read(WEBCAM_FRAME)
+                while frame and len(frame) < WEBCAM_FRAME:
+                    more = out.read(WEBCAM_FRAME - len(frame))
+                    if not more:
+                        return
+                    frame += more
+                if not frame:
+                    return
+                ORBIT_CAM.live = True
+                ORBIT_CAM.write(frame)
+
+        copier = threading.Thread(target=copy, daemon=True, name='orbit-cam-live')
+        copier.start()
+        subprocess.Popen(['notify-send', '-i', 'camera-web', '-a', 'Orbit', 'Orbit Cam on',
+                          f'Your phone is the camera "{label}"'], stderr=subprocess.DEVNULL)
+        sys.stderr.write(f"Orbit Cam: stream started (turn {rot})\n")
+        for chunk in _request_chunks(handler):
+            received += len(chunk)
+            decoder.stdin.write(chunk)
+        return {"status": "ok"}
+    except (OSError, ValueError) as e:
+        return {"status": "error", "message": f"Stream ended: {e}"}
+    finally:
+        took = time.time() - started
+        sys.stderr.write(f"Orbit Cam: stream ended after {took:.0f} s, {received // 1024} KB "
+                         f"({received * 8 / max(took, 0.1) / 1e6:.1f} Mbit/s)\n")
+        if decoder:
+            try:
+                decoder.stdin.close()
+            except OSError:
+                pass
+            try:
+                decoder.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                decoder.kill()
+        if copier:
+            copier.join(timeout=3)
+        ORBIT_CAM.live = False                 # the standby picture again
+        ORBIT_CAM.streaming.release()
+        try:
+            with open(errpath, 'rb') as f:
+                err = f.read()[-600:].decode('utf-8', 'replace').strip()
+            if err:
+                sys.stderr.write(f"Orbit Cam: ffmpeg said: {err}\n")
+        except OSError:
+            pass
+        subprocess.Popen(['notify-send', '-i', 'camera-web', '-a', 'Orbit', 'Orbit Cam off',
+                          'Your phone is no longer the camera'], stderr=subprocess.DEVNULL)
+
 def handle_telephony_call_state(state, generic_notice=True):
     global telephony_state
     state = (state or '').strip().lower()
@@ -3264,7 +3474,51 @@ def handle_telephony_call_state(state, generic_notice=True):
                 telephony_state["paused_players"] = []
         telephony_state["last_state"] = state
 
-def get_phone_target():
+def _phone_answers(ip, port, timeout=0.8):
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return True
+    except (OSError, ValueError):
+        return False
+
+_PHONE_WAKE_LOCK = threading.Lock()
+
+def wake_phone(ip=None, wait=5.0):
+    """The phone doesn't answer where we last saw it (its address changed, it was dozing, or
+    this service restarted and forgot it): ask it to check in. Over the live link it keeps open
+    to us, and with a UDP note to its last address and the network (in case the link is down).
+    The phone answers by reporting its address (/api/phone/status). True once it has."""
+    with _PHONE_WAKE_LOCK:
+        before = active_phone_state.get('last_seen', 0)
+        auth_mgr.broadcast_ndjson(json.dumps({"event": "check_in", "time": int(time.time())}) + "\n")
+        note = json.dumps({"type": "pc_auth_wake", "device_id": get_laptop_id(), "hostname": socket.gethostname()}).encode()
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+                u.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                for target in ([ip] if ip else []) + ['255.255.255.255']:
+                    try:
+                        u.sendto(note, (target, 1760))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if active_phone_state.get('last_seen', 0) > before:
+                return True
+            time.sleep(0.1)
+        return False
+
+def get_phone_target(wake=True):
+    """(ip, port, token) to reach the phone's own server. With `wake`, a phone that doesn't
+    answer there is asked to check in first, so a stale address heals by itself."""
+    ip, port, token = _phone_target_known()
+    if wake and ip and not _phone_answers(ip, port):
+        if wake_phone(ip):
+            ip, port, token = _phone_target_known()
+    return ip, port, token
+
+def _phone_target_known():
     ip = active_phone_state.get('ip')
     port = active_phone_state.get('port', 1761)
     token = active_phone_state.get('auth_token')
@@ -3284,8 +3538,8 @@ def get_phone_target():
 def ring_phone(phone_ip=None, port=1761):
     # 1. Broadcast via NDJSON stream
     auth_mgr.broadcast_ndjson(json.dumps({"event": "ring", "title": "Find My Phone", "time": int(time.time())}) + "\n")
-    # 2. Direct HTTP to phone if IP is known
-    target_ip, target_port, target_token = get_phone_target()
+    # 2. Direct HTTP to phone if IP is known (no waiting: the live link already carries it)
+    target_ip, target_port, target_token = get_phone_target(wake=False)
     target_ip = phone_ip or target_ip
     target_port = port or target_port
     if target_ip:
@@ -3701,8 +3955,8 @@ def get_camera_devices():
     if os.path.exists(v4l_dir):
         for entry in sorted(os.listdir(v4l_dir)):
             dev_path = f"/dev/{entry}"
-            if not os.path.exists(dev_path):
-                continue
+            if not os.path.exists(dev_path) or _is_virtual_camera(dev_path):
+                continue            # Orbit Cam is the phone itself: not a computer camera
             name_file = os.path.join(v4l_dir, entry, 'name')
             name = entry
             if os.path.exists(name_file):
@@ -3725,13 +3979,16 @@ def get_camera_devices():
         devices.append({"device": "/dev/video0", "name": "Default Camera"})
     return devices
 
+def _is_virtual_camera(dev):
+    return os.path.exists(os.path.join('/sys/devices/virtual/video4linux', os.path.basename(dev)))
+
 def get_best_camera(preferred=''):
     if preferred and os.path.exists(preferred):
         return preferred
     devices = get_camera_devices()
     for d in devices:
         if 'hd webcam' in d['name'].lower() or 'webcam' in d['name'].lower() or 'camera' in d['name'].lower():
-            if 'iriun' not in d['name'].lower():
+            if not _is_virtual_camera(d['device']):      # not Orbit Cam (the phone) or the like
                 return d['device']
     if devices:
         return devices[0]['device']
@@ -4931,6 +5188,24 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "not_found"}, status=404)
                 return
             self.send_json({"status": "ok", "ticket": make_stream_ticket(req_path)})
+            return
+
+        # The phone's camera as this computer's webcam: H.264 from the phone, decoded into a
+        # virtual camera (v4l2loopback) that video-call apps and browsers can pick
+        if path == '/api/webcam/stream':
+            cfg = load_config()
+            client_info, token = authenticate_client(self, cfg)
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            if not is_lan_or_wifi_request(self):
+                self.send_json({"status": "error", "message": "The phone camera works over Wi-Fi only."}, status=403)
+                return
+            try:
+                rot = int(qs.get('rot', ['0'])[0]) % 360
+            except ValueError:
+                rot = 0
+            self.send_json(stream_phone_webcam(self, rot))
             return
 
         # 1. File Upload (Phone -> PC)
@@ -6263,6 +6538,7 @@ def main():
     start_udp_mouse_listener(1762)
     start_clipboard_monitor(auth_mgr)
     start_terminal_recorder()
+    start_webcam_standby()
     if load_config().get('keep_awake'):
         set_keep_awake(True)            # it was on before this service restarted
 

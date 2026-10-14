@@ -28,6 +28,8 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <queries>
@@ -91,6 +93,12 @@
             android:label="Remote Trackpad"
             android:exported="false"
             android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".WebcamActivity"
+            android:label="Orbit Cam"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout" />
 
         <activity
             android:name=".CameraActivity"
