@@ -2087,16 +2087,72 @@ def _claude_log_path(claude_pid):
     return None
 
 
-def _claude_item_lines(kind, text):
-    """One message as ANSI lines, styled like Claude Code (unwrapped: the phone wraps)."""
+_MD_CODE = re.compile(r'`([^`]+)`')
+_MD_LIST = re.compile(r'^(\s*)([-*]|\d+[.)])\s+')
+
+
+def _wrap_words(text, width, first, rest):
+    """Word-wrap like Claude Code does (at spaces, long words split), with a first-line and a
+    continuation prefix; returns plain rows."""
+    import textwrap
+    return textwrap.wrap(text, width=width, initial_indent=first, subsequent_indent=rest,
+                         break_on_hyphens=False, drop_whitespace=True, replace_whitespace=False) or [first.rstrip()]
+
+
+def _claude_item_lines(kind, text, width=None):
+    """One message as ANSI lines, laid out as Claude Code draws it: wrapped at the screen's
+    width (unwrapped when it isn't known), with its markdown shown, not its ** and `."""
     rows = text.split('\n')
     if kind == 'user':
-        return [f'{_C_USER}❯ {_C_USER_TEXT}{rows[0]} {_C_RESET}'] + [f'{_C_USER_TEXT}  {r} {_C_RESET}' for r in rows[1:]]
-    if kind == 'text':
-        return [f'{_C_RESET}● {_claude_md(rows[0])}{_C_RESET}'] + [f'  {_claude_md(r)}{_C_RESET}' if r else '' for r in rows[1:]]
+        out = []
+        for n, r in enumerate(rows):
+            lead = '❯ ' if n == 0 else '  '
+            wrapped = _wrap_words(r, width, lead, '  ') if width else [lead + r]
+            for w in wrapped:
+                if w.startswith('❯ '):
+                    out.append(f'{_C_USER}❯ {_C_USER_TEXT}{w[2:]} {_C_RESET}')
+                else:
+                    out.append(f'{_C_USER_TEXT}{w} {_C_RESET}')
+        return out
     if kind == 'tool':
         return [f'{_C_DIM}● {text}{_C_RESET}']
-    return [f'{_C_DIM}──── {text} ────{_C_RESET}']
+    if kind != 'text':
+        return [f'{_C_DIM}──── {text} ────{_C_RESET}']
+    out, code = [], False
+    for n, r in enumerate(rows):
+        lead = '● ' if n == 0 else '  '
+        if r.strip().startswith('```'):
+            code = not code
+            continue
+        if code or not width:
+            out.append(f'{_C_RESET}{lead}{_claude_md(r)}{_C_RESET}' if r or n == 0 else '')
+            continue
+        if not r.strip():
+            out.append('')
+            continue
+        bold = [b for b in _MD_BOLD.findall(r)]
+        plain = _MD_CODE.sub(r'\1', _MD_BOLD.sub(r'\1', r))
+        heading = re.match(r'^#{1,6}\s+', plain)
+        if heading:
+            plain = plain[heading.end():]
+            bold = [plain]
+        m = _MD_LIST.match(plain)
+        if m:
+            # "- item" sits two in, and its wrapped lines line up under the item's text
+            marker = m.group(2)
+            indent = '  ' + m.group(1)
+            body = plain[m.end():]
+            first = (lead if n == 0 else indent) + marker + ' '
+            wrapped = _wrap_words(body, width, first, ' ' * len(indent + marker + ' '))
+        else:
+            wrapped = _wrap_words(plain, width, lead, '  ')
+        for w in wrapped:
+            for b in bold:
+                b = _MD_CODE.sub(r'\1', b)
+                if b and b in w:
+                    w = w.replace(b, f'\x1b[1m{b}\x1b[22m', 1)
+            out.append(f'{_C_RESET}{w}{_C_RESET}')
+    return out
 
 
 def _claude_md(line):
@@ -2215,30 +2271,19 @@ class ClaudeLog:
         elif kind == 'system' and d.get('subtype') == 'compact_boundary':
             self.items.append(('note', 'Conversation compacted'))
 
-    def lines(self):
-        """The conversation as ANSI lines (unwrapped: the phone wraps them)."""
+    def lines_upto(self, n, width=None):
+        """The first n messages as ANSI lines, wrapped at `width` like the screen (cached)."""
         with self.lock:
-            if self._lines[0] != self.version:
-                self._lines = (self.version, self._render())
-            return list(self._lines[1])
-
-    def _render(self):
-        out = []
-        for kind, text in self.items:
-            if out:
-                out.append('')
-            out += _claude_item_lines(kind, text)
-        return out
-
-    def lines_upto(self, n):
-        """The first n messages as ANSI lines."""
-        with self.lock:
+            key = (self.version, n, width)
+            if self._lines[0] == key:
+                return list(self._lines[1])
             out = []
             for kind, text in self.items[:n]:
                 if out:
                     out.append('')
-                out += _claude_item_lines(kind, text)
-            return out
+                out += _claude_item_lines(kind, text, width)
+            self._lines = (key, out)
+            return list(out)
 
 
 def claude_log_for(recorder_pid):
@@ -2287,7 +2332,9 @@ def claude_reply_lines(rec, log):
         while r >= 0 and not rows[r][0].startswith(('❯', '●')) and (rows[r][0].startswith(' ') or not rows[r][0].strip()):
             r -= 1
         upto = first if r >= 0 and rows[r][0].startswith(('❯', '●')) else first + 1
-    lines = log.lines_upto(upto)
+    # Claude Code wraps its text one column short of the terminal's width
+    width = (rec.size[0] - 1) if rec.size[0] and rec.size[0] > 20 else None
+    lines = log.lines_upto(upto, width)
     # the screen's top may be the tail of the last message above, already shown in full
     if upto and items[upto - 1][0] in ('user', 'text'):
         above = _norm_words(items[upto - 1][1])
