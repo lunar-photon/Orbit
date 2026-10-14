@@ -103,27 +103,20 @@ public class AuthService extends Service {
     /** A Wi-Fi hiccup (say, just after the app starts) can move the link to the internet
      *  tunnel, where it would then stay. While that's so and the phone is on Wi-Fi, check now
      *  and then whether the computer answers on the network (no token sent), and come back. */
-    private void startWifiReturnWatch() {
-        Thread t = new Thread(() -> {
-            while (isRunning) {
-                try {
-                    Thread.sleep(30000);
-                } catch (InterruptedException e) {
-                    return;
-                }
-                if (!linkOverInternet || !DeviceManager.isWifiActive(this)) continue;
-                PairedDevice active = DeviceManager.getActiveDevice(this);
-                String local = active != null ? active.getLocalUrl() : null;
-                if (local == null || local.isEmpty() || local.startsWith("https://")) continue;
-                if (NetworkUtils.httpGet(local + "/api/info", 1500) != null) {
-                    Log.i(TAG, "Computer reachable on Wi-Fi again: moving the link off the tunnel");
-                    linkOverInternet = false;
-                    abortCurrentConnectionAndWake();
-                }
+    /** The link fell back to the tunnel while on Wi-Fi: move it back once the computer answers
+     *  on the network again (run from the upkeep tick). */
+    private void checkWifiReturn() {
+        if (!linkOverInternet || !DeviceManager.isWifiActive(this)) return;
+        PairedDevice active = DeviceManager.getActiveDevice(this);
+        String local = active != null ? active.getLocalUrl() : null;
+        if (local == null || local.isEmpty() || local.startsWith("https://")) return;
+        new Thread(() -> {
+            if (NetworkUtils.httpGet(local + "/api/info", 1500) != null) {
+                Log.i(TAG, "Computer reachable on Wi-Fi again: moving the link off the tunnel");
+                linkOverInternet = false;
+                abortCurrentConnectionAndWake();
             }
-        }, "wifi-return");
-        t.setDaemon(true);
-        t.start();
+        }, "wifi-return").start();
     }
 
     private void abortCurrentConnectionAndWake() {
@@ -189,7 +182,7 @@ public class AuthService extends Service {
                                 && !CaptivePortalManager.isExplicitlyLoggedOut(context)) {
                             if (DeviceManager.isWifiActive(context)) {
                                 lastScreenCheckTime = now;
-                                checkAndAutoLoginIfLoggedOut("Screen wake");
+                                checkAndAutoLoginIfLoggedOut("Screen wake", true);
                             }
                         }
                     }
@@ -235,7 +228,6 @@ public class AuthService extends Service {
         initTelephonyListener();
         initClipboardListener();
         initNetworkMonitoring();
-        initCaptivePortalWatchdog();
     }
 
     private Handler captiveWatchdogHandler;
@@ -243,32 +235,44 @@ public class AuthService extends Service {
     private long lastAutoLoginAttempt = 0;
     private static final long AUTO_LOGIN_COOLDOWN_MS = 35000L;
 
-    private void initCaptivePortalWatchdog() {
+    /** One timer for the service's background checks, so the phone wakes for them together:
+     *  every 30 s the link's way back to Wi-Fi, every 5 min whether campus Wi-Fi needs a login. */
+    private void startUpkeep() {
+        if (captiveWatchdogHandler != null) return;
         captiveWatchdogHandler = new Handler(Looper.getMainLooper());
         captiveWatchdogRunnable = new Runnable() {
+            private int ticks = 0;
             @Override
             public void run() {
                 if (!isRunning) return;
+                ticks++;
                 try {
-                    if (CaptivePortalManager.isEnabled(AuthService.this)
+                    checkWifiReturn();
+                    if (ticks % 10 == 0 && CaptivePortalManager.isEnabled(AuthService.this)
                             && CaptivePortalManager.isAutoLoginOnWifi(AuthService.this)
                             && DeviceManager.isWifiActive(AuthService.this)
                             && !CaptivePortalManager.isExplicitlyLoggedOut(AuthService.this)) {
-                        checkAndAutoLoginIfLoggedOut("Periodic background watchdog");
+                        // a real check: Android only re-checks a network when it changes, so it
+                        // still says "internet" after the campus session has expired
+                        checkAndAutoLoginIfLoggedOut("Periodic check", true);
                     }
                 } catch (Exception e) {
-                    Log.w(TAG, "Captive watchdog error: " + e.getMessage());
+                    Log.w(TAG, "Upkeep error: " + e.getMessage());
                 } finally {
-                    if (isRunning && captiveWatchdogHandler != null) {
-                        captiveWatchdogHandler.postDelayed(this, 5 * 60000L);   // Android reports captive Wi-Fi itself; this is a backstop
-                    }
+                    if (isRunning && captiveWatchdogHandler != null) captiveWatchdogHandler.postDelayed(this, 30000L);
                 }
             }
         };
         captiveWatchdogHandler.postDelayed(captiveWatchdogRunnable, 30000L);
     }
 
-    private synchronized void checkAndAutoLoginIfLoggedOut(String reason) {
+    private void checkAndAutoLoginIfLoggedOut(String reason) {
+        checkAndAutoLoginIfLoggedOut(reason, false);
+    }
+
+    /** Log in to campus Wi-Fi if it has stopped letting us out. With `probe`, test the internet
+     *  with one small request instead of trusting Android's last check of the network. */
+    private synchronized void checkAndAutoLoginIfLoggedOut(String reason, boolean probe) {
         if (!DeviceManager.isWifiActive(AuthService.this)) {
             return;
         }
@@ -283,7 +287,7 @@ public class AuthService extends Service {
                 if (!DeviceManager.isWifiActive(AuthService.this)) {
                     return;
                 }
-                if (CaptivePortalManager.isInternetConnected(AuthService.this)) {
+                if (CaptivePortalManager.isInternetConnected(AuthService.this, !probe)) {
                     return;
                 }
 
@@ -436,7 +440,7 @@ public class AuthService extends Service {
             isRunning = true;
             workerThread = new Thread(this::listenLoop);
             workerThread.start();
-            startWifiReturnWatch();
+            startUpkeep();
         }
 
         return START_STICKY;
@@ -1359,6 +1363,9 @@ public class AuthService extends Service {
                 }
                 JSONObject payload = new JSONObject();
                 payload.put("state", state);
+                // the forwarded call notification names the caller: no generic one then
+                payload.put("notifications", PhoneNotificationListener.isEnabled(AuthService.this)
+                        && PhoneNotificationListener.hasAccess(AuthService.this));
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(payload.toString().getBytes("UTF-8"));
                 }

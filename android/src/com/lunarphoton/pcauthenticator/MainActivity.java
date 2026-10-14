@@ -1200,40 +1200,188 @@ public class MainActivity extends Activity {
             String res = NetworkUtils.httpGetWithAuth(url + "/api/current_challenge", active.authToken, 2500);
             if (res != null) {
                 try {
-                    JSONObject json = new JSONObject(res);
-                    if (json.optBoolean("has_challenge", false)) {
-                        JSONObject ch = json.getJSONObject("challenge");
-                        int remaining = ch.optInt("remaining_seconds", 35);
-                        String user = ch.optString("user", "user");
-                        String host = ch.optString("hostname", active.hostname);
-                        String chId = ch.optString("session_id", ch.optString("id", null));
-                        String msg = "Approve sign-in to " + host + " as " + user + "?";
-
-                        String currentId = getSharedPreferences("pc_auth_prefs", Context.MODE_PRIVATE).getString("active_challenge_id", null);
-                        boolean isNew = (chId != null && !chId.equals(currentId)) || (layoutChallenge.getVisibility() != View.VISIBLE);
-
-                        if (chId != null) {
-                            getSharedPreferences("pc_auth_prefs", Context.MODE_PRIVATE).edit()
-                                    .putString("active_challenge_id", chId)
-                                    .putString("active_challenge_msg", msg)
-                                    .putLong("active_challenge_expiry", System.currentTimeMillis() + (remaining * 1000L))
-                                    .apply();
-                        }
-
-                        if (isNew) {
-                            runOnUiThread(() -> showChallengeWithDuration(msg, remaining));
-                        }
-                    } else {
-                        runOnUiThread(() -> {
-                            if (layoutChallenge.getVisibility() == View.VISIBLE) {
-                                hideChallenge();
-                            }
-                            AuthService.cancelChallengeNotification(MainActivity.this);
-                        });
-                    }
+                    applyChallenge(new JSONObject(res), active);
                 } catch (Exception ignored) {}
             }
         }).start();
+    }
+
+    /** What the open screen shows, in one request (/api/phone/sync): `parts` is a comma list
+     *  of challenge, status, media. Falls back to one request each on an older computer. */
+    private void syncScreen(String parts) {
+        PairedDevice active = DeviceManager.getActiveDevice(this);
+        if (active == null) return;
+        new Thread(() -> {
+            String res = NetworkUtils.httpGetWithAuth(active.getBaseUrl() + "/api/phone/sync?parts=" + parts, active.authToken, 3000);
+            JSONObject json = null;
+            try {
+                if (res != null) json = new JSONObject(res);
+            } catch (Exception ignored) { }
+            if (json == null || !"ok".equals(json.optString("status"))) {
+                if (parts.contains("challenge")) checkActiveChallenge();
+                if (parts.contains("media")) fetchMediaStatus();
+                if (parts.contains("status")) fetchLaptopStatus();
+                return;
+            }
+            try {
+                JSONObject ch = json.optJSONObject("challenge");
+                if (ch != null) applyChallenge(ch, active);
+                JSONObject pc = json.optJSONObject("pc");
+                if (pc != null) applyLaptopStatus(pc, active);
+                JSONObject media = json.optJSONObject("media");
+                if (media != null) applyMedia(media);
+                if (json.has("keep_awake")) {
+                    boolean awake = json.optBoolean("keep_awake");
+                    runOnUiThread(() -> showKeepAwake(awake));
+                }
+            } catch (Exception ignored) { }
+        }).start();
+    }
+
+    /** A reply of /api/current_challenge (or the challenge part of /api/phone/sync). */
+    private void applyChallenge(JSONObject json, PairedDevice active) throws org.json.JSONException {
+        if (json.optBoolean("has_challenge", false)) {
+            JSONObject ch = json.getJSONObject("challenge");
+            int remaining = ch.optInt("remaining_seconds", 35);
+            String user = ch.optString("user", "user");
+            String host = ch.optString("hostname", active.hostname);
+            String chId = ch.optString("session_id", ch.optString("id", null));
+            String msg = "Approve sign-in to " + host + " as " + user + "?";
+
+            String currentId = getSharedPreferences("pc_auth_prefs", Context.MODE_PRIVATE).getString("active_challenge_id", null);
+            boolean isNew = (chId != null && !chId.equals(currentId)) || (layoutChallenge.getVisibility() != View.VISIBLE);
+
+            if (chId != null) {
+                getSharedPreferences("pc_auth_prefs", Context.MODE_PRIVATE).edit()
+                        .putString("active_challenge_id", chId)
+                        .putString("active_challenge_msg", msg)
+                        .putLong("active_challenge_expiry", System.currentTimeMillis() + (remaining * 1000L))
+                        .apply();
+            }
+
+            if (isNew) {
+                runOnUiThread(() -> showChallengeWithDuration(msg, remaining));
+            }
+        } else {
+            runOnUiThread(() -> {
+                if (layoutChallenge.getVisibility() == View.VISIBLE) {
+                    hideChallenge();
+                }
+                AuthService.cancelChallengeNotification(MainActivity.this);
+            });
+        }
+    }
+
+    /** A reply of /api/media/status (or the media part of /api/phone/sync). */
+    private void applyMedia(JSONObject res) throws org.json.JSONException {
+        boolean hasPlayer = res.optBoolean("has_player", false);
+        String status = res.optString("status", "");
+        String title = res.optString("title", "");
+        String artist = res.optString("artist", "");
+        String player = res.optString("player", "");
+        final int volumeNow = res.isNull("app_volume") ? res.optInt("volume", -1) : res.optInt("app_volume", -1);
+
+        runOnUiThread(() -> {
+            showMediaVolume(volumeNow);
+            if (hasPlayer && (!title.isEmpty() || !artist.isEmpty())) {
+                if (tvMediaStatus != null) tvMediaStatus.setText(("Playing".equalsIgnoreCase(status) ? "Playing" : "Paused") + (player.isEmpty() ? "" : " · " + player));
+                if (tvMediaTitle != null) tvMediaTitle.setText(title.isEmpty() ? "Playing" : title);
+                if (tvMediaArtist != null) tvMediaArtist.setText(artist);
+                if (btnMediaPlayPause != null) {
+                    setTopIcon(btnMediaPlayPause, "Playing".equalsIgnoreCase(status) ? R.drawable.ic_o_pause : R.drawable.ic_o_play, getColor(R.color.o_on_accent));
+                }
+            } else {
+                if (tvMediaStatus != null) tvMediaStatus.setText("Nothing playing");
+                if (tvMediaTitle != null) tvMediaTitle.setText("Silence in orbit");
+                if (btnMediaPlayPause != null) setTopIcon(btnMediaPlayPause, R.drawable.ic_o_play, getColor(R.color.o_on_accent));
+                if (tvMediaArtist != null) tvMediaArtist.setText("");
+            }
+        });
+    }
+
+    /** A reply of /api/pc/status (or the status part of /api/phone/sync). */
+    private void applyLaptopStatus(JSONObject res, PairedDevice active) throws org.json.JSONException {
+        String localUrl = res.optString("local_url", null);
+        String internetUrl = res.optString("internet_url", null);
+        boolean updated = false;
+        if (localUrl != null && !localUrl.equals(active.localUrl)) {
+            active.localUrl = localUrl;
+            try {
+                java.net.URI u = new java.net.URI(localUrl);
+                if (u.getHost() != null && !u.getHost().isEmpty()) active.ip = u.getHost();
+                if (u.getPort() > 0) active.port = u.getPort();
+            } catch (Exception ignored) {}
+            updated = true;
+    }
+    if (internetUrl != null && !internetUrl.equals(active.internetUrl)) {
+        active.internetUrl = internetUrl;
+        updated = true;
+    }
+    if (updated) {
+        DeviceManager.addOrUpdateDevice(this, active);
+    }
+    boolean locked = res.optBoolean("locked", false);
+    boolean loggedIn = res.optBoolean("logged_in", true);
+    isPcCurrentlyLocked = locked;
+    JSONObject bat = res.optJSONObject("battery");
+    JSONObject cpu = res.optJSONObject("cpu");
+    JSONObject mem = res.optJSONObject("memory");
+    JSONObject up = res.optJSONObject("uptime");
+    JSONObject stor = res.optJSONObject("storage");
+
+    String weatherFormatted = res.optString("weather_formatted", "");
+    if (weatherFormatted.isEmpty() || "Weather Unavailable".equalsIgnoreCase(weatherFormatted)) {
+        JSONObject weatherObj = res.optJSONObject("weather");
+        if (weatherObj != null) {
+            weatherFormatted = weatherObj.optString("formatted", "");
+            if (weatherFormatted.isEmpty()) {
+                String city = weatherObj.optString("city", "");
+                String temp = weatherObj.optString("temp_c", "");
+                String desc = weatherObj.optString("desc", "");
+                if (!city.isEmpty()) {
+                    weatherFormatted = city + " • " + temp + "°C, " + desc;
+                }
+            }
+        }
+    }
+
+    final String finalWeather = weatherFormatted;
+    runOnUiThread(() -> {
+        showLockState(locked, loggedIn);
+        if (tvPcBattery != null && bat != null) {
+            int pct = bat.optInt("capacity", bat.optInt("percent", -1));
+            String st = bat.optString("status", "");
+            boolean charging = bat.optBoolean("charging", false) || "Charging".equalsIgnoreCase(st);
+            boolean ac = bat.optBoolean("ac_online", false);
+            if (pct >= 0) {
+                tvPcBattery.setText(pct + "%" + (charging ? " ↑" : ""));
+                tvPcBattery.setTextColor(getColor(charging ? R.color.o_online : (pct <= 15 && !ac ? R.color.o_danger : R.color.o_text)));
+            }
+        }
+        if (tvPcUptime != null && up != null) {
+            String formatted = up.optString("formatted", "--");
+            tvPcUptime.setText("Up " + formatted);
+        }
+        if (tvPcCpu != null && cpu != null) {
+            double usage = cpu.optDouble("usage_pct", 0.0);
+            tvPcCpu.setText(String.format(Locale.US, "%.0f%%", usage));
+        }
+        if (tvPcMemory != null && mem != null) {
+            double used = mem.optDouble("used_gb", 0.0);
+            double total = mem.optDouble("total_gb", 0.0);
+            int pct = mem.optInt("used_pct", 0);
+            tvPcMemory.setText(String.format(Locale.US, "%.1fG", used));
+        }
+        if (tvPcStorage != null && stor != null) {
+            double free = stor.optDouble("free_gb", -1);
+            if (free >= 0) {
+                tvPcStorage.setText(String.format(Locale.US, "%.0fG", free));
+            }
+        }
+        if (tvPcWeather != null && !finalWeather.isEmpty() && !finalWeather.startsWith("{")) {
+            tvPcWeather.setText(finalWeather);
+        }
+    });
     }
 
     public void showChallenge(String message) {
@@ -1487,6 +1635,28 @@ public class MainActivity extends Activity {
 
         if (btnChangePwd != null) {
             btnChangePwd.setOnClickListener(v -> showChangePasswordDialog(updatePwdStatus));
+        }
+
+        // Phone notifications on the computer: needs Android's notification access for Orbit
+        Switch switchNotify = dialogView.findViewById(R.id.switch_dialog_notify);
+        TextView tvNotifyDesc = dialogView.findViewById(R.id.tv_dialog_notify_desc);
+        if (switchNotify != null) {
+            boolean on = PhoneNotificationListener.isEnabled(this) && PhoneNotificationListener.hasAccess(this);
+            switchNotify.setChecked(on);
+            if (tvNotifyDesc != null && PhoneNotificationListener.isEnabled(this) && !PhoneNotificationListener.hasAccess(this)) {
+                tvNotifyDesc.setText("Needs notification access for Orbit");
+            }
+            switchNotify.setOnCheckedChangeListener((btn, isChecked) -> {
+                getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).edit()
+                        .putBoolean(PhoneNotificationListener.PREF_FORWARD, isChecked).apply();
+                if (isChecked && !PhoneNotificationListener.hasAccess(this)) {
+                    Toast.makeText(this, "Allow notification access for Orbit", Toast.LENGTH_LONG).show();
+                    try {
+                        startActivity(new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                    } catch (Exception ignored) { }
+                }
+                if (tvNotifyDesc != null) tvNotifyDesc.setText("Messages and calls show on the computer");
+            });
         }
 
         Switch switchCaptive = dialogView.findViewById(R.id.switch_dialog_captive);
@@ -2607,86 +2777,7 @@ public class MainActivity extends Activity {
                         while ((line = r.readLine()) != null) sb.append(line);
                     }
                     JSONObject res = new JSONObject(sb.toString());
-                    String localUrl = res.optString("local_url", null);
-                    String internetUrl = res.optString("internet_url", null);
-                    boolean updated = false;
-                    if (localUrl != null && !localUrl.equals(active.localUrl)) {
-                        active.localUrl = localUrl;
-                        try {
-                            java.net.URI u = new java.net.URI(localUrl);
-                            if (u.getHost() != null && !u.getHost().isEmpty()) active.ip = u.getHost();
-                            if (u.getPort() > 0) active.port = u.getPort();
-                        } catch (Exception ignored) {}
-                        updated = true;
-                    }
-                    if (internetUrl != null && !internetUrl.equals(active.internetUrl)) {
-                        active.internetUrl = internetUrl;
-                        updated = true;
-                    }
-                    if (updated) {
-                        DeviceManager.addOrUpdateDevice(this, active);
-                    }
-                    boolean locked = res.optBoolean("locked", false);
-                    isPcCurrentlyLocked = locked;
-                    JSONObject bat = res.optJSONObject("battery");
-                    JSONObject cpu = res.optJSONObject("cpu");
-                    JSONObject mem = res.optJSONObject("memory");
-                    JSONObject up = res.optJSONObject("uptime");
-                    JSONObject stor = res.optJSONObject("storage");
-
-                    String weatherFormatted = res.optString("weather_formatted", "");
-                    if (weatherFormatted.isEmpty() || "Weather Unavailable".equalsIgnoreCase(weatherFormatted)) {
-                        JSONObject weatherObj = res.optJSONObject("weather");
-                        if (weatherObj != null) {
-                            weatherFormatted = weatherObj.optString("formatted", "");
-                            if (weatherFormatted.isEmpty()) {
-                                String city = weatherObj.optString("city", "");
-                                String temp = weatherObj.optString("temp_c", "");
-                                String desc = weatherObj.optString("desc", "");
-                                if (!city.isEmpty()) {
-                                    weatherFormatted = city + " • " + temp + "°C, " + desc;
-                                }
-                            }
-                        }
-                    }
-
-                    final String finalWeather = weatherFormatted;
-                    runOnUiThread(() -> {
-                        showLockState(locked);
-                        if (tvPcBattery != null && bat != null) {
-                            int pct = bat.optInt("capacity", bat.optInt("percent", -1));
-                            String st = bat.optString("status", "");
-                            boolean charging = bat.optBoolean("charging", false) || "Charging".equalsIgnoreCase(st);
-                            boolean ac = bat.optBoolean("ac_online", false);
-                            if (pct >= 0) {
-                                tvPcBattery.setText(pct + "%" + (charging ? " ↑" : ""));
-                                tvPcBattery.setTextColor(getColor(charging ? R.color.o_online : (pct <= 15 && !ac ? R.color.o_danger : R.color.o_text)));
-                            }
-                        }
-                        if (tvPcUptime != null && up != null) {
-                            String formatted = up.optString("formatted", "--");
-                            tvPcUptime.setText("Up " + formatted);
-                        }
-                        if (tvPcCpu != null && cpu != null) {
-                            double usage = cpu.optDouble("usage_pct", 0.0);
-                            tvPcCpu.setText(String.format(Locale.US, "%.0f%%", usage));
-                        }
-                        if (tvPcMemory != null && mem != null) {
-                            double used = mem.optDouble("used_gb", 0.0);
-                            double total = mem.optDouble("total_gb", 0.0);
-                            int pct = mem.optInt("used_pct", 0);
-                            tvPcMemory.setText(String.format(Locale.US, "%.1fG", used));
-                        }
-                        if (tvPcStorage != null && stor != null) {
-                            double free = stor.optDouble("free_gb", -1);
-                            if (free >= 0) {
-                                tvPcStorage.setText(String.format(Locale.US, "%.0fG", free));
-                            }
-                        }
-                        if (tvPcWeather != null && !finalWeather.isEmpty() && !finalWeather.startsWith("{")) {
-                            tvPcWeather.setText(finalWeather);
-                        }
-                    });
+                    applyLaptopStatus(res, active);
                 }
             } catch (Exception ignored) {}
         }).start();
@@ -2751,7 +2842,7 @@ public class MainActivity extends Activity {
                     } else {
                         runOnUiThread(() -> {
                             pbLoading.setVisibility(View.GONE);
-                            tvTime.setText("Capture error (HTTP " + code + ")");
+                            tvTime.setText(code == 409 ? "Nobody is logged in on the computer yet" : "Capture error (HTTP " + code + ")");
                         });
                     }
                 } catch (Exception e) {
@@ -3367,29 +3458,7 @@ public class MainActivity extends Activity {
                         while ((line = r.readLine()) != null) sb.append(line);
                     }
                     JSONObject res = new JSONObject(sb.toString());
-                    boolean hasPlayer = res.optBoolean("has_player", false);
-                    String status = res.optString("status", "");
-                    String title = res.optString("title", "");
-                    String artist = res.optString("artist", "");
-                    String player = res.optString("player", "");
-                    final int volumeNow = res.isNull("app_volume") ? res.optInt("volume", -1) : res.optInt("app_volume", -1);
-
-                    runOnUiThread(() -> {
-                        showMediaVolume(volumeNow);
-                        if (hasPlayer && (!title.isEmpty() || !artist.isEmpty())) {
-                            if (tvMediaStatus != null) tvMediaStatus.setText(("Playing".equalsIgnoreCase(status) ? "Playing" : "Paused") + (player.isEmpty() ? "" : " · " + player));
-                            if (tvMediaTitle != null) tvMediaTitle.setText(title.isEmpty() ? "Playing" : title);
-                            if (tvMediaArtist != null) tvMediaArtist.setText(artist);
-                            if (btnMediaPlayPause != null) {
-                                setTopIcon(btnMediaPlayPause, "Playing".equalsIgnoreCase(status) ? R.drawable.ic_o_pause : R.drawable.ic_o_play, getColor(R.color.o_on_accent));
-                            }
-                        } else {
-                            if (tvMediaStatus != null) tvMediaStatus.setText("Nothing playing");
-                            if (tvMediaTitle != null) tvMediaTitle.setText("Silence in orbit");
-                            if (btnMediaPlayPause != null) setTopIcon(btnMediaPlayPause, R.drawable.ic_o_play, getColor(R.color.o_on_accent));
-                            if (tvMediaArtist != null) tvMediaArtist.setText("");
-                        }
-                    });
+                    applyMedia(res);
                 }
             } catch (Exception ignored) {}
         }).start();
@@ -3452,9 +3521,11 @@ public class MainActivity extends Activity {
                 // only what the screen shows: media on Control, computer status on Home;
                 // approval requests arrive on the live link, this is just a backstop
                 int panel = mainViewFlipper != null ? mainViewFlipper.getDisplayedChild() : PANEL_HOME;
-                if (statusCounter % 3 == 0) checkActiveChallenge();
-                if (panel == 1) fetchMediaStatus();
-                if (panel == PANEL_HOME && statusCounter % 2 == 0) fetchLaptopStatus();
+                StringBuilder parts = new StringBuilder();
+                if (statusCounter % 3 == 0) parts.append("challenge,");
+                if (panel == 1) parts.append("media,");
+                if (panel == PANEL_HOME && statusCounter % 2 == 0) parts.append("status,");
+                if (parts.length() > 0) syncScreen(parts.toString());     // one request for all of it
                 pollHandler.postDelayed(this, 4500);
             }
         };
@@ -4281,11 +4352,18 @@ public class MainActivity extends Activity {
     }
 
     private void showLockState(boolean locked) {
+        showLockState(locked, true);
+    }
+
+    /** At the login screen nobody is logged in: neither locked nor unlocked, nothing to lock. */
+    private void showLockState(boolean locked, boolean loggedIn) {
         if (tvPcLockBadge != null) {
-            tvPcLockBadge.setText(locked ? "Locked" : "Unlocked");
-            setStartIcon(tvPcLockBadge, locked ? R.drawable.ic_o_lock : R.drawable.ic_o_unlock, getColor(R.color.o_text_2), 14);
+            tvPcLockBadge.setText(!loggedIn ? "Not logged in" : locked ? "Locked" : "Unlocked");
+            setStartIcon(tvPcLockBadge, locked || !loggedIn ? R.drawable.ic_o_lock : R.drawable.ic_o_unlock, getColor(R.color.o_text_2), 14);
         }
         if (btnLockLaptopAction != null) {
+            btnLockLaptopAction.setEnabled(loggedIn);
+            btnLockLaptopAction.setAlpha(loggedIn ? 1f : 0.4f);
             btnLockLaptopAction.setText(locked ? "Unlock" : "Lock");
             setStartIcon(btnLockLaptopAction, locked ? R.drawable.ic_o_unlock : R.drawable.ic_o_lock, getColor(R.color.o_on_accent), 18);
         }

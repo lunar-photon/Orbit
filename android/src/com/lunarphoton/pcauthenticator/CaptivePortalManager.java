@@ -685,6 +685,13 @@ public class CaptivePortalManager {
     }
 
     public static boolean isInternetConnected(Context context) {
+        return isInternetConnected(context, true);
+    }
+
+    /** Does this Wi-Fi reach the internet? With `trustAndroid`, Android's own last check counts
+     *  (no request of ours). Android only re-checks when the network changes, so after a campus
+     *  session expires it still says yes: a real check asks for a tiny page instead. */
+    public static boolean isInternetConnected(Context context, boolean trustAndroid) {
         if (context == null || !DeviceManager.isWifiActive(context)) {
             return false;
         }
@@ -694,7 +701,7 @@ public class CaptivePortalManager {
         }
         // Android has usually checked already: if it says this Wi-Fi reaches the internet,
         // trust it instead of waking the radio for a request of our own
-        try {
+        if (trustAndroid) try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
             android.net.NetworkCapabilities caps = cm != null ? cm.getNetworkCapabilities(wifiNet) : null;
             if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)

@@ -111,6 +111,17 @@
             android:name=".AuthService"
             android:exported="false" />
 
+        <!-- Phone notifications on the computer: Android binds it once notification access is given -->
+        <service
+            android:name=".PhoneNotificationListener"
+            android:exported="true"
+            android:label="Orbit"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".ActionReceiver"
             android:exported="false" />

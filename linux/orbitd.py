@@ -398,7 +398,50 @@ def get_cpu_usage_pct():
         pass
     return 0.0
 
+_GRAPHICAL_SESSION = [0.0, None]
+
+def graphical_session():
+    """This user's desktop login session (its loginctl id), or None while the computer sits
+    at the login screen. This service runs outside that session (it starts at boot, before
+    anyone logs in), so loginctl's "auto" session never means anything here: look it up."""
+    if time.time() - _GRAPHICAL_SESSION[0] < 3:
+        return _GRAPHICAL_SESSION[1]
+    found = None
+    try:
+        out = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True, timeout=2).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 2 or parts[1] != str(os.getuid()):
+                continue
+            info = subprocess.run(['loginctl', 'show-session', parts[0], '-p', 'Class', '-p', 'Type', '-p', 'State'],
+                                  capture_output=True, text=True, timeout=2).stdout
+            props = dict(l.split('=', 1) for l in info.splitlines() if '=' in l)
+            if props.get('Class') == 'user' and props.get('Type') in ('wayland', 'x11') and props.get('State') != 'closing':
+                found = parts[0]
+                if props.get('State') == 'active':
+                    break
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _GRAPHICAL_SESSION[:] = [time.time(), found]
+    return found
+
+def current_challenge_reply():
+    """The sign-in waiting for approval on this computer, if any."""
+    with auth_mgr.lock:
+        if auth_mgr.current_session and auth_mgr.current_session["status"] == "pending":
+            now = time.time()
+            if now <= auth_mgr.current_session["expires_at"]:
+                session_copy = dict(auth_mgr.current_session)
+                session_copy["id"] = session_copy.get("session_id")
+                session_copy["remaining_seconds"] = max(1, int(auth_mgr.current_session["expires_at"] - now))
+                return {"has_challenge": True, "challenge": session_copy}
+    return {"has_challenge": False}
+
 def is_pc_locked():
+    """True or False, or None when nobody is logged in (the login screen isn't "unlocked")."""
+    session = graphical_session()
+    if session is None:
+        return None
     try:
         out = subprocess.check_output(
             ['qdbus6', 'org.freedesktop.ScreenSaver', '/ScreenSaver', 'org.freedesktop.ScreenSaver.GetActive'],
@@ -412,7 +455,7 @@ def is_pc_locked():
         pass
     try:
         out = subprocess.check_output(
-            ['loginctl', 'show-session', 'auto', '-p', 'LockedHint'],
+            ['loginctl', 'show-session', session, '-p', 'LockedHint'],
             stderr=subprocess.DEVNULL, timeout=2
         ).decode().strip()
         if 'yes' in out.lower():
@@ -542,7 +585,8 @@ def get_pc_system_status():
     return {
         "status": "ok",
         "hostname": socket.gethostname(),
-        "locked": locked,
+        "locked": bool(locked),
+        "logged_in": locked is not None,     # False: the computer is at its login screen
         "battery": bat_info,
         "cpu": {"usage_pct": cpu_pct},
         "memory": mem_info,
@@ -1359,7 +1403,6 @@ def _render_line(line, width):
 
 ALT_FRAME_INTERVAL = 0.3      # seconds of recorded time between snapshots of a full-screen app
 ALT_HISTORY_MAX = 5000
-ALT_REENTER_SECONDS = 2.0     # back on its screen this soon after leaving: the same app
 
 
 _ANSI_SGR = re.compile(r'\x1b\[[0-9;:]*m')
@@ -1529,7 +1572,7 @@ class TermRecording:
         self.scroll_input_until = -1.0   # recorded time until which a redraw follows a scroll input
         self.alt_status_seen = {}     # masked row -> scrolls it stayed pinned through
         self.alt_rows, self.alt_rows_width = None, 0   # rendered rows of the current screen
-        self.alt_saved = None         # (recorded time, stitching) of a full-screen app that just left
+        self.log_backed = False       # Claude Code with its log: the phone needs no stitched history
         self.revision = 0            # bumps whenever the screen may have changed
         self._render_cache = (None, None)
         self.clock = self.last_snap = 0.0
@@ -1556,34 +1599,14 @@ class TermRecording:
             # we rebuild one by stitching its frames together (see _snapshot_alt)
             if m.group(1) == 'h':
                 self._snapshot_alt()
-                saved, self.alt_saved = self.alt_saved, None
                 self.alt = self._new_screen(False)
                 self._reset_stitching()
-                if saved and self.clock - saved[0] < ALT_REENTER_SECONDS:
-                    # The app left its screen and came straight back (Claude Code does this to
-                    # open its sessions dashboard): the same app, so its history carries on
-                    self._restore_stitching(saved[1])
             else:
-                if self.alt is not None:
-                    self._snapshot_alt()
-                    self.alt_saved = (self.clock, self._stitching())
                 self.alt = None
                 if self.main_tui:
                     self._reset_stitching()
             pos = m.end()
         self._feed_plain(text[pos:])
-
-    _STITCH_FIELDS = ('alt_frames', 'alt_footer', 'alt_prev_body', 'alt_pos', 'view', 'views',
-                      'alt_prev_raw', 'alt_status_seen', 'alt_latest_rows', 'alt_last_seen')
-
-    def _stitching(self):
-        return {k: getattr(self, k) for k in self._STITCH_FIELDS}
-
-    def _restore_stitching(self, state):
-        for k, v in state.items():
-            setattr(self, k, v)
-        self.alt_scrolled = False
-        self.alt_rows = None
 
     def _reset_stitching(self):
         self.alt_frames, self.alt_footer, self.alt_prev_body, self.alt_pos = [], [], [], 0
@@ -1643,7 +1666,7 @@ class TermRecording:
         return self.alt_rows
 
     def _snapshot_alt(self):
-        if not self._tui():
+        if not self._tui() or self.log_backed:
             return
         frame = list(self._alt_rows())
         while frame and not frame[-1][0]:
@@ -1678,22 +1701,13 @@ class TermRecording:
             if seen:
                 body = body[:len(body) - seen]
             self.alt_prev_raw = raw_body
-            view = self._view_of(self.alt_footer, raw_body)
+            view = self._view_of(self.alt_footer)
             if view != self.view:
                 # The app shows another view (e.g. an agent's transcript): park this history
                 # and continue the other one, so the phone shows only what the computer does
                 self.views[self.view] = (self.alt_frames, self.alt_pos, self.alt_prev_body)
                 self.alt_frames, self.alt_pos, self.alt_prev_body = self.views.pop(view, ([], 0, []))
                 self.view = view
-            if view == _SESSIONS_VIEW:
-                # Claude Code's sessions dashboard is a live status screen: show it as it is now,
-                # with no history of its own and nothing added to the conversation's
-                self.alt_frames, self.alt_pos, self.alt_prev_body = [], 0, body
-                self.alt_scrolled = False
-                self.alt_latest_rows = frame
-                self.alt_last_seen = body
-                self.last_snap = self.clock
-                return
             merged, pos = _merge_frames(self.alt_frames, body)
             # Scrolling moves a few lines at a time, so the screen shares most lines with the one
             # just before it; a view switch (a panel, and back) replaces it all at once
@@ -1734,14 +1748,11 @@ class TermRecording:
             self.alt_prev_body = body
         self.last_snap = self.clock
 
-    def _view_of(self, footer, body=()):
+    def _view_of(self, footer):
         """Which view a full-screen app shows, from its input box: Claude Code's agent view
-        says "Message @agent…", its views list marks the open one with ●, its sessions
-        dashboard says the conversation moved to the background, and the main conversation
-        has a plain prompt. Unknown (e.g. while typing): the current one."""
+        says "Message @agent…", its views list marks the open one with ●, and the main
+        conversation has a plain prompt. Unknown (e.g. while typing): the current one."""
         text = '\n'.join(plain for plain, _ in footer)
-        if any(_SESSIONS_HINT.match(plain) for plain, _ in footer) or any(_SESSIONS_HINT.match(plain) for plain, _ in body[:12]):
-            return _SESSIONS_VIEW
         if not text:
             return self.view
         m = _VIEW_AGENT.search(text)
@@ -1895,6 +1906,16 @@ class TermRecording:
                 parts.append(text)
             return ''.join(parts).strip('\n')
 
+    def live_screen(self):
+        """(plain, ansi) rows of the full-screen app's current screen, trailing blanks dropped."""
+        with self.lock:
+            if not self._tui():
+                return None
+            rows = list(self._alt_rows())
+        while rows and not rows[-1][0]:
+            rows.pop()
+        return rows
+
     def render(self, max_lines, join=False):
         """(lines, total, has_more) for the newest max_lines lines, as ANSI text. With `join`,
         rows that a long line wrapped onto are joined back into it."""
@@ -1965,10 +1986,6 @@ class TermRecording:
 
 _PROMPT_MARKS = ('❯', '➜', '›', '»', '$', '%', '#', '>')
 _VIEW_AGENT = re.compile(r'Message @([\w.-]+)')
-_SESSIONS_VIEW = '\x00sessions'          # not an agent's name: the dashboard of all sessions
-# its own lines (a whole row each, so a conversation quoting them doesn't count)
-_SESSIONS_HINT = re.compile(r'^\s*(Your conversation moved to the background\b|❯\s*describe a task for a new session\s*$'
-                            r'|⏵⏵ .*\benter to return · space to reply\b)')
 _VIEW_LISTED = re.compile(r'^\s*(?:❯\s*)?●\s+([\w.-]+)')
 
 
@@ -2004,13 +2021,13 @@ def recording_for(pid):
     rec.update()
     return rec
 
-# ---- Claude Code: its log checks the stitched history ----
-# Claude Code's fullscreen mode only ever draws one screen, so its history on the phone is
-# pieced together from screens (TermRecording), which can repeat or lose a message. Claude
-# Code also writes every message to ~/.claude/projects/<dir>/<session>.jsonl, and
-# ~/.claude/sessions/<pid>.json says which session a running claude has. The phone still gets
-# what the terminal drew; the log only checks it: a message the history shows twice is shown
-# once, and one it lost between two others is put back (see _check_with_log).
+# ---- Claude Code: its history from its own log ----
+# Claude Code's fullscreen mode only ever draws one screen and keeps the conversation in its
+# own memory, so the terminal never holds the older part. It writes every message to
+# ~/.claude/projects/<dir>/<session>.jsonl, and ~/.claude/sessions/<pid>.json says which
+# session a running claude has. For a tab running Claude Code the phone shows that log and,
+# below it, the part of the screen that isn't in the log yet (a reply being written, a
+# question, the input box, a dashboard): no text that isn't in the log or on the screen now.
 CLAUDE_DIR = os.path.expanduser('~/.claude')
 _CLAUDE_PROC_CACHE = {}       # recorder pid -> (checked at, claude pid or None)
 _CLAUDE_LOGS = {}             # log path -> ClaudeLog
@@ -2213,12 +2230,16 @@ class ClaudeLog:
             out += _claude_item_lines(kind, text)
         return out
 
-    def messages(self):
-        """(kind, text, words) of your messages and Claude's replies, in order."""
+    def lines_upto(self, n):
+        """The first n messages as ANSI lines."""
         with self.lock:
-            if self._recent[0] != self.version:
-                self._recent = (self.version, [(k, t, _norm_words(t)) for k, t in self.items if k in ('user', 'text')])
-            return self._recent[1]
+            out = []
+            for kind, text in self.items[:n]:
+                if out:
+                    out.append('')
+                out += _claude_item_lines(kind, text)
+            return out
+
 
 def claude_log_for(recorder_pid):
     """The conversation log of the Claude Code running in this terminal, read up to now."""
@@ -2236,89 +2257,48 @@ def claude_log_for(recorder_pid):
     return log
 
 
-_ANSI_ANY = re.compile(r'\x1b\[[0-9;:?<>=]*[A-Za-z]')
-_CHECK_WINDOW = 80            # messages to look ahead/back when placing a block
-
-
-def _check_with_log(lines, log):
-    """The stitched history of a Claude Code tab, checked against its log: a message shown
-    twice keeps its first copy, and a message lost between two shown ones is put back there.
-    Everything else stays as the terminal drew it."""
-    msgs = log.messages()
-    if not msgs:
-        return lines
-    plain = [_ANSI_ANY.sub('', l) for l in lines]
-    # blocks: a message starts at "❯ " (yours) or "● " (Claude's), and runs to the next start
-    starts = [i for i, p in enumerate(plain) if p.startswith('❯ ') or p.startswith('● ')]
-    blocks = []
-    for n, i in enumerate(starts):
-        # its lines are indented; it ends at the next message or other unindented line (a rule)
-        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
-        end = next((j for j in range(i + 1, end) if plain[j] and not plain[j].startswith(' ')), end)
-        kind = 'user' if plain[i].startswith('❯ ') else 'text'
-        # its text stops at Claude Code's notes under it ("⎿ You've hit your limit", results)
-        text_end = next((j for j in range(i + 1, end) if plain[j].lstrip().startswith('⎿')), end)
-        words = _norm_words(' '.join(p.strip().lstrip('❯● ') for p in plain[i:text_end]))
-        blocks.append([i, end, kind, words, None])
-
-    def matches(block, m):
-        kind, words = block[2], block[3]
-        if m[0] != kind or not words:
-            return False
-        return words == m[2] if len(words) < 15 else words in m[2]
-
-    last, drop = -1, set()
-    for b in blocks:
-        ahead = next((j for j in range(last + 1, min(len(msgs), last + 1 + _CHECK_WINDOW)) if matches(b, msgs[j])), None)
-        if ahead is not None:
-            b[4] = last = ahead
-        elif last >= 0 and len(b[3]) >= 15 and any(matches(b, msgs[j]) for j in range(max(0, last - _CHECK_WINDOW), last + 1)):
-            drop.add(b[0])                       # already shown above: a repeat
-    placed = [b for b in blocks if b[4] is not None]
-    shown_words = _norm_words(' '.join(plain))      # to make sure a "lost" message really is missing
-    seen = {b[4] for b in placed}
-    out, cursor = [], 0
-    for prev, nxt in zip(placed, placed[1:]):
-        # everything up to the end of `prev`'s block, minus repeats
-        for b in blocks:
-            if cursor <= b[0] < prev[1] and b[0] in drop:
-                out += lines[cursor:b[0]]
-                cursor = b[1]
-        out += lines[cursor:prev[1]]
-        cursor = prev[1]
-        lost = [j for j in range(prev[4] + 1, nxt[4]) if j not in seen and len(msgs[j][2]) >= 15
-                and ' '.join(msgs[j][2].split()[:8]) not in shown_words]
-        for j in lost:
-            if out and _ANSI_ANY.sub('', out[-1]).strip():
-                out.append('')
-            out += _claude_item_lines(msgs[j][0], msgs[j][1])
-            out.append('')
-    for b in blocks:
-        if b[0] >= cursor and b[0] in drop:
-            out += lines[cursor:b[0]]
-            cursor = b[1]
-    out += lines[cursor:]
-    return out
-
-
-def claude_checked_render(term_id, rec, max_lines, join):
-    """rec.render, with a Claude Code tab's history checked against its log (cached)."""
-    lines, total, more = rec.render(100000, join)
-    pid = _recorder_pid(term_id)
-    log = claude_log_for(pid) if pid and rec._tui() is not None and rec.view == 'main' else None
-    if log is None:
-        take = lines[-max_lines:]
-        return take, total, total > len(take)
-    key = (id(rec), rec.revision, log.version, join)
-    hit = _CHECKED_CACHE.get(term_id)
-    if not hit or hit[0] != key:
-        hit = (key, _check_with_log(lines, log))
-        _CHECKED_CACHE[term_id] = hit
-    checked = hit[1]
-    take = checked[-max_lines:]
-    return take, len(checked), len(checked) > len(take)
-
-_CHECKED_CACHE = {}
+def claude_reply_lines(rec, log):
+    """The current screen exactly as it is, and above it the earlier messages from the log:
+    every message from the log up to the first one the screen shows. If the screen starts
+    partway into a message, that message comes from the log too, so none of it is lost."""
+    rows = rec.live_screen()
+    if rows is None:
+        return None
+    items = log.items
+    if not items:
+        return None
+    # the earliest logged message the screen shows (searching the latest ones)
+    first, first_row = None, None
+    lo = max(0, len(items) - 60)
+    norms = [(i, _norm_words(t)) for i, (k, t) in enumerate(items) if i >= lo and k in ('user', 'text')]
+    for r, (plain, _) in enumerate(rows):
+        words = _norm_words(plain)
+        if len(words) < 12:
+            continue
+        hit = next((i for i, w in norms if words in w), None)
+        if hit is not None and (first is None or hit < first):
+            first, first_row = hit, r
+    if first is None:
+        upto = len(items)                     # nothing logged on screen (a dashboard, a menu)
+    else:
+        # does the screen show that message from its start ("❯ " or "● ", then indented
+        # lines)? If it begins above the screen, take it from the log too
+        r = first_row
+        while r >= 0 and not rows[r][0].startswith(('❯', '●')) and (rows[r][0].startswith(' ') or not rows[r][0].strip()):
+            r -= 1
+        upto = first if r >= 0 and rows[r][0].startswith(('❯', '●')) else first + 1
+    lines = log.lines_upto(upto)
+    # the screen's top may be the tail of the last message above, already shown in full
+    if upto and items[upto - 1][0] in ('user', 'text'):
+        above = _norm_words(items[upto - 1][1])
+        start = 0
+        while start < len(rows) and not rows[start][0].startswith(('❯', '●')) \
+                and (not rows[start][0].strip() or _norm_words(rows[start][0]) in above):
+            start += 1
+        rows = rows[start:]
+    if lines:
+        lines.append('')
+    return lines + [ansi for _, ansi in rows]
 
 _PALETTE_CACHE = {}
 
@@ -2755,9 +2735,16 @@ def konsole_session_info(svc, sid):
 
 def _recorded_reply(term_id, title, rec, max_lines, join):
     if rec._tui() is not None:
-        lines, total, more = claude_checked_render(term_id, rec, max_lines, join)
-    else:
-        lines, total, more = rec.render(max_lines, join)
+        pid = _recorder_pid(term_id)
+        log = claude_log_for(pid) if pid else None
+        rec.log_backed = log is not None          # its screens needn't be stitched
+        lines = claude_reply_lines(rec, log) if log else None
+        if lines:
+            take = lines[-max_lines:]
+            return {'status': 'ok', 'id': term_id, 'title': title, 'text': '\n'.join(take),
+                    'total_lines': len(lines), 'returned_lines': len(take), 'has_more': len(lines) > len(take),
+                    'ansi': True, 'columns': rec.size[0] or None, 'lines_independent': True, 'fullscreen': True}
+    lines, total, more = rec.render(max_lines, join)
     if not total:
         return None
     # columns: the terminal's width, so the phone can lay tables out the same way
@@ -3134,7 +3121,56 @@ telephony_state = {
 }
 telephony_lock = threading.Lock()
 
-def handle_telephony_call_state(state):
+_PHONE_NOTES = collections.OrderedDict()     # phone notification key -> desktop notification id
+_PHONE_NOTES_LOCK = threading.Lock()
+_PHONE_NOTE_TIMES = collections.deque(maxlen=30)
+
+def _markup_safe(text, limit):
+    text = str(text or '')[:limit]
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+def show_phone_notification(note):
+    """A notification from the phone, as a desktop notification: a message, or who is calling
+    (that one stays until the call ends). `removed` closes the one shown for that key."""
+    key = str(note.get('key', ''))[:300]
+    with _PHONE_NOTES_LOCK:
+        shown = _PHONE_NOTES.get(key)
+    if note.get('removed'):
+        if shown:
+            with _PHONE_NOTES_LOCK:
+                _PHONE_NOTES.pop(key, None)
+            subprocess.run(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.Notifications',
+                            '--object-path', '/org/freedesktop/Notifications',
+                            '--method', 'org.freedesktop.Notifications.CloseNotification', str(shown)],
+                           capture_output=True, timeout=3)
+        return {"status": "ok"}
+    now = time.time()
+    if len(_PHONE_NOTE_TIMES) == _PHONE_NOTE_TIMES.maxlen and now - _PHONE_NOTE_TIMES[0] < 60:
+        return {"status": "error", "message": "Too many notifications"}      # 30 a minute at most
+    _PHONE_NOTE_TIMES.append(now)
+    app = str(note.get('app') or 'Phone')[:60]
+    title = _markup_safe(note.get('title'), 200)
+    text = _markup_safe(note.get('text'), 1000)
+    call = note.get('category') == 'call'
+    cmd = ['notify-send', '--print-id', '-a', f'{app} (phone)',
+           '-i', 'call-start' if call else 'smartphone']
+    if call:
+        cmd += ['-u', 'critical']               # stays up while it rings; closed when the call ends
+    if shown:
+        cmd += ['-r', str(shown)]               # an update of one already shown
+    cmd += [title or app, text]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return {"status": "error", "message": "No notification service (nobody logged in?)"}
+    if out.isdigit():
+        with _PHONE_NOTES_LOCK:
+            _PHONE_NOTES[key] = int(out)
+            while len(_PHONE_NOTES) > 200:
+                _PHONE_NOTES.popitem(last=False)
+    return {"status": "ok"}
+
+def handle_telephony_call_state(state, generic_notice=True):
     global telephony_state
     state = (state or '').strip().lower()
     with telephony_lock:
@@ -3157,7 +3193,8 @@ def handle_telephony_call_state(state):
                         subprocess.Popen(['notify-send', '-i', 'call-start', '-a', 'Orbit', 'Incoming call', f'Paused playback on {len(playing)} media player(s)'], stderr=subprocess.DEVNULL)
                     except Exception:
                         pass
-                elif state == "ringing":
+                elif state == "ringing" and generic_notice:
+                    # without notification forwarding, at least say that the phone rings
                     try:
                         subprocess.Popen(['notify-send', '-i', 'call-start', '-a', 'Orbit', 'Incoming call', 'Phone is ringing'], stderr=subprocess.DEVNULL)
                     except Exception:
@@ -4183,17 +4220,26 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             if not client_info:
                 self.send_json({"error": "unauthorized", "message": "Pairing required"}, status=401)
                 return
-            with auth_mgr.lock:
-                if auth_mgr.current_session and auth_mgr.current_session["status"] == "pending":
-                    now = time.time()
-                    if now <= auth_mgr.current_session["expires_at"]:
-                        remaining = int(auth_mgr.current_session["expires_at"] - now)
-                        session_copy = dict(auth_mgr.current_session)
-                        session_copy["id"] = session_copy.get("session_id")
-                        session_copy["remaining_seconds"] = max(1, remaining)
-                        self.send_json({"has_challenge": True, "challenge": session_copy})
-                        return
-            self.send_json({"has_challenge": False})
+            self.send_json(current_challenge_reply())
+            return
+
+        elif path == '/api/phone/sync':
+            # Everything the app's open screen needs, in one request instead of one each:
+            # ?parts=challenge,status,media (the phone asks for what its panel shows)
+            cfg = load_config()
+            client_info, token = authenticate_client(self, cfg)
+            if not client_info:
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            parts = set(qs.get('parts', [''])[0].split(','))
+            reply = {"status": "ok", "keep_awake": keep_awake_active()}
+            if 'challenge' in parts:
+                reply['challenge'] = current_challenge_reply()
+            if 'status' in parts:
+                reply['pc'] = get_pc_system_status()
+            if 'media' in parts:
+                reply['media'] = get_mpris_status()
+            self.send_json(reply)
             return
 
         # 5. KDE Connect APIs
@@ -4386,6 +4432,9 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             client_info, token = authenticate_client(self, cfg)
             if not client_info:
                 self.send_json({"error": "unauthorized"}, status=401)
+                return
+            if graphical_session() is None:
+                self.send_json({"status": "error", "message": "Nobody is logged in on the computer yet."}, status=409)
                 return
             data = capture_pc_screenshot()
             if data:
@@ -5378,8 +5427,12 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 # Over the internet a leaked token must not be able to switch the computer off
                 self.send_json({"status": "error", "message": "Restart, shut down and sleep only work over Wi-Fi."}, status=403)
                 return
+            session = graphical_session()
+            if act in ('lock', 'unlock') and session is None:
+                self.send_json({"status": "error", "message": "Nobody is logged in on the computer yet."}, status=409)
+                return
             if act == 'lock':
-                subprocess.Popen(['loginctl', 'lock-session'])
+                subprocess.Popen(['loginctl', 'lock-session', session])
                 try:
                     subprocess.run(['qdbus6', 'org.freedesktop.ScreenSaver', '/ScreenSaver', 'org.freedesktop.ScreenSaver.Lock'], stderr=subprocess.DEVNULL)
                 except Exception:
@@ -5413,7 +5466,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                     return
 
                 # Unlock session via loginctl and ScreenSaver D-Bus
-                subprocess.Popen(['loginctl', 'unlock-session'])
+                subprocess.Popen(['loginctl', 'unlock-session', session])
                 try:
                     subprocess.run(['qdbus6', 'org.freedesktop.ScreenSaver', '/ScreenSaver', 'org.freedesktop.ScreenSaver.SetActive', 'false'], stderr=subprocess.DEVNULL)
                 except Exception:
@@ -5470,6 +5523,15 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             res = kill_processes(pids, force=bool(body.get('force')))
             self.send_json({"status": "ok" if res['killed'] else "error", **res})
 
+        # Phone notifications shown on the desktop (and taken away when they go on the phone)
+        elif path == '/api/phone/notification':
+            cfg = load_config()
+            client_info, token = authenticate_client(self, cfg)
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json(show_phone_notification(body if isinstance(body, dict) else {}))
+
         # 9b. Telephony / Call Event (Auto-pause media on call)
         elif path == '/api/telephony/call':
             cfg = load_config()
@@ -5478,7 +5540,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             state = body.get('state', '').lower()
-            handle_telephony_call_state(state)
+            handle_telephony_call_state(state, generic_notice=not body.get('notifications'))
             self.send_json({"status": "ok", "state": state})
 
         # 10. File Staging for PC-to-Phone send (Local PC Only)
