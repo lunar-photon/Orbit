@@ -5367,22 +5367,10 @@ class WifiMotionMonitor:
                             # Physical RF dielectric scattering trigger (spatial delta ripple or main path ripple)
                             rf_motion = (spike > threshold) or (variance > threshold) or (d_spike > 1.2) or (d_var > 0.45)
 
-                            # Session activity check
-                            user_active = False
-                            try:
-                                sess = graphical_session()
-                                if sess:
-                                    out_idle = subprocess.run(['loginctl', 'show-session', sess, '-p', 'IdleHint'],
-                                                              capture_output=True, text=True, timeout=1).stdout
-                                    if 'IdleHint=no' in out_idle:
-                                        user_active = True
-                            except Exception:
-                                pass
-
-                            if rf_motion or user_active:
+                            if rf_motion:
                                 self.last_desk_motion_ts = now
                                 self.desk_presence_state = "occupied"
-                            elif (now - self.last_desk_motion_ts) < 30.0:
+                            elif (now - self.last_desk_motion_ts) < 15.0:
                                 self.desk_presence_state = "occupied"
                             else:
                                 self.desk_presence_state = "vacated"
@@ -6281,11 +6269,6 @@ class WalkAway:
             self.far = 0
             return False
 
-        # Laptop Wi-Fi MIMO desk radar: if user is physically seated at desk, do not consider away
-        if WIFI_MOTION.is_desk_occupied():
-            self.far = 0
-            return False
-
         # If confirmed far away by coordinates/fingerprint (> 50m) and Bluetooth is silent:
         apart = NEARBY.get('apart')
         if apart is not None and apart > 50:
@@ -6325,13 +6308,9 @@ class WalkAway:
                 if not self.away():
                     continue
 
-                # Extra proximity safeguard: if Bluetooth is heard or desk is occupied, do not lock
+                # Extra proximity safeguard: if Bluetooth is heard, do not lock
                 ble = ORBIT_BLE.phone_reading()
                 if ble.get('dbm') is not None and ble.get('age', 999) < 90:
-                    self.far = 0
-                    continue
-
-                if WIFI_MOTION.is_desk_occupied():
                     self.far = 0
                     continue
 
