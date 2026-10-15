@@ -66,6 +66,8 @@ public final class FindMy {
     private static final String PREF_HISTORY = "findmy_history";   // the computer's alerts, kept here
     static final String PREF_LOST = "findmy_lost";               // the computer is marked lost
 
+    static final String PREF_PHONE_LAST = "findmy_phone_last";
+
     private static final long EVERY_MS = 15 * 60_000L;
     private static final long MOVED_MIN_GAP_MS = 2 * 60_000L;
     private static final int LOW_BATTERY = 5;
@@ -86,7 +88,20 @@ public final class FindMy {
     }
 
     static boolean sharing(Context c) {
-        return prefs(c).getBoolean(PREF_SHARE, false) && hasLocation(c);
+        return prefs(c).getBoolean(PREF_SHARE, true) && hasLocation(c);
+    }
+
+    static JSONObject phoneLast(Context c) {
+        try {
+            String s = prefs(c).getString(PREF_PHONE_LAST, null);
+            return s == null ? null : new JSONObject(s);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    static void rememberPhone(Context c, JSONObject fix) {
+        if (fix != null) prefs(c).edit().putString(PREF_PHONE_LAST, fix.toString()).apply();
     }
 
     static boolean hasLocation(Context c) {
@@ -191,6 +206,7 @@ public final class FindMy {
         JSONArray fixes = queued(c);
         if (loc != null) {
             JSONObject f = fix(loc, reason);
+            rememberPhone(c, f);
             fixes.put(f);
             // the Wi-Fi around, placed by this fix when it's recent and good to 100 m
             JSONArray wifi = wifiAround(c);

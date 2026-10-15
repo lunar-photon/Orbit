@@ -19,7 +19,7 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="empty">Not located yet</div>
+<div id="empty">Locating…</div>
 <script src="leaflet/leaflet.js"></script>
 <script>
   // Orbit's Find my map: the computer (blue) and this phone (green), named, with a line between
@@ -30,9 +30,9 @@
     if (raw) cached = JSON.parse(raw);
   } catch (e) {}
 
-  const initLat = (cached && cached.laptop && cached.laptop.lat) ? cached.laptop.lat : 20.6;
-  const initLng = (cached && cached.laptop && cached.laptop.lng) ? cached.laptop.lng : 78.9;
-  const initZoom = (cached && cached.laptop && cached.laptop.lat) ? 17 : 4;
+  const initLat = (cached && cached.laptop && cached.laptop.lat) ? cached.laptop.lat : ((cached && cached.phone && cached.phone.lat) ? cached.phone.lat : 20.6);
+  const initLng = (cached && cached.laptop && cached.laptop.lng) ? cached.laptop.lng : ((cached && cached.phone && cached.phone.lng) ? cached.phone.lng : 78.9);
+  const initZoom = (cached && ((cached.laptop && cached.laptop.lat) || (cached.phone && cached.phone.lat))) ? 17 : 4;
 
   const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([initLat, initLng], initZoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);

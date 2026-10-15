@@ -168,6 +168,17 @@ def has_local_token(handler):
             name, _, value = part.strip().partition('=')
             if name == 'pc_local':
                 supplied = value
+    if not supplied:
+        auth = handler.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            supplied = auth[7:].strip()
+    if not supplied and hasattr(handler, 'path') and '?' in handler.path:
+        try:
+            q = parse_qs(urlparse(handler.path).query)
+            if 'ltok' in q:
+                supplied = q['ltok'][0]
+        except Exception:
+            pass
     return bool(supplied) and hmac.compare_digest(supplied, LOCAL_TOKEN)
 
 def get_laptop_id():
@@ -7083,8 +7094,8 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             if (self.client_address[0] in ('127.0.0.1', '::1') and not is_tunnel_request(self)
                     and LOCAL_TOKEN and hmac.compare_digest(ltok, LOCAL_TOKEN)):
                 self.send_response(303)
-                self.send_header('Set-Cookie', f'pc_local={LOCAL_TOKEN}; HttpOnly; SameSite=Strict; Path=/')
-                self.send_header('Location', '/findmy')
+                self.send_header('Set-Cookie', f'pc_local={LOCAL_TOKEN}; HttpOnly; SameSite=Lax; Path=/')
+                self.send_header('Location', f'/findmy?ltok={quote(ltok)}')
                 self.end_headers()
             else:
                 self.send_error(403)
@@ -7140,9 +7151,9 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             self.serve_file(os.path.join(FINDMY_PHOTOS, name), 'image/jpeg')
             return
         elif path == '/api/findmy/laptop':
-            # The phone asks where this computer is: a fresh look, and where it was last found
+            # The phone or local computer asks where this computer is: a fresh look, and where it was last found
             client_info, token = authenticate_client(self, load_config())
-            if not client_info or client_info.get('local'):
+            if not client_info:
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             found, ssid, seen = laptop_locate(rescan=qs.get('fresh', [''])[0] == '1')

@@ -148,10 +148,12 @@ public class FindMyActivity extends Activity {
         swPcPhoto.setOnClickListener(v -> setComputer("wrong_password_photo", swPcPhoto.isChecked()));
 
         laptop = FindMy.laptopLast(this);
+        phoneFix = FindMy.phoneLast(this);
         showLaptop(null);
         showAlerts();
         findMe();
         FindMy.reportCapabilities(this);
+        FindMy.report(this, "requested");
         locate(true);
         openPhotoFrom(getIntent());
     }
@@ -278,7 +280,8 @@ public class FindMyActivity extends Activity {
                 try {
                     phoneFix = new JSONObject().put("lat", got.getLatitude()).put("lng", got.getLongitude())
                             .put("acc", got.hasAccuracy() ? got.getAccuracy() : 20);
-                    showOnMap();
+                    FindMy.rememberPhone(this, phoneFix);
+                    showLaptop(null);
                 } catch (Exception ignored) { }
             });
         }, "find-me").start();
@@ -309,7 +312,7 @@ public class FindMyActivity extends Activity {
                 }
                 showAlerts();                 // absorbLaptop kept the computer's alerts here
                 String ssid = r.optString("ssid", "");
-                showLaptop(now != null ? null : ("Online" + (ssid.isEmpty() ? "" : " on " + ssid) + ", somewhere this phone hasn't been"));
+                showLaptop(now != null ? null : (laptop != null && laptop.has("lat") ? null : ("Online" + (ssid.isEmpty() ? "" : " on " + ssid) + ", somewhere this phone hasn't been")));
             });
         });
     }
@@ -321,8 +324,10 @@ public class FindMyActivity extends Activity {
             String ssid = laptop.optString("ssid", "");
             if (!ssid.isEmpty()) sb.append(" · ").append(ssid);
             sb.append(" · ±").append(Math.round(laptop.optDouble("acc", 30))).append(" m");
+        } else if (phoneFix != null && phoneFix.has("lat")) {
+            sb.append("Phone located · Locating computer…");
         } else {
-            sb.append("Not located yet: it learns places from this phone's location, so turn on Share location in Settings");
+            sb.append("Locating phone & computer…");
         }
         if (note != null) sb.append("\n").append(note);
         tvSeen.setText(sb.toString());

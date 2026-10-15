@@ -704,18 +704,38 @@ function ago(t) {
 const reasons = { periodic: 'regular check-in', moved: 'it moved', requested: 'you asked',
   low_battery: 'battery nearly flat: last report before it dies', sim_changed: 'its SIM changed', boot: 'it started up' };
 
+const urlParams = new URLSearchParams(window.location.search);
+const ltokParam = urlParams.get('ltok');
+if (ltokParam) {
+  try { localStorage.setItem('orbit_ltok', ltokParam); } catch (e) {}
+}
+const savedToken = (() => {
+  try { return localStorage.getItem('orbit_ltok') || ''; } catch (e) { return ''; }
+})();
+
 async function api(path, body) {
-  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
-  const r = await fetch(path, { credentials: 'same-origin', ...opt });
+  const headers = { 'Content-Type': 'application/json' };
+  const tok = ltokParam || savedToken;
+  if (tok) {
+    headers['X-Local-Token'] = tok;
+    headers['Authorization'] = 'Bearer ' + tok;
+  }
+  const opt = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) };
+  let url = path;
+  if (tok && !url.includes('ltok=')) {
+    url += (url.includes('?') ? '&' : '?') + 'ltok=' + encodeURIComponent(tok);
+  }
+  const r = await fetch(url, { credentials: 'same-origin', ...opt });
   if (r.status === 401) throw new Error('This page has to be opened from Orbit on this computer.');
   return r.json();
 }
 
 function show(v) {
   if (v && v.last) saveCachedLocation(v);
-  const last = v.last;
+  const cached = loadCachedLocation();
+  const last = (v && v.last) ? v.last : (cached && cached.last ? cached.last : null);
   if (!last) {
-    $('seen').textContent = 'No location yet. Turn on "Share location with this computer" in Orbit on the phone.';
+    $('seen').textContent = 'Locating phone…';
   } else {
     $('seen').textContent = 'Seen ' + ago(last.t) + (reasons[last.reason] ? ' · ' + reasons[last.reason] : '');
     $('acc').textContent = last.acc ? Math.round(last.acc) + ' m' : '–';
@@ -729,11 +749,12 @@ function show(v) {
       } else {
         dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
       }
-      const pts = (v.trail || []).map(p => [p.lat, p.lng]);
+      const rawTrail = (v && v.trail && v.trail.length) ? v.trail : (cached && cached.trail ? cached.trail : []);
+      const pts = rawTrail.map(p => [p.lat, p.lng]);
       if (trail) trail.setLatLngs(pts);
-      else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
+      else if (pts.length) trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
       dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-      const lp = v.laptop;
+      const lp = (v && v.laptop) ? v.laptop : (cached ? cached.laptop : null);
       if (lp) {
         const pl = [lp.lat, lp.lng];
         if (!pc) {
@@ -1503,7 +1524,7 @@ window.addEventListener('resize', () => {
 
 if (!isEmbedded) {
   const c = loadCachedLocation();
-  if (c && !dot) {
+  if (c) {
     show(c);
   }
   refresh();
