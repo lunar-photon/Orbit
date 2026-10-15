@@ -6118,8 +6118,7 @@ class WalkAway:
             self.tunnel_at = now
         else:
             self.lan_at = now
-            if self.far <= 1:
-                self.far = 0
+            if self.far == 0:
                 self.locked_episode = False
 
     def scan(self, likeness, phone_ap_count=0, common_count=0, strong_count=0):
@@ -6150,19 +6149,14 @@ class WalkAway:
             self.far += 1
 
     def away(self):
-        now = time.time()
         # Direct Bluetooth proximity overrides any Wi-Fi scan discrepancy
         ble = ORBIT_BLE.phone_reading()
         if ble.get('dbm') is not None and ble.get('age', 999) < 90:
             self.far = 0
             return False
 
-        # Active direct LAN communication within the last 75 seconds means phone is right on this network
-        if self.lan_at > 0 and now - self.lan_at < 75:
-            return False
-
         left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
-        return left_network or self.far >= 4
+        return left_network or self.far >= 2
 
     def loop(self):
         while True:
@@ -6177,12 +6171,10 @@ class WalkAway:
                 if is_pc_locked() is not False:          # locked already, or nobody logged in
                     self.locked_episode = True
                     continue
-                # Extra proximity safeguard before issuing session lock
+                # Extra proximity safeguard: if Bluetooth is heard, do not lock
                 ble = ORBIT_BLE.phone_reading()
                 if ble.get('dbm') is not None and ble.get('age', 999) < 90:
                     self.far = 0
-                    continue
-                if self.lan_at > 0 and time.time() - self.lan_at < 75:
                     continue
                 session = graphical_session()
                 subprocess.run(['loginctl', 'lock-session', session], timeout=5)
