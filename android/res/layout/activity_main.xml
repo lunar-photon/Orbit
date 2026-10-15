@@ -541,10 +541,11 @@
                             <Button android:id="@+id/btn_keep_awake" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_amber" android:drawableTop="@drawable/ic_o_coffee" android:drawableTint="@color/o_amber" android:text="Keep awake" />
                         </LinearLayout>
 
-                        <!-- the two cameras, side by side: watch the computer's, or be its webcam -->
+                        <!-- the two cameras, side by side (watch the computer's, or be its webcam), and Find my -->
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:baselineAligned="false" android:orientation="horizontal">
                             <Button android:id="@+id/btn_camera_view" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_pink" android:drawableTop="@drawable/ic_o_video" android:drawableTint="@color/o_pink" android:text="Desk view" />
                             <Button android:id="@+id/btn_phone_webcam" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_sky" android:drawableTop="@drawable/ic_o_camera" android:drawableTint="@color/o_sky" android:text="Orbit Cam" />
+                            <Button android:id="@+id/btn_find_my" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_violet" android:drawableTop="@drawable/ic_o_target" android:drawableTint="@color/o_violet" android:text="Find my" />
                         </LinearLayout>
                     </LinearLayout>
 

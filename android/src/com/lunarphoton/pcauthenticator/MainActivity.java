@@ -2203,6 +2203,10 @@ public class MainActivity extends Activity {
                 startActivity(intent);
             });
         }
+        View btnFindMy = findViewById(R.id.btn_find_my);
+        if (btnFindMy != null) {
+            btnFindMy.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, FindMyActivity.class)));
+        }
         View btnPhoneWebcam = findViewById(R.id.btn_phone_webcam);
         if (btnPhoneWebcam != null) {
             btnPhoneWebcam.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, WebcamActivity.class)));

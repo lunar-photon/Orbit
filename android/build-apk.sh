@@ -20,6 +20,8 @@ if [ -d "$REPO_DIR/src" ] && [ -d "$REPO_DIR/res" ]; then
     cp -r "$REPO_DIR/src/"* "$PROJECT/src/"
     cp -r "$REPO_DIR/res/"* "$PROJECT/res/"
     cp "$REPO_DIR/AndroidManifest.xml" "$PROJECT/AndroidManifest.xml"
+    rm -rf "$PROJECT/assets"
+    if [ -d "$REPO_DIR/assets" ]; then cp -r "$REPO_DIR/assets" "$PROJECT/assets"; fi
 fi
 
 echo "[1/6] Cleaning previous build..."
@@ -35,6 +37,7 @@ echo "[3/6] Linking resources and generating R.java..."
     -o "$BUILD_DIR/unaligned.apk" \
     --java "$BUILD_DIR/gen" \
     "$BUILD_DIR/compiled_res/res.zip" \
+    $( [ -d "$PROJECT/assets" ] && echo -A "$PROJECT/assets" ) \
     --auto-add-overlay
 
 echo "[4/6] Compiling Java source code..."
@@ -86,7 +89,8 @@ if [ -f "$SIGNED_APK" ]; then
     echo "Deployed to:"
     for t in "${TARGETS[@]}"; do
         if [ -d "$(dirname "$t")" ]; then
-            cp -f "$SIGNED_APK" "$t" && echo "  $t"
+            # copied whole, then renamed into place: the phone's updater never sees half a file
+            cp -f "$SIGNED_APK" "$t.part" && mv -f "$t.part" "$t" && echo "  $t"
         fi
     done
     echo "=================================================="

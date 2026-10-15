@@ -50,6 +50,12 @@ public class WebcamActivity extends Activity {
 
     private TextureView preview;
     private TextView tvStatus, tvTarget, tvError;
+    private View shutter, pausedCover, dot;
+    private TextView tvAction;
+    private android.widget.ImageView ivAction;
+    private boolean paused;                      // you paused it with the Live pill
+    private int side = -1;                       // the landscape side chosen from the motion sensor
+    private android.view.OrientationEventListener tilt;
     private HandlerThread cameraThread;
     private Handler cameraHandler;
     private CameraDevice camera;
@@ -64,24 +70,70 @@ public class WebcamActivity extends Activity {
     private static final long DIM_AFTER_MS = 3000, BRIGHT_FOR_MS = 5000;
     private final Handler ui = new Handler(android.os.Looper.getMainLooper());
     private final Runnable dim = () -> setDimmed(true);
+    private int streamTurn = -1;                // the screen's rotation the picture was started for
+    private boolean waitingForLandscape;        // started while still upright: begins once sideways
+    private final android.hardware.display.DisplayManager.DisplayListener turned =
+            new android.hardware.display.DisplayManager.DisplayListener() {
+        @Override public void onDisplayAdded(int id) { }
+        @Override public void onDisplayRemoved(int id) { }
+        @Override public void onDisplayChanged(int id) {
+            int r = getWindowManager().getDefaultDisplay().getRotation();
+            if (streaming && r != streamTurn) { stopStreaming(); startStreaming(); }    // turned over
+            else if (!streaming && waitingForLandscape && isLandscape()) startStreaming();
+        }
+    };
+
+    /** Is the screen sideways right now (its size follows the turn; works on tablets too)? */
+    private boolean isLandscape() {
+        android.graphics.Point size = new android.graphics.Point();
+        getWindowManager().getDefaultDisplay().getRealSize(size);
+        return size.x > size.y;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_webcam);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        // the picture's orientation is set when streaming starts: keep the screen as it is
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LOCKED);
+        // Landscape, like a webcam: the computer gets a wide picture that fills its camera.
+        // Either way round; turning the phone over restarts the picture the right way up.
+        // The motion sensor picks the side even with auto-rotate off (some phones don't let
+        // the system's "sensor landscape" through the rotation lock)
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        tilt = new android.view.OrientationEventListener(this) {
+            @Override public void onOrientationChanged(int deg) {
+                if (deg == ORIENTATION_UNKNOWN) return;
+                int want = deg >= 60 && deg <= 120 ? ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                        : deg >= 240 && deg <= 300 ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE : -1;
+                if (want != -1 && want != side) {        // upright or flat: stay on the side it's on
+                    side = want;
+                    setRequestedOrientation(want);
+                }
+            }
+        };
         preview = findViewById(R.id.tv_webcam_preview);
         tvStatus = findViewById(R.id.tv_webcam_status);
         tvTarget = findViewById(R.id.tv_webcam_target);
         tvError = findViewById(R.id.tv_webcam_error);
         findViewById(R.id.btn_webcam_back).setOnClickListener(v -> finish());
-        Button stop = findViewById(R.id.btn_webcam_stop);
-        stop.setOnClickListener(v -> {
-            if (streaming) { stopStreaming(); stop.setText("Start"); }
-            else { startStreaming(); stop.setText("Stop"); }
+        pausedCover = findViewById(R.id.tv_webcam_paused);
+        dot = findViewById(R.id.v_webcam_dot);
+        tvAction = findViewById(R.id.tv_webcam_action);
+        ivAction = findViewById(R.id.iv_webcam_action);
+        shutter = findViewById(R.id.btn_webcam_stop);
+        shutter.setOnClickListener(v -> {
+            if (streaming || waitingForLandscape) {
+                paused = true;
+                waitingForLandscape = false;
+                stopStreaming();
+                setStatus("Paused", R.color.o_text_3);
+            } else {
+                paused = false;
+                startStreaming();
+            }
+            showShutter();
         });
+        hideSystemBars();
         findViewById(R.id.btn_webcam_switch).setOnClickListener(v -> {
             front = !front;
             getSharedPreferences("pc_auth_prefs", MODE_PRIVATE).edit().putBoolean(PREF_FRONT, front).apply();
@@ -97,16 +149,8 @@ public class WebcamActivity extends Activity {
             quality.setText(sharp ? "1080p" : "720p");
             if (streaming) { stopStreaming(); startStreaming(); }
         });
-        // the picture's corners rounded like its frame
-        final float radius = 17 * getResources().getDisplayMetrics().density;
-        preview.setOutlineProvider(new android.view.ViewOutlineProvider() {
-            @Override public void getOutline(View v, android.graphics.Outline o) {
-                o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius);
-            }
-        });
-        preview.setClipToOutline(true);
         PairedDevice active = DeviceManager.getActiveDevice(this);
-        tvTarget.setText(active != null ? "Your camera, beamed to " + active.hostname : "No computer paired");
+        tvTarget.setText(active != null ? "to " + active.hostname : "No computer paired");
     }
 
     /** A tap anywhere (buttons too) brightens a dimmed screen for a moment, to check the picture. */
@@ -119,6 +163,9 @@ public class WebcamActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        hideSystemBars();
+        if (tilt.canDetectOrientation()) tilt.enable();
+        if (paused) { showShutter(); return; }       // stays paused until you resume it
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
             return;
@@ -133,8 +180,22 @@ public class WebcamActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        ((android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE)).registerDisplayListener(turned, ui);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        ((android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE)).unregisterDisplayListener(turned);
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
+        tilt.disable();
+        waitingForLandscape = false;
         stopStreaming();            // the camera is the computer's only while this screen is open
     }
 
@@ -150,12 +211,16 @@ public class WebcamActivity extends Activity {
             tvError.setText(msg);
             tvError.setVisibility(View.VISIBLE);
             tvStatus.setText("Off");
-            tvStatus.setTextColor(getColor(R.color.o_text_2));
+            dot.setBackgroundTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.o_text_3)));
+            showShutter();
         });
     }
 
     private void startStreaming() {
         if (streaming) return;
+        // still upright for a moment after opening: wait until the screen has turned sideways
+        waitingForLandscape = !isLandscape();
+        if (waitingForLandscape) return;
         PairedDevice active = DeviceManager.getActiveDevice(this);
         if (active == null || !active.isPaired()) { showError("Pair a computer first."); return; }
         if (!DeviceManager.isWifiActive(this)) { showError("The phone webcam works over Wi-Fi only."); return; }
@@ -173,6 +238,7 @@ public class WebcamActivity extends Activity {
             width = size.getWidth();
             height = size.getHeight();
             int rotation = pictureRotation(cc);
+            streamTurn = getWindowManager().getDefaultDisplay().getRotation();
             fitPreview(rotation);
 
             // HEVC: the same picture at about half the data of H.264 (less Wi-Fi and battery),
@@ -187,6 +253,10 @@ public class WebcamActivity extends Activity {
                 fmt.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
                 fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
                 fmt.setInteger(MediaFormat.KEY_PRIORITY, 0);          // real time
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    fmt.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0);   // B-frames make it wait for later frames
+                    fmt.setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1);   // each keyframe decodes on its own
+                }
                 // plain video colour (limited range, BT.709), which the computer's GPU takes as
                 // is; some phones would otherwise send full-range "camera" colour
                 fmt.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
@@ -325,7 +395,7 @@ public class WebcamActivity extends Activity {
         previewSurface = null;
         if (cameraThread != null) cameraThread.quitSafely();
         cameraThread = null;
-        setStatus("Off", R.color.o_text_2);
+        setStatus("Off", R.color.o_text_3);
         runOnUiThread(() -> { ui.removeCallbacks(dim); setDimmed(false); });
     }
 
@@ -344,7 +414,38 @@ public class WebcamActivity extends Activity {
     }
 
     private void setStatus(String text, int color) {
-        runOnUiThread(() -> { tvStatus.setText(text); tvStatus.setTextColor(getColor(color)); });
+        runOnUiThread(() -> {
+            tvStatus.setText(text);
+            dot.setBackgroundTintList(android.content.res.ColorStateList.valueOf(getColor(color)));
+            showShutter();
+        });
+    }
+
+    /** The Live pill's action: Pause while the camera is on, Resume when it's off. */
+    private void showShutter() {
+        if (shutter == null) return;
+        boolean on = streaming || waitingForLandscape;
+        ivAction.setImageResource(on ? R.drawable.ic_o_pause : R.drawable.ic_o_play);
+        tvAction.setText(on ? "Pause" : "Resume");
+        shutter.setContentDescription(on ? "Pause the camera" : "Resume the camera");
+        pausedCover.setVisibility(paused && !on ? View.VISIBLE : View.GONE);
+    }
+
+    /** Full screen like a camera app: the status and navigation bars come back with a swipe. */
+    private void hideSystemBars() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+            android.view.WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.hide(android.view.WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
     }
 
     /** A size this camera delivers to both the preview and the encoder: 16:9 and closest to
@@ -402,8 +503,10 @@ public class WebcamActivity extends Activity {
             boolean tall = rotation == 90 || rotation == 270;
             float aspect = tall ? (float) height / width : (float) width / height;     // width / height
             int fw = frame.getWidth(), fh = frame.getHeight();
+            // fill the whole screen (the screen is wider than 16:9: a little of the top and
+            // bottom is cut off here; the computer still gets the whole picture)
             int w = fw, h = Math.round(fw / aspect);
-            if (h > fh) { h = fh; w = Math.round(fh * aspect); }
+            if (h < fh) { h = fh; w = Math.round(fh * aspect); }
             ViewGroup.LayoutParams lp = preview.getLayoutParams();
             lp.width = w;
             lp.height = h;

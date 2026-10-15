@@ -79,9 +79,9 @@ public class CameraActivity extends Activity {
         btnQuality = findViewById(R.id.btn_camera_quality);
 
         if (activeDevice != null && activeDevice.hostname != null) {
-            tvTarget.setText("Target: " + activeDevice.hostname + " (" + activeDevice.ip + ")");
+            tvTarget.setText("from " + activeDevice.hostname);
         } else {
-            tvTarget.setText("Target: No Orbited");
+            tvTarget.setText("No computer connected");
         }
 
         findViewById(R.id.btn_camera_back).setOnClickListener(v -> finish());
@@ -106,10 +106,10 @@ public class CameraActivity extends Activity {
         btnQuality.setOnClickListener(v -> {
             if ("smooth".equals(currentQuality)) {
                 currentQuality = "hd";
-                btnQuality.setText("Quality: HD 720p");
+                btnQuality.setText("HD · 720p");
             } else {
                 currentQuality = "smooth";
-                btnQuality.setText("Quality: smooth 480p");
+                btnQuality.setText("Smooth · 480p");
             }
             restartStream();
         });

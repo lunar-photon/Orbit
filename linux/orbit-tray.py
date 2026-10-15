@@ -2270,6 +2270,16 @@ class OrbitApp:
     def open_explorer(self):
         self.ensure_window().present(1)
 
+    def open_find_my(self):
+        """The Find my phone map, in the browser (the key becomes a local-only cookie there)."""
+        from urllib.parse import quote
+        tok = local_token()
+        if not tok:
+            notify("Find my phone", "The Orbit service isn't running.")
+            return
+        subprocess.Popen(["xdg-open", f"{DAEMON_URL}/findmy?ltok={quote(tok)}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     def window_status(self, text):
         if self.window is not None:
             self.window.files.set_status(text, C.DANGER)
@@ -2292,6 +2302,7 @@ class OrbitApp:
         self.act_browse = self.menu.addAction("Browse phone files", self.open_explorer)
         self.act_clip = self.menu.addAction("Send clipboard to phone", self.sync_clipboard)
         self.act_ring = self.menu.addAction("Ring phone", self._toggle_ring)
+        self.menu.addAction("Find my phone", self.open_find_my)
         # Orbit Cam's format, one at a time: Sharp suits current apps; Raw and Compatible are for
         # an app that doesn't see the camera or shows a broken picture
         self.cam_menu = self.menu.addMenu("Orbit Cam")

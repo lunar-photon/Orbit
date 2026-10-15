@@ -248,6 +248,8 @@ public class AuthService extends Service {
                 ticks++;
                 try {
                     checkWifiReturn();
+                    FindMy.tick(AuthService.this);       // location reports, battery, SIM
+                    AppUpdater.maybeCheck(AuthService.this);
                     if (ticks % 10 == 0 && CaptivePortalManager.isEnabled(AuthService.this)
                             && CaptivePortalManager.isAutoLoginOnWifi(AuthService.this)
                             && DeviceManager.isWifiActive(AuthService.this)
@@ -588,6 +590,16 @@ public class AuthService extends Service {
                                     if ("mark_read".equals(json.optString("action"))) {
                                         PhoneNotificationListener.markRead(AuthService.this, json.optString("key"));
                                     }
+                                } else if ("app_update".equals(event)) {
+                                    AppUpdater.check(AuthService.this, json.optString("sha256", null));
+                                } else if ("locate".equals(event)) {
+                                    FindMy.report(AuthService.this, "requested");
+                                } else if ("ble_beacon".equals(event)) {
+                                    FindMy.beacon(AuthService.this, json.optBoolean("on", true));
+                                } else if ("wifi_nearby".equals(event)) {
+                                    FindMy.findPhoneNearby(AuthService.this, json.optBoolean("on", true));
+                                } else if ("laptop_alert".equals(event)) {
+                                    FindMy.laptopAlert(AuthService.this, json);
                                 } else if ("check_in".equals(event)) {
                                     checkInWithComputer("live link");
                                 } else if ("incoming_file".equals(event)) {

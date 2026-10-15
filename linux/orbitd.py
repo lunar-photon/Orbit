@@ -15,6 +15,7 @@ import queue
 import secrets
 import hmac
 import hashlib
+import glob
 import random
 import shutil
 import mimetypes
@@ -40,6 +41,42 @@ def apk_file():
         if os.path.exists(path):
             return path
     return os.path.join(STATIC_DIR, 'Orbit.apk')
+_APK_PRINT = {}
+
+
+def apk_print():
+    """(sha256, size) of the app build handed out; the phone updates itself when it differs
+    from the one it runs (the version number never changes between builds)."""
+    path = apk_file()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, 0
+    key = (path, st.st_mtime, st.st_size)
+    if _APK_PRINT.get('key') != key:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(1 << 20), b''):
+                h.update(chunk)
+        _APK_PRINT.update(key=key, sha=h.hexdigest())
+    return _APK_PRINT['sha'], st.st_size
+
+
+def app_update_watch():
+    """A new app build installed here: tell the phone, which fetches and installs it."""
+    last = apk_print()[0]
+    while True:
+        time.sleep(20)
+        try:
+            sha, size = apk_print()
+            if sha and sha != last:
+                last = sha
+                sys.stderr.write(f"New phone app build ({size // 1024} KB): telling the phone\n")
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "app_update", "sha256": sha, "size": size}) + "\n")
+        except Exception as e:
+            sys.stderr.write(f"App update watch: {e}\n")
+
+
 STAGING_DIR = os.path.join(BASE_DIR, 'staging')
 os.makedirs(STAGING_DIR, exist_ok=True)
 
@@ -220,6 +257,7 @@ def authenticate_client(handler, cfg):
 
     client_info = paired[token]
     client_info['last_seen'] = time.time()
+    WALK_AWAY.contact(is_tunnel_request(handler))
     if not is_tunnel_request(handler):
         # Only a direct connection tells us where the phone is. Through the tunnel this would be
         # the phone's public mobile address, and the computer would then send it the token in clear.
@@ -1384,6 +1422,7 @@ class _PyteScreen:
 # takes a fraction of a second instead of seconds of CPU. ORBIT_VT=pyte forces the fallback.
 import ctypes
 import operator
+import time
 _first = operator.itemgetter(0)
 _VT_ABI = 1
 
@@ -1559,6 +1598,7 @@ def _render_line(line, width):
 
 
 ALT_FRAME_INTERVAL = 0.3      # seconds of recorded time between snapshots of a full-screen app
+_SCROLL_ANSWER = 0.4          # seconds an app has to redraw after a scroll input
 ALT_HISTORY_MAX = 5000
 
 
@@ -1592,6 +1632,18 @@ def _same_layout(a, b):
 _STATUS_MAX = 6
 # Hints an app shows while you've scrolled back inside it (Claude Code's fullscreen view)
 _SCROLLED_HINT = re.compile(r'jump to bottom|ctrl\+end\b', re.I)
+
+def _shift(before, now):
+    """How far a screen's text moved between two frames (lists of plain rows): d > 0 when it
+    moved up d rows (newer text came in below), d < 0 when it moved down, 0 if it stayed,
+    None if nothing lines up."""
+    best, best_hits = None, 2
+    for d in range(-40, 41):
+        hits = sum(1 for i, p in enumerate(now) if p.strip() and 0 <= i + d < len(before) and before[i + d] == p)
+        if hits > best_hits:
+            best, best_hits = d, hits
+    return best
+
 
 def _scrolled_back(rows):
     """Does the bottom of the screen (just above the app's own input/status area) show it?"""
@@ -1740,6 +1792,10 @@ class TermRecording:
         self.alt_last_seen = []       # the previous screen's body, scrolled or not
         self.input_marks = False      # the recording notes scroll inputs (orbit-term)
         self.scroll_input_until = -1.0   # recorded time until which a redraw follows a scroll input
+        self.scroll_probe = None      # (recorded time, screen before, direction) of an unanswered scroll input
+        self.hint_seen = False        # the app says when it's scrolled back ("Jump to bottom")
+        self.mid_redraw = False       # the last output filled a whole read: more of it follows
+        self.last_data_at = 0.0       # wall time the recording last grew
         self.alt_status_seen = {}     # masked row -> scrolls it stayed pinned through
         self.alt_rows, self.alt_rows_width = None, 0   # rendered rows of the current screen
         self.log_backed = False       # Claude Code with its log: the phone needs no stitched history
@@ -1780,6 +1836,7 @@ class TermRecording:
         self.alt_frames, self.alt_footer, self.alt_prev_body, self.alt_pos = [], [], [], 0
         self.alt_latest_rows = []
         self.alt_scrolled = False
+        self.scroll_probe = None
         self.alt_last_seen = []
         self.view, self.views = 'main', {}
         self.alt_prev_raw, self.alt_status_seen = [], {}
@@ -1831,8 +1888,93 @@ class TermRecording:
                 self.alt_rows[y] = scr.rows(y, y + 1)[0][:2]
         return self.alt_rows
 
+    # Claude Code with its log isn't stitched, but you can still scroll back in it on the
+    # computer; the phone then keeps the latest screen instead of following. Claude Code says
+    # so itself: "Jump to bottom (ctrl+End) ↓" above its input box for exactly as long as it's
+    # scrolled back. Without that hint (another version), the recorded scroll inputs and the
+    # screen's answer tell: scrolling up moves it, scrolling down that moves nothing means
+    # you're at the bottom again.
+    def _screen_body(self):
+        return [plain for plain, _ in _split_footer(list(self._alt_rows()))[0]]
+
+    def _scroll_input(self, direction):
+        if not self.log_backed or not self._tui():
+            return
+        if self.scroll_probe and self.clock - self.scroll_probe[0] > _SCROLL_ANSWER:
+            self._scroll_answered(False)
+        if self.scroll_probe:                  # several wheel steps before the screen answers
+            self.scroll_probe = (self.scroll_probe[0], self.scroll_probe[1], direction)
+        else:
+            self.scroll_probe = (self.clock, self._screen_body(), direction)
+
+    def _check_scroll(self, late=False):
+        """After output (or a quiet spell, `late`): settle an unanswered scroll input."""
+        if not self.scroll_probe or not self._tui():
+            self.scroll_probe = None
+            return
+        if late or self.clock - self.scroll_probe[0] > _SCROLL_ANSWER:
+            self._scroll_answered(0)
+            return
+        before, now = self.scroll_probe[1], self._screen_body()
+        # a scroll moves (nearly) every row; a spinner or timer changes one or two
+        if sum(1 for a, b in zip(before, now) if a != b) + abs(len(before) - len(now)) > 3:
+            self._scroll_answered(_shift(before, now))
+
+    def _scroll_answered(self, shift):
+        """shift: how the text moved (_shift): > 0 up (newer text below: scrolled down, or new
+        output), < 0 down (older text above: scrolled up), None jumped, 0 didn't move."""
+        direction = self.scroll_probe[2]
+        self.scroll_probe = None
+        if direction == 'bottom' or (direction == 'down' and shift == 0):
+            self.alt_scrolled = False          # ctrl+End, or down and nothing moved: at the bottom
+        elif direction in ('up', 'top') and (shift is None or shift < 0):
+            self.alt_scrolled = True
+
+    def _caught_up(self):
+        """Scrolled back, is the screen at (or past) the latest one again? Yes when it shows the
+        end of that screen's text (left out: the last rows, where a spinner or timer ticks)."""
+        latest = [plain for plain, _ in _split_footer(self.alt_latest_rows)[0]][:-4]
+        text_rows = [i for i, p in enumerate(latest) if p.strip()][-3:]
+        if len(text_rows) < 3:
+            return False
+        tail, at = [latest[i] for i in text_rows], text_rows[0]
+        now = self._screen_body()
+        # where it was or higher up (new text pushed it up); scrolled back, it shows lower down
+        return any([now[i + k - at] for k in text_rows if 0 <= i + k - at < len(now)] == tail
+                   for i in range(0, at + 1))
+
+    def caught_up_with(self, newest):
+        """Claude Code: the screen shows the end of the newest message in the log (`newest`,
+        normalised words): you're back at the bottom."""
+        with self.lock:
+            if not self.alt_scrolled or self.hint_seen or not newest or not self._tui():
+                return
+            for plain in self._screen_body():
+                words = _norm_words(plain)
+                if len(words) >= 20 and newest.endswith(words):
+                    self.alt_scrolled = False
+                    return
+
     def _snapshot_alt(self):
-        if not self._tui() or self.log_backed:
+        if not self._tui():
+            return
+        if self.log_backed:
+            rows = list(self._alt_rows())
+            if _scrolled_back(rows):
+                self.hint_seen = self.alt_scrolled = True
+                self.scroll_probe = None
+            elif self.hint_seen:
+                if not self.mid_redraw:            # half a redraw may not have drawn the hint yet
+                    self.alt_scrolled = False
+                self.scroll_probe = None
+            elif self.alt_scrolled and not self.scroll_probe and self._caught_up():
+                self.alt_scrolled = False
+            if not self.alt_scrolled and not self.scroll_probe:
+                rows = list(self._alt_rows())
+                while rows and not rows[-1][0]:
+                    rows.pop()
+                self.alt_latest_rows = rows
+            self.last_snap = self.clock
             return
         frame = list(self._alt_rows())
         while frame and not frame[-1][0]:
@@ -1959,7 +2101,11 @@ class TermRecording:
                 tf.seek(self.timing_pos)
                 chunk = tf.read()
                 if not chunk:
+                    if self.scroll_probe and time.time() - self.last_data_at > _SCROLL_ANSWER:
+                        with self.lock:
+                            self._check_scroll(late=True)    # the app never redrew: nothing moved
                     return True
+                self.last_data_at = time.time()
                 lines = chunk.split(b'\n')
                 consumed = 0
                 for raw in lines[:-1]:        # last element is an unfinished line
@@ -1977,6 +2123,8 @@ class TermRecording:
                         except ValueError:
                             pass
                         self.scroll_input_until = self.clock + 1.0
+                        with self.lock:
+                            self._scroll_input(parts[3])
                     elif kind == 'O' and len(parts) >= 3:
                         n = int(parts[2])
                         try:
@@ -1988,10 +2136,15 @@ class TermRecording:
                         if len(data) < n:     # log not flushed yet: retry this entry next time
                             break
                         self.log_pos += n
+                        self.mid_redraw = n >= 4095
                         with self.lock:
                             if self.main is None:
                                 self.main = self._new_screen(True)
+                            if self.scroll_probe and self.clock - self.scroll_probe[0] > _SCROLL_ANSWER:
+                                self._check_scroll(late=True)       # this output came too late to be the answer
                             self._feed_text(self.decoder.decode(data))
+                            if self.scroll_probe:
+                                self._check_scroll()
                             if self._tui() and self.clock - self.last_snap >= ALT_FRAME_INTERVAL:
                                 self._snapshot_alt()
                     elif kind == 'S' and len(parts) >= 5 and parts[2] == 'SIGWINCH':
@@ -2078,6 +2231,20 @@ class TermRecording:
                 prev_full = len(text_of(y).rstrip()) >= cols - 12
                 parts.append(text)
             return ''.join(parts).strip('\n')
+
+    def phone_screen(self):
+        """live_screen(), but while you're reading back in the app on the computer, the latest
+        screen it showed (with the live input box), so the phone doesn't scroll along."""
+        rows = self.live_screen()
+        with self.lock:
+            if rows is not None and self.log_backed:
+                hint = _scrolled_back(rows)
+                if hint or (self.hint_seen and not self.mid_redraw):
+                    self.hint_seen, self.alt_scrolled = True, hint
+            if rows is None or not self.alt_scrolled or not self.alt_latest_rows:
+                return rows
+            footer = _split_footer(rows)[1]
+            return _split_footer(self.alt_latest_rows)[0] + footer
 
     def live_screen(self):
         """(plain, ansi) rows of the full-screen app's current screen, trailing blanks dropped."""
@@ -2478,7 +2645,9 @@ def claude_reply_lines(rec, log):
     """The current screen exactly as it is, and above it the earlier messages from the log:
     every message from the log up to the first one the screen shows. If the screen starts
     partway into a message, that message comes from the log too, so none of it is lost."""
-    rows = rec.live_screen()
+    newest = next((t for k, t in reversed(log.items) if k in ('user', 'text')), None)
+    rec.caught_up_with(_norm_words(newest) if newest else None)
+    rows = rec.phone_screen()
     if rows is None:
         return None
     items = log.items
@@ -3683,7 +3852,9 @@ class OrbitCam:
         pix, (w, h) = _cam_format()
         if pix == 'mjpeg':
             # JPEG frames, copied in as they are (no decoding here)
-            inp = ['-f', 'mjpeg', '-i', 'pipe:0', '-c:v', 'copy']
+            # no look-ahead: probing would queue frames for good, a lag that never drains
+            inp = ['-probesize', '32', '-analyzeduration', '0', '-fflags', 'nobuffer', '-flags', 'low_delay',
+                   '-f', 'mjpeg', '-i', 'pipe:0', '-c:v', 'copy']
         else:
             inp = ['-f', 'rawvideo', '-pix_fmt', pix, '-video_size', f'{w}x{h}', '-framerate', '30',
                    '-i', 'pipe:0', '-c:v', 'rawvideo']
@@ -3698,8 +3869,10 @@ class OrbitCam:
             n = self.sink.stdin.write(view)
             view = view[n:]
 
-    def write(self, frame):
+    def write(self, frame, standby=False):
         with self.lock:
+            if standby and self.live:          # the phone's video took over meanwhile
+                return False
             if not self._sink_ready():
                 return False
             try:
@@ -3788,8 +3961,8 @@ class OrbitCam:
                 if not frames and webcam_device():
                     frames = _standby_frames() or []
                 if frames and not self.live:
-                    self.write(frames[n % len(frames)])
-                    n += 1
+                    if self.write(frames[n % len(frames)], standby=True):
+                        n += 1
             except Exception as e:
                 sys.stderr.write(f"Orbit Cam standby: {e}\n")
             time.sleep(1 / STANDBY_FPS if frames else 15)
@@ -3810,9 +3983,10 @@ def _decode_ladder(fmt, rot):
     Each is (name, ffmpeg command)."""
     pix, (w, h) = _cam_format()
     gpu = _vaapi_device()
-    # Fast start. (HEVC loses its start-up info with nobuffer / low_delay, so not for it.)
-    start = ['-probesize', '32', '-analyzeduration', '0'] + \
-            (['-fflags', 'nobuffer', '-flags', 'low_delay'] if fmt == 'h264' else [])
+    # Fast start, and no waiting: without low_delay the decoder holds ~17 frames (~0.6 s)
+    # before passing one on. (nobuffer makes HEVC drop frames, so H.264 only.)
+    start = ['-probesize', '32', '-analyzeduration', '0', '-flags', 'low_delay'] + \
+            (['-fflags', 'nobuffer'] if fmt == 'h264' else [])
     # Raw H.264 and HEVC have no clock: frames pass straight through as they come
     def cmd(hw, vf, enc):
         return (['ffmpeg', '-hide_banner', '-loglevel', 'warning'] + hw + start + ['-f', fmt, '-i', 'pipe:0',
@@ -3828,17 +4002,29 @@ def _decode_ladder(fmt, rot):
         fit = (f'format=nv12|vaapi,hwupload,{turn}scale_vaapi=w={w}:h={h}:force_original_aspect_ratio=decrease'
                f':format={"nv12" if pix == "mjpeg" else pix},pad_vaapi=w={w}:h={h}:x=(ow-iw)/2:y=(oh-ih)/2')
         if pix == 'mjpeg':
-            enc, tail = ['-c:v', 'mjpeg_vaapi', '-global_quality', '85', '-f', 'mjpeg'], ''
+            # 95: the camera adds no visible loss of its own (~53 dB over what the phone sent)
+            enc, tail = ['-c:v', 'mjpeg_vaapi', '-global_quality', '95', '-f', 'mjpeg'], ''
         else:
             enc, tail = ['-pix_fmt', pix, '-f', 'rawvideo'], f',hwdownload,format={pix}'
         relabel = 'setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709,'
         ladder += [('gpu', cmd(hw, fit + tail, enc)), ('gpu-range', cmd(hw, relabel + fit + tail, enc))]
     turn = {90: 'transpose=1,', 180: 'transpose=1,transpose=1,', 270: 'transpose=2,'}.get(rot, '')
     fit = f'{turn}scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2'
-    enc = ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '5', '-f', 'mjpeg'] if pix == 'mjpeg' \
+    enc = ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '2', '-f', 'mjpeg'] if pix == 'mjpeg' \
         else ['-pix_fmt', pix, '-f', 'rawvideo']
     ladder.append(('cpu', cmd([], fit, enc)))
     return ladder
+
+def _stream_range(data, fmt):
+    """'pc' (full) or 'tv' (limited) range, from the start of a phone's stream; '' if unknown."""
+    try:
+        res = subprocess.run(['ffprobe', '-v', 'error', '-f', fmt, '-i', 'pipe:0', '-select_streams', 'v:0',
+                              '-show_entries', 'stream=color_range', '-of', 'csv=p=0'],
+                             input=data, capture_output=True, timeout=5)
+        return res.stdout.decode(errors='replace').strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+
 
 def stream_phone_webcam(handler, rot, codec='h264'):
     """Decode the phone's stream (H.264 or HEVC) into the camera until the phone stops. What
@@ -3855,6 +4041,7 @@ def stream_phone_webcam(handler, rot, codec='h264'):
     errpath = os.path.expanduser('~/.cache/orbit/orbit-cam.log')
     state = {'decoder': None, 'copier': None, 'picture': threading.Event(), 'way': None}
     held = bytearray()                         # everything so far, until a picture comes out
+    head = bytearray()                         # the stream's start, to read its colour range
 
     def launch(name, cmd):
         with open(errpath, 'wb') as errlog:
@@ -3864,12 +4051,16 @@ def stream_phone_webcam(handler, rot, codec='h264'):
         def copy():
             fd = dec.stdout.fileno()
             first = True
+            me = threading.current_thread()
             while True:
                 select.select([fd], [], [])       # wait for output before taking the camera
-                ORBIT_CAM.live = True
+                ORBIT_CAM.live = me               # this decoder owns the camera now
                 if not ORBIT_CAM.pass_through(fd):
-                    if first:
-                        ORBIT_CAM.live = False    # it ended without a picture: standby stays
+                    # it ended without a picture: standby again, unless the next way of
+                    # decoding has the camera already (clearing it then let a standby frame
+                    # into the middle of its first JPEG)
+                    if first and ORBIT_CAM.live is me:
+                        ORBIT_CAM.live = False
                     return
                 first = False
                 picture.set()                     # a real frame went in: this way works
@@ -3905,16 +4096,33 @@ def stream_phone_webcam(handler, rot, codec='h264'):
         subprocess.Popen(['notify-send', '-i', 'camera-web', '-a', 'Orbit', 'Orbit Cam on',
                           f'Your phone is the camera "{label}"'], stderr=subprocess.DEVNULL)
         sys.stderr.write(f"Orbit Cam: stream started ({fmt}, turn {rot}, {WEBCAM_MODE} {w}x{h})\n")
-        # the start of the latest stream, kept privately, to see why a phone's video won't decode
-        sample = open(os.open(os.path.expanduser('~/.cache/orbit/orbit-cam-last.' + fmt),
-                              os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb')
+        # the start of the latest stream, kept privately, to see why a phone's video won't
+        # decode (opened once video arrives, so an empty attempt doesn't wipe the last one)
+        sample = None
         for chunk in _request_chunks(handler):
             if received < 2 << 20:
+                if sample is None:
+                    sample = open(os.open(os.path.expanduser('~/.cache/orbit/orbit-cam-last.' + fmt),
+                                          os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'wb')
                 sample.write(chunk)
             received += len(chunk)
             confirmed = state['picture'].is_set()
             if not confirmed:
                 held.extend(chunk)
+            if head is not None and pix == 'mjpeg':
+                head.extend(chunk)
+                if len(head) >= 48 << 10:
+                    # A JPEG is full range, and the graphics chip can't stretch limited-range
+                    # video to it (blacks and whites come out grey): limited range goes the
+                    # CPU's way, which converts it
+                    start, head = bytes(head), None
+                    if _stream_range(start, fmt) == 'tv' and state['way'] != 'cpu':
+                        sys.stderr.write("Orbit Cam: limited-range video, converting on the CPU\n")
+                        ladder[:] = [x for x in ladder if x[0] == 'cpu']
+                        held[:] = start                # all so far, this chunk included
+                        if not next_way():
+                            return {"status": "error", "message": "This computer can't decode the phone's video."}
+                        continue
             dec = state['decoder']
             ok = True
             try:
@@ -3928,7 +4136,8 @@ def stream_phone_webcam(handler, rot, codec='h264'):
                 held.clear()                   # a picture: nothing more to keep
             elif not ok:
                 return {"status": "error", "message": "The decoder stopped."}
-        sample.close()
+        if sample:
+            sample.close()
         return {"status": "ok"}
     except (OSError, ValueError) as e:
         return {"status": "error", "message": f"Stream ended: {e}"}
@@ -4135,6 +4344,1006 @@ def notify_file_received(filename, filepath):
             subprocess.Popen(['xdg-open', downloads_dir])
     except Exception:
         pass
+
+# ==========================================
+# Find My: where the phone is, and where this computer is
+# ==========================================
+# The phone reports its location to this computer and to nothing else: when it moves, every
+# 15 minutes, when asked, and once more when its battery is nearly flat. Each report also
+# lists the Wi-Fi networks around it, so this computer learns, privately, where those networks
+# are. If the computer itself is taken somewhere the phone has been, the networks it sees there
+# place it on the map, with no outside location service (beaconDB has no coverage here).
+# Everything stays in ~/.local/share/orbit/findmy/ (this user only).
+import sqlite3
+import math
+from contextlib import closing
+
+FINDMY_DIR = os.path.expanduser('~/.local/share/orbit/findmy')
+FINDMY_DB = os.path.join(FINDMY_DIR, 'findmy.sqlite')
+FINDMY_PHOTOS = os.path.join(FINDMY_DIR, 'photos')
+FINDMY_KEEP_DAYS = 30
+_FINDMY_LOCK = threading.Lock()
+
+
+def _findmy_db():
+    os.makedirs(FINDMY_DIR, mode=0o700, exist_ok=True)
+    db = sqlite3.connect(FINDMY_DB, timeout=5)
+    try:
+        os.chmod(FINDMY_DB, 0o600)
+    except OSError:
+        pass
+    db.executescript('''
+        CREATE TABLE IF NOT EXISTS fixes (t REAL, lat REAL, lng REAL, acc REAL, alt REAL, speed REAL,
+            provider TEXT, reason TEXT, battery INTEGER, charging INTEGER, net TEXT);
+        CREATE INDEX IF NOT EXISTS fixes_t ON fixes(t);
+        CREATE TABLE IF NOT EXISTS wifi (bssid TEXT PRIMARY KEY, ssid TEXT, lat REAL, lng REAL,
+            weight REAL, seen INTEGER, last REAL, moving INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS events (t REAL, kind TEXT, detail TEXT);
+        CREATE TABLE IF NOT EXISTS laptop (t REAL, lat REAL, lng REAL, acc REAL, networks INTEGER, ssid TEXT);
+        CREATE TABLE IF NOT EXISTS fingerprints (t REAL, lat REAL, lng REAL, acc REAL, scan TEXT);
+    ''')
+    return db
+
+
+def _num(v, lo, hi):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi and v == v else None
+
+
+def _metres(lat1, lng1, lat2, lng2):
+    """Distance between two points (haversine)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371000 * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _bssid(v):
+    v = str(v or '').strip().lower()
+    return v if re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}', v) else None
+
+
+def _signal_weight(dbm):
+    """How much a sighting counts: a strong signal means the access point was close."""
+    return 10 ** ((max(-100.0, min(-30.0, dbm)) + 100) / 20)
+
+
+def findmy_record(report):
+    """Store a report from the phone: its fixes, and what the Wi-Fi around it says about where
+    those networks are. Returns how many fixes were kept."""
+    now = time.time()
+    fixes = []
+    for f in (report.get('fixes') or [])[:200]:
+        lat, lng = _num(f.get('lat'), -90, 90), _num(f.get('lng'), -180, 180)
+        t = _num(f.get('t'), now - 40 * 86400, now + 600)
+        if lat is None or lng is None or t is None:
+            continue
+        fixes.append((t, lat, lng, _num(f.get('acc'), 0, 1e6), _num(f.get('alt'), -1e4, 1e5),
+                      _num(f.get('speed'), 0, 1e4), str(f.get('provider') or '')[:16],
+                      str(f.get('reason') or '')[:24]))
+    battery = _num(report.get('battery'), 0, 100)
+    charging = 1 if report.get('charging') else 0
+    net = str(report.get('net') or '')[:64]
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        for t, lat, lng, acc, alt, speed, provider, reason in fixes:
+            db.execute('INSERT INTO fixes VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                       (t, lat, lng, acc, alt, speed, provider, reason,
+                        None if battery is None else int(battery), charging, net))
+        # Learn the Wi-Fi around the phone, from a fix taken close in time to the scan and good
+        # to 100 m. A network seen far from where it was before moves around (a hotspot, a bus):
+        # it can't place anything, so it's marked and left out.
+        anchor = report.get('wifi_at') or {}
+        alat, alng = _num(anchor.get('lat'), -90, 90), _num(anchor.get('lng'), -180, 180)
+        aacc = _num(anchor.get('acc'), 0, 1e6)
+        # a fingerprint: the whole Wi-Fi picture at a well-known spot (see fingerprint_locate)
+        fp = phone_scan(report.get('wifi'))
+        if alat is not None and alng is not None and aacc is not None and aacc <= 60 and len(fp) >= 3:
+            db.execute('INSERT INTO fingerprints VALUES (?,?,?,?,?)', (now, alat, alng, aacc, json.dumps(fp)))
+            db.execute('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints ORDER BY t DESC LIMIT -1 OFFSET 6000)')
+            _FINGERPRINTS['stale'] = True
+        if alat is not None and alng is not None and aacc is not None and aacc <= 100:
+            for ap in (report.get('wifi') or [])[:120]:
+                b = _bssid(ap.get('bssid'))
+                rssi = _num(ap.get('rssi'), -127, 0)
+                if not b or rssi is None or int(b[:2], 16) & 0x02:   # randomised / hotspot address
+                    continue
+                w = _signal_weight(rssi) / max(aacc, 8) ** 2
+                row = db.execute('SELECT lat, lng, weight, seen, moving FROM wifi WHERE bssid=?', (b,)).fetchone()
+                ssid = str(ap.get('ssid') or '')[:64]
+                if row is None:
+                    db.execute('INSERT INTO wifi VALUES (?,?,?,?,?,?,?,0)', (b, ssid, alat, alng, w, 1, now))
+                elif row[4]:
+                    continue
+                elif _metres(row[0], row[1], alat, alng) > 1500:
+                    db.execute('UPDATE wifi SET moving=1, last=? WHERE bssid=?', (now, b))
+                else:
+                    total = row[2] + w
+                    db.execute('UPDATE wifi SET lat=?, lng=?, weight=?, seen=?, last=?, ssid=? WHERE bssid=?',
+                               ((row[0] * row[2] + alat * w) / total, (row[1] * row[2] + alng * w) / total,
+                                total, row[3] + 1, now, ssid or None, b))
+        if fixes and random.random() < 0.05:
+            cut = now - FINDMY_KEEP_DAYS * 86400
+            db.execute('DELETE FROM fixes WHERE t < ?', (cut,))
+            db.execute('DELETE FROM laptop WHERE t < ?', (cut,))
+            # photos (a wrong unlock on the phone, a wrong password here) stay until you delete them
+            db.execute("DELETE FROM events WHERE t < ? AND kind NOT IN ('wrong_unlock', 'laptop_wrong_password', 'lost_report')", (cut,))
+        db.commit()
+    if fixes:
+        latest = max(fixes)
+        if latest[7] == 'low_battery':
+            findmy_event('low_battery', {'battery': battery}, notify=False)
+    return len(fixes)
+
+
+def findmy_event(kind, detail, notify=True):
+    """Something the phone reports that you should know about (a new SIM, a wrong unlock)."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        db.execute('INSERT INTO events VALUES (?,?,?)', (time.time(), kind, json.dumps(detail)[:2000]))
+        db.commit()
+    if not notify:
+        return
+    titles = {
+        'sim_changed': ("Your phone's SIM card changed",
+                        f"Now: {detail.get('operator') or 'unknown network'}. If you didn't do this, open Find my phone."),
+        'sim_removed': ("Your phone's SIM card was removed", "If you didn't do this, open Find my phone."),
+        'wrong_unlock': ("Someone tried to unlock your phone", "A photo was taken. Open Find my phone to see it."),
+    }
+    title, text = titles.get(kind, ('Find my phone', kind))
+    icon = detail.get('photo') if kind == 'wrong_unlock' and detail.get('photo') else 'find-location'
+    try:
+        subprocess.Popen(['notify-send', '-u', 'critical', '-i', icon, '-a', 'Orbit', title, text],
+                         stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def findmy_save_photo(data, reason):
+    """A photo the phone took (the front camera, after wrong unlock attempts)."""
+    if not data.startswith(b'\xff\xd8') or len(data) > 6 << 20:
+        return None
+    os.makedirs(FINDMY_PHOTOS, mode=0o700, exist_ok=True)
+    name = time.strftime('%Y%m%d-%H%M%S') + f'-{secrets.token_hex(3)}.jpg'
+    path = os.path.join(FINDMY_PHOTOS, name)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'wb') as f:
+        f.write(data)
+    findmy_event('wrong_unlock', {'photo': path, 'name': name, 'reason': reason[:40]})
+    return name
+
+
+def findmy_phone_view():
+    """What the Find my phone page shows: the latest fix, the last day's trail, alerts, photos."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        last = db.execute('SELECT t, lat, lng, acc, provider, reason, battery, charging, net FROM fixes '
+                          'ORDER BY t DESC LIMIT 1').fetchone()
+        trail = db.execute('SELECT t, lat, lng, acc FROM fixes WHERE t > ? ORDER BY t',
+                           (time.time() - 86400,)).fetchall()[-500:]
+        events = db.execute("SELECT t, kind, detail FROM events WHERE kind != 'laptop_wrong_password' "
+                            "ORDER BY t DESC LIMIT 40").fetchall()
+        known = db.execute('SELECT COUNT(*) FROM wifi WHERE moving=0').fetchone()[0]
+    keys = ('t', 'lat', 'lng', 'acc', 'provider', 'reason', 'battery', 'charging', 'net')
+    out_events = []
+    for t, kind, detail in events:
+        try:
+            d = json.loads(detail)
+        except ValueError:
+            d = {}
+        d.pop('photo', None)                   # a path on this computer; the page uses the name
+        out_events.append({'t': t, 'kind': kind, **d})
+    return {'status': 'ok', 'last': dict(zip(keys, last)) if last else None,
+            'trail': [{'t': t, 'lat': a, 'lng': b, 'acc': c} for t, a, b, c in trail],
+            'events': out_events, 'networks_known': known, 'laptop': laptop_last(),
+            'bluetooth': ORBIT_BLE.phone_reading(),
+            'nearby': {'on': time.time() < NEARBY['until'],
+                       'score': NEARBY['score'] if time.time() - NEARBY['t'] < 20 else None,
+                       'word': likeness_word(NEARBY['score']) if time.time() - NEARBY['t'] < 20 else None},
+            'now': time.time()}
+
+
+# ---- this computer's own location ----
+_NMCLI_SPLIT = re.compile(r'(?<!\\):')
+
+
+def laptop_wifi_scan(rescan=True):
+    """[(bssid, ssid, dBm, connected)] of the Wi-Fi networks this computer sees."""
+    try:
+        out = subprocess.run(['nmcli', '-t', '-f', 'BSSID,SSID,SIGNAL,IN-USE', 'dev', 'wifi', 'list',
+                              '--rescan', 'yes' if rescan else 'no'],
+                             capture_output=True, text=True, timeout=25).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    aps = []
+    for line in out.splitlines():
+        parts = [p.replace('\\:', ':') for p in _NMCLI_SPLIT.split(line)]
+        if len(parts) < 4:
+            continue
+        b = _bssid(parts[0])
+        try:
+            dbm = int(parts[2]) / 2 - 100       # nmcli gives 0-100
+        except ValueError:
+            continue
+        if b:
+            aps.append((b, parts[1], dbm, parts[3].strip() == '*'))
+    return aps
+
+
+# ---- the Wi-Fi map: where something is, from the Wi-Fi it sees (fingerprinting) ----
+# Each location report from the phone, when its fix is good, leaves a fingerprint: every network
+# it saw and how strongly, at that spot. Anything that sees the Wi-Fi (this computer, or the phone
+# indoors where GPS is poor) is placed where its own picture best matches stored ones: the few
+# closest by signal, averaged. This is how indoor positioning works (RADAR-style k-nearest
+# neighbours); much finer than guessing where each access point stands, and the phone and this
+# computer are placed the same way, so their errors largely cancel in how far apart they are.
+_FINGERPRINTS = {'stale': True, 'rows': []}
+
+
+def _fingerprints():
+    if _FINGERPRINTS['stale']:
+        with _FINDMY_LOCK, closing(_findmy_db()) as db:
+            rows = db.execute('SELECT lat, lng, acc, scan FROM fingerprints').fetchall()
+        parsed = []
+        for lat, lng, acc, scan in rows:
+            try:
+                parsed.append((lat, lng, acc, json.loads(scan)))
+            except ValueError:
+                pass
+        _FINGERPRINTS.update(stale=False, rows=parsed)
+    return _FINGERPRINTS['rows']
+
+
+def fingerprint_locate(scan):
+    """{lat, lng, acc, matches} from the Wi-Fi map for a scan ({bssid: dBm}), or None."""
+    query = {b: v for b, v in scan.items() if v > -92}
+    if len(query) < 2:
+        return None
+    scored = []
+    for lat, lng, acc, fp in _fingerprints():
+        common = sum(1 for b in query if b in fp)
+        if common < min(3, len(query)):
+            continue
+        keys = set(query) | {b for b, v in fp.items() if v > -92}
+        # signal distance: missing networks count as barely heard
+        d = math.sqrt(sum((query.get(k, -100) - fp.get(k, -100)) ** 2 for k in keys) / len(keys))
+        scored.append((d, lat, lng, acc))
+    if not scored:
+        return None
+    scored.sort()
+    best = scored[:4]
+    ws = [1 / (d + 2) ** 2 for d, _, _, _ in best]
+    total = sum(ws)
+    lat = sum(w * a for w, (_, a, _, _) in zip(ws, best)) / total
+    lng = sum(w * b for w, (_, _, b, _) in zip(ws, best)) / total
+    spread = sum(w * _metres(lat, lng, a, b) for w, (_, a, b, _) in zip(ws, best)) / total
+    fix = sum(w * c for w, (_, _, _, c) in zip(ws, best)) / total
+    acc = max(6.0, spread + 0.5 * fix + (10.0 if len(best) == 1 else 0.0))
+    return {'lat': lat, 'lng': lng, 'acc': round(acc), 'matches': len(best), 'signal_gap': round(best[0][0], 1)}
+
+
+def laptop_locate(rescan=True):
+    """Where this computer is, from the networks it sees and what the phone has learned about
+    them. Stored when found, so the phone can still see where it was last."""
+    aps = laptop_wifi_scan(rescan)
+    seen = len(aps)
+    connected = next((ssid for _, ssid, _, on in aps if on), '')
+    found = None
+    fp = fingerprint_locate({b: dbm for b, _, dbm, _ in aps}) if aps else None
+    if fp:
+        found = {'t': time.time(), 'lat': fp['lat'], 'lng': fp['lng'], 'acc': fp['acc'],
+                 'networks': len(aps), 'ssid': connected, 'method': 'wifi_map'}
+        aps = []                         # placed: the rough per-network guess isn't needed
+    if aps:
+        with _FINDMY_LOCK, closing(_findmy_db()) as db:
+            marks = ','.join('?' * len(aps))
+            known = {b: (lat, lng) for b, lat, lng in db.execute(
+                f'SELECT bssid, lat, lng FROM wifi WHERE moving=0 AND bssid IN ({marks})', [a[0] for a in aps])}
+        pts = [(known[b][0], known[b][1], _signal_weight(dbm)) for b, _, dbm, _ in aps if b in known]
+        if pts:
+            total = sum(w for _, _, w in pts)
+            lat = sum(a * w for a, _, w in pts) / total
+            lng = sum(b * w for _, b, w in pts) / total
+            spread = math.sqrt(sum(w * _metres(lat, lng, a, b) ** 2 for a, b, w in pts) / total)
+            acc = round(max(25.0, spread + (60.0 if len(pts) == 1 else 20.0)))
+            found = {'t': time.time(), 'lat': lat, 'lng': lng, 'acc': acc, 'networks': len(pts), 'ssid': connected,
+                     'method': 'networks'}
+    if found:
+        lat, lng, acc = found['lat'], found['lng'], found['acc']
+        with _FINDMY_LOCK, closing(_findmy_db()) as db:
+            last = db.execute('SELECT t, lat, lng FROM laptop ORDER BY t DESC LIMIT 1').fetchone()
+            # one row per place (or per hour in one place), not one per check
+            if not last or _metres(last[1], last[2], lat, lng) > 50 or found['t'] - last[0] > 3600:
+                db.execute('INSERT INTO laptop VALUES (?,?,?,?,?,?)',
+                           (found['t'], lat, lng, acc, found['networks'], connected))
+                db.commit()
+    return found, connected, seen
+
+
+def laptop_last():
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        row = db.execute('SELECT t, lat, lng, acc, networks, ssid FROM laptop ORDER BY t DESC LIMIT 1').fetchone()
+    return dict(zip(('t', 'lat', 'lng', 'acc', 'networks', 'ssid'), row)) if row else None
+
+
+def laptop_locator_loop():
+    """Every 10 minutes: where is this computer now (no fresh scan: what Wi-Fi already saw)."""
+    while True:
+        try:
+            laptop_locate(rescan=False)
+        except Exception as e:
+            sys.stderr.write(f"Find my: locating this computer failed: {e}\n")
+        time.sleep(600)
+
+
+# ---- ring this computer (from the phone) ----
+class LaptopRinger:
+    """A loud, repeating sound until the phone stops it (or 2 minutes pass). The volume goes
+    up and unmutes for it, and comes back afterwards."""
+
+    def __init__(self):
+        self.stop = threading.Event()
+        self.thread = None
+
+    def ringing(self):
+        return bool(self.thread and self.thread.is_alive())
+
+    def start(self):
+        if self.ringing():
+            return
+        self.stop.clear()
+        self.thread = threading.Thread(target=self._ring, daemon=True, name='find-my-ring')
+        self.thread.start()
+        try:
+            subprocess.Popen(['notify-send', '-u', 'critical', '-i', 'find-location', '-a', 'Orbit',
+                              'Your phone is looking for this computer', 'Ringing until it stops.'],
+                             stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+    def _ring(self):
+        before = None
+        try:
+            before = subprocess.run(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'],
+                                    capture_output=True, text=True, timeout=3).stdout
+            subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'], timeout=3)
+            subprocess.run(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', '0.8'], timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        sound = next((s for s in ('/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga',
+                                  '/usr/share/sounds/freedesktop/stereo/phone-incoming-call.oga',
+                                  '/usr/share/sounds/freedesktop/stereo/bell.oga') if os.path.exists(s)), None)
+        end = time.time() + 120
+        while sound and not self.stop.is_set() and time.time() < end:
+            try:
+                p = subprocess.Popen(['paplay', sound], stderr=subprocess.DEVNULL)
+                while p.poll() is None and not self.stop.is_set():
+                    time.sleep(0.1)
+                if p.poll() is None:
+                    p.terminate()
+            except OSError:
+                break
+        if before:
+            m = re.search(r'Volume:\s*([0-9.]+)', before)
+            try:
+                if m:
+                    subprocess.run(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', m.group(1)], timeout=3)
+                subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1' if 'MUTED' in before else '0'], timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    def silence(self):
+        self.stop.set()
+
+
+LAPTOP_RINGER = LaptopRinger()
+
+
+# ---- near or far, by the Wi-Fi around (no Bluetooth needed) ----
+# The phone and this computer each see a set of Wi-Fi networks, each at some strength. Side by
+# side they see the same ones, about equally strong; rooms apart the strengths differ; far apart
+# they share nothing. That likeness (0 to 1) drives the nearby finder on both sides and the
+# walk-away lock.
+_LAPTOP_SCAN = {'t': 0.0, 'aps': {}}
+_LAPTOP_SCAN_LOCK = threading.Lock()
+
+
+def laptop_scan_now(max_age=15):
+    """{bssid: dBm} this computer sees, rescanned when older than max_age seconds."""
+    with _LAPTOP_SCAN_LOCK:
+        if time.time() - _LAPTOP_SCAN['t'] > max_age:
+            aps = laptop_wifi_scan(rescan=True)
+            if aps:
+                _LAPTOP_SCAN.update(t=time.time(), aps={b: dbm for b, _, dbm, _ in aps})
+        return dict(_LAPTOP_SCAN['aps'])
+
+
+def wifi_likeness(a, b):
+    """How alike two scans ({bssid: dBm}) are: 1 side by side, 0 nothing in common, None if
+    either saw nothing. Networks count by how strong they are: a strong one seen by only one
+    side says more than a faint one."""
+    keys = {k for k, v in a.items() if v > -88} | {k for k, v in b.items() if v > -88}
+    if not a or not b or not keys:
+        return None
+    num = den = 0.0
+    for k in keys:
+        pa, pb = a.get(k), b.get(k)
+        w = _signal_weight(max(v for v in (pa, pb) if v is not None))
+        den += w
+        if pa is not None and pb is not None:
+            num += w * max(0.0, 1 - abs(pa - pb) / 25)
+    return num / den if den else None
+
+
+def likeness_word(s):
+    if s is None:
+        return 'No Wi-Fi to compare'
+    return 'Very close' if s > 0.55 else 'Close' if s > 0.35 else 'Nearby' if s > 0.15 else 'Far'
+
+
+def phone_scan(wifi):
+    out = {}
+    for ap in (wifi or [])[:120]:
+        b, rssi = _bssid(ap.get('bssid')), _num(ap.get('rssi'), -127, 0)
+        if b and rssi is not None:
+            out[b] = rssi
+    return out
+
+
+NEARBY = {'until': 0.0, 't': 0.0, 'score': None}     # the computer's page asked to find the phone
+
+
+# ---- the nearby finder, by Bluetooth: how strong each one's signal is at the other ----
+# Optional (the phone's Bluetooth may be off: then sound and Wi-Fi do it). Our own two devices
+# only: each advertises Orbit's mark while it's being looked for, and the other measures how
+# strongly it hears it. Stronger means nearer: a metre or two up close, coarser further away.
+ORBIT_BLE_UUID = 'f1d0c0de-4f72-6269-7420-46696e644d79'
+
+class OrbitBluetooth:
+    """Bluetooth for finding each other up close. This computer advertises Orbit's mark so the
+    phone can tell how near it is, and listens for the phone's mark to tell how near the phone
+    is. Bluetooth is switched on for it (unblocked, powered) and back off afterwards if it was
+    off. Driven through bluetoothctl; each session ends by itself after 5 minutes."""
+
+    SESSION = 300
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.adv = None                 # bluetoothctl advertising
+        self.scan = None                # bluetoothctl scanning for the phone
+        self.adv_until = self.scan_until = 0.0
+        self.readings = collections.deque(maxlen=20)   # (time, dBm) of the phone
+        self.restore = None             # how Bluetooth was before we switched it on
+        self.expiring = False
+
+    def _ctl(self):
+        return subprocess.Popen(['bluetoothctl'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, bufsize=1)
+
+    def _send(self, p, *lines):
+        try:
+            for line in lines:
+                p.stdin.write(line + '\n')
+            p.stdin.flush()
+        except (OSError, ValueError):
+            pass
+
+    def _power_on(self):
+        try:
+            self._power_on_now()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            sys.stderr.write(f"Bluetooth didn't switch on: {e}\n")
+
+    def _power_on_now(self):
+        if self.restore is not None:
+            return
+        blocked = 'Soft blocked: yes' in subprocess.run(['rfkill', 'list', 'bluetooth'], capture_output=True,
+                                                         text=True, timeout=5).stdout
+        powered = 'Powered: yes' in subprocess.run(['bluetoothctl', 'show'], capture_output=True,
+                                                   text=True, timeout=5).stdout
+        self.restore = (blocked, powered)
+        if blocked:
+            subprocess.run(['rfkill', 'unblock', 'bluetooth'], timeout=5)
+            time.sleep(1.5)
+        if not powered:
+            subprocess.run(['bluetoothctl', 'power', 'on'], capture_output=True, timeout=10)
+
+    def _power_restore(self):
+        if self.restore is None or self.adv or self.scan:
+            return
+        blocked, powered = self.restore
+        self.restore = None
+        try:
+            if not powered:
+                subprocess.run(['bluetoothctl', 'power', 'off'], capture_output=True, timeout=10)
+            if blocked:
+                subprocess.run(['rfkill', 'block', 'bluetooth'], timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    def advertise(self, on):
+        """So the phone can find this computer nearby."""
+        with self.lock:
+            if on:
+                self.adv_until = time.time() + self.SESSION
+                if self.adv and self.adv.poll() is None:
+                    return True
+                self._power_on()
+                self.adv = self._ctl()
+                self._send(self.adv, 'menu advertise', f'uuids {ORBIT_BLE_UUID}', 'name on', 'back',
+                           'advertise on')
+                self._start_expiry()
+                return True
+            self._stop_adv()
+            self._power_restore()
+            return False
+
+    def _stop_adv(self):
+        if self.adv:
+            self._send(self.adv, 'advertise off', 'quit')
+            try:
+                self.adv.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.adv.kill()
+            self.adv = None
+
+    def listen(self, on):
+        """Measure how near the phone is (it advertises Orbit's mark meanwhile)."""
+        with self.lock:
+            if on:
+                self.scan_until = time.time() + self.SESSION
+                if self.scan and self.scan.poll() is None:
+                    return True
+                self._power_on()
+                self.readings.clear()
+                self.scan = self._ctl()
+                self._send(self.scan, 'menu scan', f'uuids {ORBIT_BLE_UUID}', 'transport le', 'duplicate-data on',
+                           'back', 'scan on')
+                threading.Thread(target=self._read, args=(self.scan,), daemon=True).start()
+                self._start_expiry()
+                return True
+            self._stop_scan()
+            self._power_restore()
+            return False
+
+    def _stop_scan(self):
+        if self.scan:
+            self._send(self.scan, 'scan off', 'quit')
+            try:
+                self.scan.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.scan.kill()
+            self.scan = None
+
+    def _read(self, p):
+        rssi = re.compile(r'RSSI:\s*(?:0x[0-9a-f]+\s*)?\(?(-\d+)\)?', re.I)
+        for line in p.stdout:
+            m = rssi.search(line)
+            if m:
+                self.readings.append((time.time(), int(m.group(1))))
+
+    def _start_expiry(self):
+        if not self.expiring:
+            self.expiring = True
+            threading.Thread(target=self._expire, daemon=True, name='bluetooth-expiry').start()
+
+    def _expire(self):
+        while True:
+            time.sleep(5)
+            with self.lock:
+                now = time.time()
+                if self.adv and now > self.adv_until:
+                    self._stop_adv()
+                if self.scan and now > self.scan_until:
+                    self._stop_scan()
+                if not self.adv and not self.scan:
+                    self._power_restore()
+                    self.expiring = False
+                    return
+
+    def phone_reading(self):
+        """The phone's signal, smoothed over the last few seconds (None if not heard)."""
+        recent = [(t, v) for t, v in list(self.readings) if time.time() - t < 6]
+        on = bool(self.scan and self.scan.poll() is None)
+        if not recent:
+            return {'listening': on, 'dbm': None}
+        vals = sorted(v for _, v in recent)
+        return {'listening': on, 'dbm': vals[len(vals) // 2], 'age': round(time.time() - recent[-1][0], 1)}
+
+
+ORBIT_BLE = OrbitBluetooth()
+
+
+# ---- how far, by sound (two-way acoustic ranging, "BeepBeep") ----
+# Wi-Fi goes through walls; sound doesn't. While the phone's Nearby finder is open, both record
+# for ~3 s; this computer plays a rising chirp (16.5-19 kHz, which most adults can't hear) and the
+# phone a falling one. Each device then measures, on its own clock, the time between the two
+# chirps in its own recording; the difference of those two intervals is twice the sound's travel
+# time between them, whatever each device's audio delays are. To a few centimetres in a room;
+# not heard at all through a wall ("not in this room").
+SOUND_SR = 48000
+SOUND_WINDOW = 2.8           # seconds this computer records
+SPEED_OF_SOUND = 343.0
+
+
+def _chirp(f0, f1, dur=0.08):
+    import numpy as np
+    t = np.arange(int(SOUND_SR * dur)) / SOUND_SR
+    k = (f1 - f0) / dur
+    return np.sin(2 * np.pi * (f0 * t + 0.5 * k * t * t)) * np.hanning(len(t)) ** 0.5   # soft edges: no click
+
+
+def _find_chirp(rec, tmpl, skip=None):
+    """(seconds, strength) of the template's best match in the recording, to a fraction of a
+    sample. `skip` (seconds): leave out 0.15 s around it, where the device's own loud chirp is:
+    the rising and falling chirps aren't perfectly unlike, and a loud one of either shape gives
+    the other's template a match of its own (that read as "heard each other" when far apart)."""
+    import numpy as np
+    n = len(rec) + len(tmpl)
+    size = 1 << (n - 1).bit_length()
+    c = np.abs(np.fft.irfft(np.fft.rfft(rec, size) * np.conj(np.fft.rfft(tmpl, size)), size)[:len(rec)])
+    noise = np.median(c) + 1e-12
+    if skip is not None:
+        a, b = int((skip - 0.15) * SOUND_SR), int((skip + 0.15) * SOUND_SR)
+        c = c.copy()
+        c[max(0, a):max(0, b)] = 0
+    i = int(np.argmax(c))
+    strength = float(c[i] / noise)
+    if 0 < i < len(c) - 1:                       # parabola through the peak: sub-sample timing
+        a, b, d = c[i - 1], c[i], c[i + 1]
+        den = a - 2 * b + d
+        i = i + (0.5 * (a - d) / den if den else 0.0)
+    return i / SOUND_SR, strength
+
+
+class SoundRanger:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.done = threading.Event()
+        self.path = None
+
+    def _chirp_wav(self):
+        import numpy as np, wave
+        path = os.path.join(os.path.expanduser('~/.cache/orbit'), 'chirp-up.wav')
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            x = np.concatenate([_chirp(16500, 19000), np.zeros(int(0.03 * SOUND_SR))])
+            with wave.open(path, 'wb') as f:
+                f.setnchannels(1); f.setsampwidth(2); f.setframerate(SOUND_SR)
+                f.writeframes((x * 0.95 * 32767).astype('<i2').tobytes())
+        return path
+
+    def start(self):
+        """Record SOUND_WINDOW seconds, playing this computer's chirp near the start."""
+        with self.lock:
+            self.done.clear()
+            self.path = os.path.join(os.path.expanduser('~/.cache/orbit'), f'range-{secrets.token_hex(4)}.wav')
+            threading.Thread(target=self._run, args=(self.path,), daemon=True, name='sound-range').start()
+
+    def _run(self, path):
+        rec = None
+        before = None
+        try:
+            chirp = self._chirp_wav()
+            rec = subprocess.Popen(['pw-record', '--rate', str(SOUND_SR), '--channels', '1', '--format', 's16', path],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started = time.time()
+            # loud enough to be heard across a room (back to how it was afterwards)
+            before = subprocess.run(['wpctl', 'get-volume', '@DEFAULT_AUDIO_SINK@'], capture_output=True, text=True, timeout=2).stdout
+            m = re.search(r'Volume:\s*([0-9.]+)', before or '')
+            if 'MUTED' in (before or '') or (m and float(m.group(1)) < 0.6):
+                subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '0'], timeout=2)
+                subprocess.run(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', '0.6'], timeout=2)
+            else:
+                before = None
+            time.sleep(max(0.0, 0.35 - (time.time() - started)))
+            subprocess.run(['pw-play', chirp], timeout=3)
+            time.sleep(max(0.0, SOUND_WINDOW - (time.time() - started)))
+        except Exception as e:
+            sys.stderr.write(f"Sound ranging: {e}\n")
+        finally:
+            if rec:
+                rec.terminate()
+                try:
+                    rec.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    rec.kill()
+            if before:
+                m = re.search(r'Volume:\s*([0-9.]+)', before)
+                try:
+                    if m:
+                        subprocess.run(['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', m.group(1)], timeout=2)
+                    if 'MUTED' in before:
+                        subprocess.run(['wpctl', 'set-mute', '@DEFAULT_AUDIO_SINK@', '1'], timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            self.done.set()
+
+    def finish(self, phone_pcm):
+        """The phone's recording (16-bit mono, 48 kHz): the distance, or why there's none."""
+        import numpy as np, wave
+        if not self.done.wait(timeout=SOUND_WINDOW + 3) or not self.path:
+            return {"status": "error", "message": "This computer didn't record."}
+        try:
+            with wave.open(self.path) as f:
+                mine = np.frombuffer(f.readframes(f.getnframes()), '<i2').astype(float)
+        except Exception:
+            return {"status": "error", "message": "This computer's microphone didn't record."}
+        finally:
+            try:
+                os.unlink(self.path)
+            except OSError:
+                pass
+        phone = np.frombuffer(phone_pcm[:len(phone_pcm) // 2 * 2], '<i2').astype(float)
+        up, down = _chirp(16500, 19000), _chirp(19000, 16500)
+        l_up, sl_up = _find_chirp(mine, up)                  # this computer's own chirp, heard here
+        p_dn, sp_dn = _find_chirp(phone, down)               # the phone's own chirp
+        l_dn, sl_dn = _find_chirp(mine, down, skip=l_up)     # the phone's chirp, heard here
+        p_up, sp_up = _find_chirp(phone, up, skip=p_dn)      # this computer's chirp, heard by the phone
+        strengths = {"here_own": round(sl_up), "here_phone": round(sl_dn),
+                     "phone_laptop": round(sp_up), "phone_own": round(sp_dn)}
+        try:                                                   # the last pair, privately, to look into a bad reading
+            dbg = os.path.expanduser('~/.cache/orbit/range-last')
+            os.makedirs(dbg, mode=0o700, exist_ok=True)
+            np.save(os.path.join(dbg, 'laptop.npy'), mine.astype('<i2'))
+            np.save(os.path.join(dbg, 'phone.npy'), phone.astype('<i2'))
+        except Exception:
+            pass
+        # each own chirp loud and clear; the other's well out of the noise; and each other's chirp
+        # where it can be: the phone chirps 0.3-1.5 s after this computer does
+        gap_here, gap_phone = l_dn - l_up, p_dn - p_up
+        heard = (min(sl_up, sp_dn) > 40 and min(sl_dn, sp_up) > 30
+                 and 0.25 < gap_here < 1.8 and 0.25 < gap_phone < 1.8)
+        d = SPEED_OF_SOUND / 2 * (gap_here - gap_phone) + 0.07       # + each one's speaker-to-mic gap
+        sys.stderr.write(f"Nearby by sound: {'heard' if heard else 'not heard'}, {strengths}, "
+                         f"gaps {gap_here:.3f}/{gap_phone:.3f} s, {d:.2f} m\n")
+        if not heard:
+            return {"status": "ok", "heard": False, "strengths": strengths}
+        if not -0.5 < d < 25:
+            return {"status": "ok", "heard": False, "strengths": strengths, "odd": round(float(d), 2)}
+        return {"status": "ok", "heard": True, "distance": round(float(max(0.0, d)), 2), "strengths": strengths}
+
+
+SOUND_RANGER = SoundRanger()
+
+
+# ---- the walk-away lock ----
+class WalkAway:
+    """Locks this computer when the phone walks away: when the phone, after being on this
+    computer's network, is now only reachable through the internet; or when two Wi-Fi scans
+    from it in a row look nothing like what this computer sees (a big network like a campus,
+    where the phone stays on the same network far away). It never unlocks."""
+    GRACE = 90            # seconds off the local network before it counts (a brief detour isn't leaving)
+
+    def __init__(self):
+        self.lan_at = self.tunnel_at = 0.0
+        self.far = 0
+        self.locked_episode = False
+
+    def contact(self, tunnel):
+        if tunnel:
+            self.tunnel_at = time.time()
+        else:
+            self.lan_at = time.time()
+            if self.far == 0:
+                self.locked_episode = False
+
+    def scan(self, likeness):
+        if likeness is None:
+            return
+        if likeness < 0.08:
+            self.far += 1
+        elif likeness > 0.2:
+            self.far = 0
+            if self.lan_at > self.tunnel_at:
+                self.locked_episode = False
+
+    def away(self):
+        left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
+        return left_network or self.far >= 2
+
+    def loop(self):
+        while True:
+            time.sleep(15)
+            try:
+                if not findmy_settings().get('walk_away_lock') or self.locked_episode or not self.away():
+                    continue
+                if is_pc_locked() is not False:          # locked already, or nobody logged in
+                    self.locked_episode = True
+                    continue
+                session = graphical_session()
+                subprocess.run(['loginctl', 'lock-session', session], timeout=5)
+                self.locked_episode = True
+                sys.stderr.write("Find my: the phone walked away, locked this computer\n")
+                findmy_event('walk_away_lock', {}, notify=False)
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "walk_away_lock",
+                                                      "t": time.time()}) + "\n")
+            except Exception as e:
+                sys.stderr.write(f"Find my: walk-away lock: {e}\n")
+
+
+WALK_AWAY = WalkAway()
+
+
+def findmy_settings():
+    cfg = load_config()
+    return {'walk_away_lock': bool(cfg.get('findmy_walk_away_lock', True)),
+            'wrong_password_photo': bool(cfg.get('findmy_wrong_password_photo', True))}
+
+
+def set_findmy_settings(body):
+    cfg = load_config()
+    if 'walk_away_lock' in body:
+        cfg['findmy_walk_away_lock'] = bool(body['walk_away_lock'])
+    if 'wrong_password_photo' in body:
+        cfg['findmy_wrong_password_photo'] = bool(body['wrong_password_photo'])
+    save_config(cfg)
+    return findmy_settings()
+
+
+# ---- a photo when someone types a wrong password here ----
+def builtin_camera():
+    """This computer's own camera (not a virtual one like Orbit Cam), or None."""
+    for d in sorted(glob.glob('/sys/class/video4linux/video*')):
+        try:
+            if 'virtual' in os.path.realpath(os.path.join(d, 'device')):
+                continue
+            with open(os.path.join(d, 'index')) as f:
+                if f.read().strip() != '0':        # a camera's other nodes carry metadata
+                    continue
+        except OSError:
+            continue
+        return '/dev/' + os.path.basename(d)
+    return None
+
+
+def webcam_photo():
+    """A photo from this computer's own camera, kept with Find my's photos: its name, or None
+    (no camera, or another app has it)."""
+    cam = builtin_camera()
+    data = b''
+    if cam:
+        for size in (['-video_size', '1280x720'], []):
+            try:
+                # the first frames are dark while the exposure settles: keep the 15th
+                data = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'v4l2'] + size +
+                                      ['-i', cam, '-vf', r'select=gte(n\,15)', '-frames:v', '1', '-q:v', '3',
+                                       '-f', 'mjpeg', '-'], capture_output=True, timeout=20).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                data = b''
+            if data.startswith(b'\xff\xd8'):
+                break
+    name = None
+    if data.startswith(b'\xff\xd8'):
+        os.makedirs(FINDMY_PHOTOS, mode=0o700, exist_ok=True)
+        name = 'laptop-' + time.strftime('%Y%m%d-%H%M%S') + f'-{secrets.token_hex(3)}.jpg'
+        fd = os.open(os.path.join(FINDMY_PHOTOS, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+    return name
+
+
+def take_laptop_photo():
+    name = webcam_photo()
+    found, connected, _ = laptop_locate(rescan=False)
+    where = {'place': {'lat': found['lat'], 'lng': found['lng'], 'acc': found['acc']} if found else None,
+             'connected': connected}
+    findmy_event('laptop_wrong_password', {'name': name, **where}, notify=False)
+    sys.stderr.write(f"Find my: wrong password on this computer, {'photo taken' if name else 'no photo (camera busy?)'}\n")
+    auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "wrong_password",
+                                          "name": name, "t": time.time(), **where}) + "\n")
+
+
+def wrong_password_watch():
+    """Follow the system log for wrong passwords at the lock screen or the login screen."""
+    user = re.escape(os.environ.get('USER') or '')
+    pat = re.compile(r'pam_unix\((kde|sddm|plasmalogin|login|system-local-login)[^)]*:auth\): authentication failure'
+                     r'|password check failed for user \(' + user + r'\)')
+    last = 0.0
+    while True:
+        try:
+            p = subprocess.Popen(['journalctl', '-f', '-n', '0', '-q', '-o', 'cat',
+                                  '--grep', 'authentication failure|password check failed'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for line in p.stdout:
+                if pat.search(line) and findmy_settings().get('wrong_password_photo') and time.time() - last > 30:
+                    last = time.time()
+                    threading.Thread(target=take_laptop_photo, daemon=True).start()
+        except Exception as e:
+            sys.stderr.write(f"Find my: can't follow the system log: {e}\n")
+        time.sleep(10)
+
+
+def laptop_alerts(limit=10):
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        rows = db.execute("SELECT t, kind, detail FROM events WHERE kind IN ('laptop_wrong_password', 'walk_away_lock', "
+                          "'lost_report') ORDER BY t DESC LIMIT ?", (limit,)).fetchall()
+    out = []
+    for t, kind, detail in rows:
+        try:
+            d = json.loads(detail)
+        except ValueError:
+            d = {}
+        a = {'t': t, 'kind': 'wrong_password' if kind == 'laptop_wrong_password' else kind, 'name': d.get('name')}
+        a.update({'place': d.get('place'), 'connected': d.get('connected')})
+        if kind == 'lost_report':
+            a.update({k: d.get(k) for k in ('networks', 'ip', 'isp', 'city', 'region', 'country')})
+        out.append(a)
+    return out
+
+
+# ---- lost mode: when this computer is marked lost (from the phone) ----
+# A thief won't take it anywhere the phone has been, so the Wi-Fi map can't place it. While it's
+# marked lost, every 10 minutes (the first at once) it reports what can be learned anywhere: a
+# webcam photo, the names of the Wi-Fi networks around it (people often recognise a cafe, a
+# hostel, an office), and its internet provider and city from its public address (ipinfo.io,
+# only while lost). It stays lost through restarts, until the phone says it's found.
+LOST_EVERY = 600
+
+
+def lost_state():
+    cfg = load_config()
+    return {'lost': bool(cfg.get('findmy_lost')), 'since': cfg.get('findmy_lost_since')}
+
+
+def set_lost(on):
+    cfg = load_config()
+    was = bool(cfg.get('findmy_lost'))
+    cfg['findmy_lost'] = bool(on)
+    cfg['findmy_lost_since'] = time.time() if on and not was else (cfg.get('findmy_lost_since') if on else None)
+    save_config(cfg)
+    if on and not was:
+        LOST_WAKE.set()                       # the first report now
+    return lost_state()
+
+
+def public_place():
+    """{ip, isp, city, region, country} of this computer's internet address, or {}."""
+    try:
+        req = urllib.request.Request('https://ipinfo.io/json', headers={'Accept': 'application/json',
+                                                                        'User-Agent': 'Orbit'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            d = json.loads(r.read().decode('utf-8', 'replace'))
+    except Exception:
+        return {}
+    org = str(d.get('org') or '')
+    return {'ip': d.get('ip'), 'isp': re.sub(r'^AS\d+\s+', '', org) or None, 'city': d.get('city'),
+            'region': d.get('region'), 'country': d.get('country')}
+
+
+def lost_report():
+    aps = laptop_wifi_scan(rescan=True)
+    names = []
+    for _, ssid, dbm, _ in sorted(aps, key=lambda a: -a[2]):
+        if ssid and ssid not in names:
+            names.append(ssid)
+    place = public_place()
+    photo = webcam_photo()
+    found, connected, _ = laptop_locate(rescan=False)
+    detail = {'name': photo, 'networks': names[:12], **place,
+              'place': {'lat': found['lat'], 'lng': found['lng'], 'acc': found['acc']} if found else None,
+              'connected': connected}
+    findmy_event('lost_report', detail, notify=False)
+    sys.stderr.write(f"Lost mode: report sent ({place.get('isp')}, {place.get('city')}; {len(names)} networks; "
+                     f"{'photo' if photo else 'no photo'})\n")
+    auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "lost_report", "t": time.time(),
+                                          **{k: v for k, v in detail.items() if k != 'connected'}}) + "\n")
+
+
+LOST_WAKE = threading.Event()
+
+
+def lost_mode_loop():
+    while True:
+        LOST_WAKE.wait(timeout=LOST_EVERY)
+        LOST_WAKE.clear()
+        try:
+            if lost_state()['lost']:
+                lost_report()
+        except Exception as e:
+            sys.stderr.write(f"Lost mode: {e}\n")
+
+
 
 # ==========================================
 # Virtual Mouse & Input Controller (/dev/uinput)
@@ -4998,6 +6207,14 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             return
 
         # 2. APK Download
+        elif path == '/api/app/latest':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info:
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            sha, size = apk_print()
+            self.send_json({"status": "ok", "sha256": sha, "size": size})
+            return
         elif path in ('/apk', '/PCAuthenticator.apk', '/authenticator.apk', '/download'):
             self.serve_apk()
             return
@@ -5005,6 +6222,68 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
         # 3. Static Files
         elif path in ('/', '/index.html'):
             self.serve_file(os.path.join(STATIC_DIR, 'index.html'), 'text/html; charset=utf-8')
+            return
+        elif path == '/findmy' and qs.get('ltok'):
+            # The tray opens /findmy?ltok=<local key>; trade it for an HttpOnly cookie (as /browse)
+            ltok = qs.get('ltok', [''])[0]
+            if (self.client_address[0] in ('127.0.0.1', '::1') and not is_tunnel_request(self)
+                    and LOCAL_TOKEN and hmac.compare_digest(ltok, LOCAL_TOKEN)):
+                self.send_response(303)
+                self.send_header('Set-Cookie', f'pc_local={LOCAL_TOKEN}; HttpOnly; SameSite=Strict; Path=/')
+                self.send_header('Location', '/findmy')
+                self.end_headers()
+            else:
+                self.send_error(403)
+            return
+        elif path == '/findmy':
+            self.serve_file(os.path.join(STATIC_DIR, 'findmy.html'), 'text/html; charset=utf-8')
+            return
+        elif path in ('/leaflet/leaflet.js', '/leaflet/leaflet.css'):
+            self.serve_file(os.path.join(STATIC_DIR, path.lstrip('/')),
+                            'application/javascript' if path.endswith('.js') else 'text/css')
+            return
+        elif path == '/api/findmy/phone':
+            # Find my phone, on this computer only
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json(findmy_phone_view())
+            return
+        elif path == '/api/findmy/photo':
+            client_info, token = authenticate_client(self, load_config())
+            name = qs.get('name', [''])[0]
+            if not client_info or not client_info.get('local') or not re.fullmatch(r'[0-9-]+-[0-9a-f]{6}\.jpg', name):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.serve_file(os.path.join(FINDMY_PHOTOS, name), 'image/jpeg')
+            return
+        elif path == '/api/findmy/laptop':
+            # The phone asks where this computer is: a fresh look, and where it was last found
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            found, ssid, seen = laptop_locate(rescan=qs.get('fresh', [''])[0] == '1')
+            self.send_json({"status": "ok", "now": found, "last": laptop_last(), "ssid": ssid,
+                            "networks_seen": seen, "ringing": LAPTOP_RINGER.ringing(), "time": time.time(),
+                            "alerts": laptop_alerts(), "settings": findmy_settings(), "lost": lost_state()})
+            return
+        elif path == '/api/findmy/laptop/photo':
+            # the phone fetches a photo taken here after a wrong password
+            client_info, token = authenticate_client(self, load_config())
+            name = qs.get('name', [''])[0]
+            if not client_info or client_info.get('local') or not re.fullmatch(r'laptop-[0-9-]+-[0-9a-f]{6}\.jpg', name):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.serve_file(os.path.join(FINDMY_PHOTOS, name), 'image/jpeg')
+            return
+        elif path == '/api/findmy/settings':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info:
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json({"status": "ok", **findmy_settings()})
             return
         elif path == '/browse' and qs.get('ltok'):
             # The tray/CLI open /browse?ltok=<local key>; trade it for an HttpOnly cookie
@@ -5223,7 +6502,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             self.send_json({"status": "ok", "mode": WEBCAM_MODE,
-                            "live": ORBIT_CAM.live, "users": ORBIT_CAM.users()})
+                            "live": bool(ORBIT_CAM.live), "users": ORBIT_CAM.users()})
             return
 
         elif path == '/api/terminals/input_log':
@@ -5887,6 +7166,47 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "upload_proxy_failed", "message": str(e)}, status=502)
             return
 
+        # Find my, the distance by sound: the phone's recording (raw audio, before the JSON read)
+        if path in ('/api/findmy/sound/start', '/api/findmy/sound/finish'):
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            if is_tunnel_request(self):
+                # the two chirps must land in each other's recording: too slow over the internet
+                self.send_json({"status": "error", "message": "Works on the same Wi-Fi only."}, status=403)
+                return
+            try:
+                import numpy  # noqa: F401
+            except ImportError:
+                self.send_json({"status": "error", "message": "Install python-numpy on the computer."}, status=501)
+                return
+            if path.endswith('/start'):
+                self.read_json()
+                SOUND_RANGER.start()
+                self.send_json({"status": "ok", "window": SOUND_WINDOW})
+            else:
+                length = int(self.headers.get('Content-Length', 0) or 0)
+                if not 0 < length <= 2 << 20:
+                    self.send_json({"error": "too large"}, status=413)
+                    return
+                self.send_json(SOUND_RANGER.finish(self.rfile.read(length)))
+            return
+
+        # Find my: a photo from the phone (a raw JPEG, so before the body is read as JSON)
+        if path == '/api/findmy/photo':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            length = int(self.headers.get('Content-Length', 0) or 0)
+            if not 0 < length <= 6 << 20:
+                self.send_json({"error": "too large"}, status=413)
+                return
+            name = findmy_save_photo(self.rfile.read(length), self.headers.get('X-Orbit-Reason', ''))
+            self.send_json({"status": "ok" if name else "error"})
+            return
+
         # Read JSON body for standard API calls
         body = self.read_json()
 
@@ -6302,6 +7622,124 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 return
             ping_pc()
             self.send_json({"status": "ok"})
+
+        # Find my: reports and alerts from the phone
+        elif path == '/api/findmy/report':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            kept = findmy_record(body if isinstance(body, dict) else {})
+            # the phone keeps where this computer was last, for when it can't reach it
+            self.send_json({"status": "ok", "kept": kept, "laptop": laptop_last()})
+            return
+        elif path == '/api/findmy/event':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            kind = str((body or {}).get('kind', '')) if isinstance(body, dict) else ''
+            if kind not in ('sim_changed', 'sim_removed'):
+                self.send_json({"error": "unknown event"}, status=400)
+                return
+            detail = body.get('detail') if isinstance(body.get('detail'), dict) else {}
+            findmy_event(kind, {k: str(v)[:80] for k, v in list(detail.items())[:10]})
+            self.send_json({"status": "ok"})
+            return
+        elif path == '/api/findmy/laptop/beacon':
+            # From the phone's Nearby finder: this computer advertises Orbit's Bluetooth mark
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            on = bool((body if isinstance(body, dict) else {}).get('on'))
+            self.send_json({"status": "ok", "advertising": ORBIT_BLE.advertise(on), "uuid": ORBIT_BLE_UUID})
+            return
+        elif path == '/api/findmy/laptop/ring':
+            # From the phone: ring this computer
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            on = bool((body if isinstance(body, dict) else {}).get('on'))
+            LAPTOP_RINGER.start() if on else LAPTOP_RINGER.silence()
+            self.send_json({"status": "ok", "ringing": on})
+            return
+        elif path == '/api/findmy/wifi':
+            # From the phone: the Wi-Fi it sees now. How alike is it to what this computer sees?
+            # (the nearby finder on either side, and the walk-away lock)
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            b = body if isinstance(body, dict) else {}
+            purpose = str(b.get('purpose', ''))
+            mine = laptop_scan_now(8 if purpose in ('nearby', 'find_phone') else 30)
+            theirs = phone_scan(b.get('wifi'))
+            score = wifi_likeness(theirs, mine)
+            extra = {}
+            if purpose != 'presence':
+                sys.stderr.write(f"Nearby by Wi-Fi: {score if score is None else round(score, 2)}, "
+                                 f"{len(set(theirs) & set(mine))} of {len(theirs)}/{len(mine)} networks in common\n")
+                # both placed on the Wi-Fi map the same way, and how far apart
+                phone_at, laptop_at = fingerprint_locate(theirs), fingerprint_locate(mine)
+                extra = {'phone_at': phone_at, 'laptop_at': laptop_at}
+                if phone_at and laptop_at:
+                    extra['apart'] = round(_metres(phone_at['lat'], phone_at['lng'], laptop_at['lat'], laptop_at['lng']))
+            if purpose == 'presence':
+                WALK_AWAY.scan(score)
+            elif purpose == 'find_phone':
+                NEARBY.update(t=time.time(), score=score)
+            self.send_json({"status": "ok", "score": None if score is None else round(score, 3),
+                            "word": likeness_word(score), "networks": len(mine), **extra})
+            return
+        elif path == '/api/findmy/settings':
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info:
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json({"status": "ok", **set_findmy_settings(body if isinstance(body, dict) else {})})
+            return
+        elif path == '/api/findmy/capabilities':
+            # what the phone can time distances with (radio time-of-flight); logged to decide how to range
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            b = body if isinstance(body, dict) else {}
+            sys.stderr.write("Phone ranging capabilities: " + json.dumps({k: b.get(k) for k in (
+                'model', 'android', 'wifi_rtt', 'wifi_rtt_on', 'uwb', 'rtt_access_points', 'access_points_seen')}) + "\n")
+            self.send_json({"status": "ok"})
+            return
+        elif path == '/api/findmy/lost':
+            # From the phone: mark this computer lost (or found)
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json({"status": "ok", **set_lost(bool((body if isinstance(body, dict) else {}).get('on')))})
+            return
+        elif path in ('/api/findmy/phone/locate', '/api/findmy/phone/ring', '/api/findmy/phone/nearby'):
+            # From the Find my phone page on this computer
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            on = bool((body if isinstance(body, dict) else {}).get('on', True))
+            if path.endswith('/locate'):
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "locate", "time": int(time.time())}) + "\n")
+            elif path.endswith('/ring'):
+                ring_phone() if on else unring_phone()
+            else:
+                # the phone sends its Wi-Fi every few seconds meanwhile (find_phone), for 3 minutes
+                NEARBY['until'] = time.time() + 180 if on else 0.0
+                NEARBY['score'] = None
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "wifi_nearby", "on": on}) + "\n")
+                # and by Bluetooth, if the phone's is on: it advertises, this computer listens
+                ORBIT_BLE.listen(on)
+                auth_mgr.broadcast_ndjson(json.dumps({"event": "ble_beacon", "on": on, "uuid": ORBIT_BLE_UUID}) + "\n")
+            self.send_json({"status": "ok", "phone_connected": bool(auth_mgr.ndjson_clients)})
+            return
 
         # 8. Ring (Find My Phone)
         elif path == '/api/ring':
@@ -7125,6 +8563,13 @@ def main():
     start_clipboard_monitor(auth_mgr)
     start_terminal_recorder()
     start_webcam_standby()
+    threading.Thread(target=laptop_locator_loop, daemon=True, name='find-my-laptop').start()
+    threading.Thread(target=app_update_watch, daemon=True, name='app-update').start()
+    threading.Thread(target=WALK_AWAY.loop, daemon=True, name='walk-away').start()
+    threading.Thread(target=wrong_password_watch, daemon=True, name='wrong-password').start()
+    threading.Thread(target=lost_mode_loop, daemon=True, name='lost-mode').start()
+    if lost_state()['lost']:
+        LOST_WAKE.set()                  # still lost after a restart: report right away
     if load_config().get('keep_awake'):
         set_keep_awake(True)            # it was on before this service restarted
 

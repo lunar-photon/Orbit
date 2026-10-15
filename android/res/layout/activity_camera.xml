@@ -115,8 +115,8 @@
             android:layout_height="match_parent"
             android:layout_weight="2"
             android:drawableStart="@drawable/ic_o_camera"
-            android:paddingStart="28dp"
-            android:paddingEnd="28dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
             android:text="Take photo" />
 
         <Button
@@ -127,8 +127,8 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:drawableStart="@drawable/ic_o_rotate"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
             android:text="Switch" />
     </LinearLayout>
 
@@ -159,7 +159,7 @@
             android:layout_marginStart="8dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
-            android:text="Quality: smooth"
+            android:text="Smooth · 480p"
             android:textSize="14sp" />
     </LinearLayout>
 
