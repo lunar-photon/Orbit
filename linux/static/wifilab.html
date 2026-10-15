@@ -271,6 +271,114 @@
     color: var(--text2);
     line-height: 1.45;
   }
+  .lab-log-section {
+    margin-top: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .lab-log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .lab-log-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .lab-log-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text2);
+  }
+  .lab-log-badge.has-events {
+    background: rgba(255, 122, 122, 0.15);
+    color: var(--danger);
+  }
+  .lab-log-link {
+    font-size: 11px;
+    color: var(--brand);
+    text-decoration: none;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(142, 168, 255, 0.08);
+  }
+  .lab-log-link:hover {
+    text-decoration: underline;
+  }
+  .lab-log-btn {
+    font-size: 11px;
+    color: var(--text3);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 7px;
+    cursor: pointer;
+  }
+  .lab-log-btn:hover {
+    color: var(--text);
+    border-color: var(--text3);
+  }
+  .lab-log-path {
+    font-size: 10px;
+    color: var(--text3);
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .lab-log-path code {
+    color: var(--text2);
+    font-family: monospace;
+  }
+  .lab-log-list {
+    max-height: 160px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .lab-card.expanded .lab-log-list {
+    max-height: 280px;
+  }
+  .lab-log-empty {
+    font-size: 11px;
+    color: var(--text3);
+    text-align: center;
+    padding: 10px 4px;
+    font-style: italic;
+  }
+  .lab-log-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 11px;
+  }
+  .lab-log-time {
+    font-family: monospace;
+    font-weight: 600;
+    color: var(--text);
+    margin-right: 6px;
+  }
+  .lab-log-spike {
+    font-weight: 600;
+    color: var(--danger);
+    margin-right: 8px;
+  }
+  .lab-log-meta {
+    color: var(--text3);
+    font-size: 10px;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -337,6 +445,10 @@
         <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
         <div>Peak Spike: <span class="lab-val" id="labMotionPeakSpike">0.0 dB</span></div>
       </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Last Disturbance: <span class="lab-val" id="labMotionLastLog">Quiet (None)</span></div>
+        <div>Laptop Log: <span class="lab-val" id="labMotionTotalLogs">0 events</span></div>
+      </div>
       <div class="lab-details">
         <div class="lab-grid">
           <div class="lab-metric"><span>Real-time Signal</span><b id="labMotionDbm">– dBm</b></div>
@@ -347,6 +459,22 @@
           <div class="lab-metric"><span>Ambient Signal Variance</span><b id="labMotionVarDetail">0.0 dB</b></div>
         </div>
         <div class="lab-note-box" id="labMotionStatusNote">Fresnel multi-path zone is calm. Signal reflection remains within the quiet noise envelope.</div>
+        <div class="lab-log-section">
+          <div class="lab-log-header">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="lab-log-title">Disturbance Event Log (Laptop)</span>
+              <span class="lab-log-badge" id="labMotionLogCount">0 logged</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <a class="lab-log-link" href="/api/findmy/wifi/motion/log?format=text" target="_blank" title="View raw text log on laptop">Raw Log</a>
+              <button class="lab-log-btn" type="button" onclick="clearMotionLog(event)">Clear</button>
+            </div>
+          </div>
+          <div class="lab-log-path">File: <code id="labMotionLogPath">~/.config/orbit/wifi_disturbance.log</code></div>
+          <div class="lab-log-list" id="labMotionLogList">
+            <div class="lab-log-empty">Fresnel quiet baseline maintained. No disturbances recorded yet.</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -687,6 +815,63 @@ let motionMeanDbm = -65;
 let motionPeakSpike = 0.0;
 let motionCurrentSpike = 0.0;
 let motionDetected = false;
+let motionEvents = [];
+
+function renderMotionLog(events, logPath) {
+  if (logPath && $('labMotionLogPath')) $('labMotionLogPath').textContent = logPath;
+  const list = $('labMotionLogList');
+  if (!list) return;
+
+  const total = events ? events.length : 0;
+  if ($('labMotionLogCount')) {
+    const el = $('labMotionLogCount');
+    el.textContent = total + (total === 1 ? ' event' : ' events');
+    el.className = 'lab-log-badge' + (total > 0 ? ' has-events' : '');
+  }
+  if ($('labMotionTotalLogs')) {
+    $('labMotionTotalLogs').textContent = total + (total === 1 ? ' event' : ' events');
+  }
+
+  if (!events || events.length === 0) {
+    list.innerHTML = '<div class="lab-log-empty">Fresnel quiet baseline maintained. No disturbances recorded yet.</div>';
+    if ($('labMotionLastLog')) {
+      $('labMotionLastLog').textContent = 'Quiet (None)';
+      $('labMotionLastLog').style.color = 'var(--text2)';
+    }
+    return;
+  }
+
+  const sorted = [...events].reverse();
+  const latest = sorted[0];
+  if ($('labMotionLastLog') && latest) {
+    $('labMotionLastLog').textContent = `${latest.time} (+${latest.peak_spike} dB)`;
+    $('labMotionLastLog').style.color = 'var(--danger)';
+  }
+
+  list.innerHTML = sorted.slice(0, 40).map(ev => `
+    <div class="lab-log-item">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="lab-log-time">${ev.time}</span>
+        <span class="lab-log-spike">+${ev.peak_spike} dB spike</span>
+      </div>
+      <div class="lab-log-meta">
+        ${ev.dbm} dBm · base ${ev.baseline} dBm${ev.duration && ev.duration > 0.5 ? ' · ' + ev.duration + 's' : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function clearMotionLog(e) {
+  if (e) e.stopPropagation();
+  try {
+    const res = await fetch('/api/findmy/wifi/motion/log/clear', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      motionEvents = [];
+      renderMotionLog([], null);
+    }
+  } catch (err) {}
+}
 
 function drawLabMotion() {
   const sc = initCanvas('labMotionCanvas');
@@ -871,6 +1056,10 @@ async function pollLabMotion() {
         $('labMotionStatusNote').textContent = motionDetected
           ? 'Human motion detected: RF reflections disturbed by +' + motionCurrentSpike + ' dB (exceeded the ±' + motionThreshold + ' dB quiet envelope).'
           : 'Fresnel multi-path zone is calm. Signal reflections stay within the ±' + motionThreshold + ' dB quiet noise envelope.';
+      }
+      if (data.events != null) {
+        motionEvents = data.events;
+        renderMotionLog(motionEvents, data.log_path);
       }
     }
   } catch (e) {}

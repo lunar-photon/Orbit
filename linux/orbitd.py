@@ -23,6 +23,7 @@ import struct
 import fcntl
 import re
 import ipaddress
+import datetime
 from urllib.parse import urlparse, parse_qs, unquote, quote
 import urllib.request
 import urllib.error
@@ -5025,8 +5026,90 @@ class WifiMotionMonitor:
         self.connected_ssid = ""
         self.connected_bssid = ""
         self.connected_freq = 0.0
+        self.events = collections.deque(maxlen=100)
+        self.active_event = None
+        self.last_disturbance_time = 0.0
+        self.event_counter = 0
+
+        # Primary log path on laptop (~/.config/orbit/wifi_disturbance.log)
+        self.log_file = os.path.join(ORBIT_CONFIG_DIR, 'wifi_disturbance.log')
+        try:
+            os.makedirs(ORBIT_CONFIG_DIR, exist_ok=True)
+            share_dir = os.path.expanduser('~/.local/share/orbit')
+            share_log = os.path.join(share_dir, 'wifi_disturbance.log')
+            if os.path.isdir(share_dir) and not os.path.exists(share_log):
+                try:
+                    os.symlink(self.log_file, share_log)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        self._load_existing_log()
         self.thread = threading.Thread(target=self._loop, daemon=True, name="wifi-motion-monitor")
         self.thread.start()
+
+    def _load_existing_log(self):
+        if not os.path.isfile(self.log_file):
+            return
+        try:
+            with open(self.log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            pattern = re.compile(
+                r'\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s+DISTURBANCE\s+\|\s+Peak:\s+\+?([0-9.]+)\s+dB\s+\|\s+Signal:\s+(-?\d+)\s+dBm\s+\|\s+Baseline:\s+(-?[0-9.]+)\s+dBm\s+\|\s+Variance:\s+([0-9.]+)\s+dB\s+\|\s+SSID:\s+"([^"]*)"'
+            )
+            for line in lines[-100:]:
+                m = pattern.search(line)
+                if m:
+                    self.event_counter += 1
+                    self.events.append({
+                        'id': self.event_counter,
+                        'date': m.group(1),
+                        'time': m.group(2),
+                        'peak_spike': float(m.group(3)),
+                        'spike': float(m.group(3)),
+                        'dbm': int(m.group(4)),
+                        'baseline': float(m.group(5)),
+                        'variance': float(m.group(6)),
+                        'threshold': 1.8,
+                        'ssid': m.group(7),
+                        'duration': 0.5
+                    })
+        except Exception:
+            pass
+
+    def _append_to_file(self, ev):
+        try:
+            line = (f"[{ev['date']} {ev['time']}] DISTURBANCE | Peak: +{ev['peak_spike']:.1f} dB | "
+                    f"Signal: {ev['dbm']} dBm | Baseline: {ev['baseline']:.1f} dBm | "
+                    f"Variance: {ev['variance']:.2f} dB | SSID: \"{ev['ssid']}\"\n")
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(line)
+            print(f"[Orbit Wi-Fi Lab] {ev['time']} Disturbance detected: +{ev['peak_spike']} dB spike (RSSI: {ev['dbm']} dBm, Base: {ev['baseline']} dBm) on {ev['ssid']}", flush=True)
+        except Exception:
+            pass
+
+    def _finalize_event_in_file(self, ev):
+        if ev and ev.get('duration', 0) > 1.0:
+            try:
+                line = (f"[{ev['date']} {ev.get('end_time', ev['time'])}] DISTURBANCE ENDED | "
+                        f"Peak: +{ev['peak_spike']:.1f} dB | Duration: {ev['duration']:.1f}s | "
+                        f"Variance: {ev['variance']:.2f} dB | SSID: \"{ev['ssid']}\"\n")
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(line)
+            except Exception:
+                pass
+
+    def clear_log(self):
+        with self.lock:
+            self.events.clear()
+            self.active_event = None
+            try:
+                with open(self.log_file, 'w', encoding='utf-8') as f:
+                    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    f.write(f"[{now_str}] Disturbance log reset.\n")
+            except Exception:
+                pass
 
     def _loop(self):
         while True:
@@ -5046,6 +5129,50 @@ class WifiMotionMonitor:
                         self.connected_freq = float(m_freq.group(1)) if m_freq else 0.0
                         self.connected_bssid = m_bssid.group(1).lower() if m_bssid else ""
                         self.history.append((now, sig))
+
+                        vals = [s for _, s in self.history]
+                        if len(vals) >= 4:
+                            base_mean = sum(vals) / len(vals)
+                            threshold = 1.8
+                            spike = round(abs(sig - base_mean), 2)
+                            recent = vals[-10:]
+                            rec_mean = sum(recent) / len(recent)
+                            variance = round(math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent)), 2)
+
+                            is_disturbed = (spike > threshold) or (variance > threshold)
+                            if is_disturbed:
+                                if self.active_event and (now - self.last_disturbance_time < 3.0):
+                                    self.active_event['peak_spike'] = max(self.active_event['peak_spike'], spike)
+                                    self.active_event['duration'] = round(now - self.active_event['start_time'], 1)
+                                    self.active_event['variance'] = max(self.active_event['variance'], variance)
+                                    self.active_event['end_time'] = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
+                                else:
+                                    self.event_counter += 1
+                                    t_str = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
+                                    d_str = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d')
+                                    ev = {
+                                        'id': self.event_counter,
+                                        'timestamp': now,
+                                        'start_time': now,
+                                        'time': t_str,
+                                        'date': d_str,
+                                        'spike': spike,
+                                        'peak_spike': spike,
+                                        'dbm': sig,
+                                        'baseline': round(base_mean, 1),
+                                        'threshold': threshold,
+                                        'variance': variance,
+                                        'ssid': self.connected_ssid or 'Wi-Fi',
+                                        'duration': 0.5
+                                    }
+                                    self.active_event = ev
+                                    self.events.append(ev)
+                                    self._append_to_file(ev)
+                                self.last_disturbance_time = now
+                            else:
+                                if self.active_event and (now - self.last_disturbance_time >= 3.0):
+                                    self._finalize_event_in_file(self.active_event)
+                                    self.active_event = None
             except Exception:
                 pass
             time.sleep(0.5)
@@ -5054,6 +5181,8 @@ class WifiMotionMonitor:
         with self.lock:
             vals = [sig for _, sig in self.history]
             cur_sig = self.current_signal if self.current_signal is not None else -60
+            ev_list = list(self.events)
+            last_ev = ev_list[-1] if ev_list else None
             if len(vals) < 4:
                 return {
                     'status': 'ok',
@@ -5067,7 +5196,11 @@ class WifiMotionMonitor:
                     'max_spike': 0.0,
                     'envelope': {'upper': cur_sig + 1.8, 'lower': cur_sig - 1.8},
                     'history': [{'t': t, 'dbm': s, 'env_upper': cur_sig + 1.8, 'env_lower': cur_sig - 1.8, 'spike': 0.0, 'is_spike': False} for t, s in self.history],
-                    'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
+                    'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq},
+                    'events': ev_list,
+                    'last_event': last_ev,
+                    'total_events': len(ev_list),
+                    'log_path': self.log_file
                 }
             recent = vals[-10:]
             mean = sum(recent) / len(recent)
@@ -5109,7 +5242,11 @@ class WifiMotionMonitor:
                     'lower': round(base_mean - threshold, 2)
                 },
                 'history': hist,
-                'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
+                'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq},
+                'events': ev_list,
+                'last_event': last_ev,
+                'total_events': len(ev_list),
+                'log_path': self.log_file
             }
 
 
@@ -6740,6 +6877,21 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
         elif path == '/api/findmy/wifi/motion':
             self.send_json(WIFI_MOTION.status())
             return
+        elif path == '/api/findmy/wifi/motion/log':
+            fmt = qs.get('format', ['json'])[0]
+            if fmt == 'text':
+                if os.path.exists(WIFI_MOTION.log_file):
+                    self.serve_file(WIFI_MOTION.log_file, 'text/plain; charset=utf-8')
+                else:
+                    self.send_text("No disturbance log file yet.")
+                return
+            self.send_json({
+                'status': 'ok',
+                'events': list(WIFI_MOTION.events),
+                'log_path': WIFI_MOTION.log_file,
+                'total': len(WIFI_MOTION.events)
+            })
+            return
         elif path in ('/leaflet/leaflet.js', '/leaflet/leaflet.css'):
             self.serve_file(os.path.join(STATIC_DIR, path.lstrip('/')),
                             'application/javascript' if path.endswith('.js') else 'text/css')
@@ -8280,6 +8432,10 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 'server_t': time.time(),
                 'seq': seq
             })
+            return
+        elif path == '/api/findmy/wifi/motion/log/clear':
+            WIFI_MOTION.clear_log()
+            self.send_json({'status': 'ok', 'message': 'Disturbance log reset'})
             return
         elif path in ('/api/findmy/phone/locate', '/api/findmy/phone/ring', '/api/findmy/phone/nearby'):
             # From the Find my phone page on this computer
