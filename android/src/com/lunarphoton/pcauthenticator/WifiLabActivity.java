@@ -135,8 +135,16 @@ public class WifiLabActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
+        if (webView != null) {
+            webView.evaluateJavascript("(function(){ if (typeof isFullscreenOpen === 'function' && isFullscreenOpen()) { closeLabFullscreen(); return true; } return false; })()", value -> {
+                if (!"true".equals(value)) {
+                    if (webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        super.onBackPressed();
+                    }
+                }
+            });
         } else {
             super.onBackPressed();
         }

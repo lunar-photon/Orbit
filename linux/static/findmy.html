@@ -112,6 +112,153 @@
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.04);
   }
+
+  /* Full screen enlarged card styling */
+  body.has-fullscreen {
+    overflow: hidden !important;
+  }
+  .lab-card-header {
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lab-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lab-expand-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text2);
+    cursor: pointer;
+    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: all 0.15s;
+  }
+  .lab-expand-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+  }
+  .lab-expand-btn .icon-collapse { display: none; }
+  .lab-expand-btn .icon-expand { display: block; }
+
+  .lab-card.fullscreen {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: var(--ground) !important;
+    padding: 16px 16px 36px !important;
+    z-index: 99999 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
+  .lab-card.fullscreen .lab-card-header {
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lab-card.fullscreen .lab-card-header h3 {
+    font-size: 17px;
+  }
+  .lab-card.fullscreen .lab-expand-btn {
+    width: 32px;
+    height: 32px;
+    background: var(--surface);
+    border-color: var(--line);
+    color: var(--text);
+  }
+  .lab-card.fullscreen .lab-expand-btn .icon-collapse { display: block; }
+  .lab-card.fullscreen .lab-expand-btn .icon-expand { display: none; }
+
+  .lab-card.fullscreen .lab-canvas {
+    flex: 0 0 280px;
+    height: 280px !important;
+    min-height: 280px !important;
+    margin: 6px 0 12px;
+    border-radius: 12px;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  @media (min-height: 800px) {
+    .lab-card.fullscreen .lab-canvas {
+      flex: 0 0 320px;
+      height: 320px !important;
+      min-height: 320px !important;
+    }
+  }
+
+  .lab-details {
+    display: none;
+  }
+  .lab-card.fullscreen .lab-details {
+    display: block;
+    margin-top: 10px;
+  }
+  .lab-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .lab-metric {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .lab-metric span {
+    display: block;
+    font-size: 11px;
+    color: var(--text3);
+    margin-bottom: 3px;
+  }
+  .lab-metric b {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .lab-top-aps {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .lab-ap-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .lab-ap-ssid {
+    font-weight: 600;
+    color: var(--text);
+    max-width: 65%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lab-ap-meta {
+    color: var(--text2);
+    font-size: 11px;
+  }
 </style>
 </head>
 <body>
@@ -155,55 +302,120 @@
     <div class="sub">Ambient RF telemetry across visible routers</div>
 
     <!-- 1. Motion & Presence Disturbance -->
-    <div class="lab-card">
-      <div class="lab-card-header">
-        <h3>Presence Disturbance</h3>
-        <span class="lab-badge" id="labMotionBadge">Quiet</span>
+    <div class="lab-card" id="cardMotion">
+      <div class="lab-card-header" onclick="toggleCardFullscreen('cardMotion')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;">Presence Disturbance</h3>
+        </div>
+        <div class="lab-header-actions">
+          <span class="lab-badge" id="labMotionBadge">Quiet</span>
+          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardMotion')">
+            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
+          </button>
+        </div>
       </div>
-      <canvas id="labMotionCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <canvas id="labMotionCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div>Target: <span class="lab-val" id="labMotionTarget">–</span></div>
         <div>Variance: <span class="lab-val" id="labMotionVar">0.0 dB</span></div>
       </div>
+      <div class="lab-details">
+        <div class="lab-grid">
+          <div class="lab-metric"><span>Real-time RSSI</span><b id="labMotionDbm">– dBm</b></div>
+          <div class="lab-metric"><span>Signal Variance</span><b id="labMotionVarDetail">0.0 dB</b></div>
+          <div class="lab-metric"><span>Monitored Link</span><b id="labMotionSsidDetail">–</b></div>
+          <div class="lab-metric"><span>Sampling Window</span><b>1 ms / 2.0 Hz window</b></div>
+        </div>
+      </div>
     </div>
 
     <!-- 2. Spectrum Constellation -->
-    <div class="lab-card">
-      <div class="lab-card-header">
-        <h3>Spectrum Constellation</h3>
-        <span class="lab-badge" id="labSpecCount">0 APs</span>
+    <div class="lab-card" id="cardSpec">
+      <div class="lab-card-header" onclick="toggleCardFullscreen('cardSpec')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;">Spectrum Constellation</h3>
+        </div>
+        <div class="lab-header-actions">
+          <span class="lab-badge" id="labSpecCount">0 APs</span>
+          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardSpec')">
+            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
+          </button>
+        </div>
       </div>
-      <canvas id="labSpecCanvas" class="lab-canvas" style="height: 80px;"></canvas>
+      <canvas id="labSpecCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div>2.4G: <span class="lab-val" id="labSpec24">0</span> · 5G: <span class="lab-val" id="labSpec5">0</span></div>
         <div>Shared: <span class="lab-val" id="labSpecShared">0</span></div>
       </div>
+      <div class="lab-details">
+        <div class="lab-grid">
+          <div class="lab-metric"><span>Total Visible APs</span><b id="labSpecTotalDetail">0 APs</b></div>
+          <div class="lab-metric"><span>2.4 GHz Band</span><b id="labSpec24Detail">0 networks</b></div>
+          <div class="lab-metric"><span>5 GHz Band</span><b id="labSpec5Detail">0 networks</b></div>
+          <div class="lab-metric"><span>Shared with Phone</span><b id="labSpecSharedDetail">0 networks</b></div>
+        </div>
+        <div class="lab-top-aps" id="labTopAps"></div>
+      </div>
     </div>
 
     <!-- 3. Topographic Room Clusters (2D PCA) -->
-    <div class="lab-card">
-      <div class="lab-card-header">
-        <h3>Topographic Room Clusters</h3>
-        <span class="lab-badge" id="labClusterCount">0 spots</span>
+    <div class="lab-card" id="cardCluster">
+      <div class="lab-card-header" onclick="toggleCardFullscreen('cardCluster')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;">Topographic Room Clusters</h3>
+        </div>
+        <div class="lab-header-actions">
+          <span class="lab-badge" id="labClusterCount">0 spots</span>
+          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardCluster')">
+            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
+          </button>
+        </div>
       </div>
-      <canvas id="labClusterCanvas" class="lab-canvas" style="height: 90px;"></canvas>
+      <canvas id="labClusterCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop</div>
         <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone</div>
         <div class="lab-val">2D PCA</div>
       </div>
+      <div class="lab-details">
+        <div class="lab-grid">
+          <div class="lab-metric"><span>Stored Fingerprints</span><b id="labClusterTotalDetail">0 spots</b></div>
+          <div class="lab-metric"><span>Latent Distance</span><b id="labClusterDist">–</b></div>
+          <div class="lab-metric"><span>Laptop Latent (x, y)</span><b id="labClusterLapCoord">–</b></div>
+          <div class="lab-metric"><span>Phone Latent (x, y)</span><b id="labClusterPhoneCoord">–</b></div>
+        </div>
+      </div>
     </div>
 
     <!-- 4. P2P Direct Probe & Latency RTT -->
-    <div class="lab-card">
-      <div class="lab-card-header">
-        <h3>Peer-to-Peer RTT Timing</h3>
-        <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
+    <div class="lab-card" id="cardP2p">
+      <div class="lab-card-header" onclick="toggleCardFullscreen('cardP2p')">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;">Peer-to-Peer RTT Timing</h3>
+        </div>
+        <div class="lab-header-actions">
+          <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
+          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardP2p')">
+            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
+          </button>
+        </div>
       </div>
-      <canvas id="labP2pCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <canvas id="labP2pCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div>Latency: <span class="lab-val" id="labP2pRtt">–</span></div>
         <div>Jitter: <span class="lab-val" id="labP2pJitter">–</span></div>
+      </div>
+      <div class="lab-details">
+        <div class="lab-grid">
+          <div class="lab-metric"><span>Current Latency</span><b id="labP2pRttDetail">– ms</b></div>
+          <div class="lab-metric"><span>Latency Jitter</span><b id="labP2pJitterDetail">– ms</b></div>
+          <div class="lab-metric"><span>Min / Max Range</span><b id="labP2pMinMax">–</b></div>
+          <div class="lab-metric"><span>Packet Sequence</span><b id="labP2pSeqDetail">#0</b></div>
+        </div>
       </div>
     </div>
   </div>
@@ -380,14 +592,44 @@ if (location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
   switchTab('lab');
 }
 
+// ---- Fullscreen Card Enlarge / Collapse ----
+function isFullscreenOpen() {
+  return document.body.classList.contains('has-fullscreen');
+}
+
+function closeLabFullscreen() {
+  document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
+  document.body.classList.remove('has-fullscreen');
+  setTimeout(() => {
+    drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+  }, 40);
+}
+
+function toggleCardFullscreen(cardId) {
+  const card = $(cardId);
+  if (!card) return;
+  const isCurrently = card.classList.contains('fullscreen');
+  if (isCurrently) {
+    closeLabFullscreen();
+  } else {
+    document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
+    card.classList.add('fullscreen');
+    document.body.classList.add('has-fullscreen');
+    setTimeout(() => {
+      drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+    }, 40);
+  }
+}
+
 // ---- Wi-Fi Lab Canvas Drawing & Polling ----
 function initCanvas(id) {
   const c = $(id);
   if (!c) return null;
   const rect = c.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
   const dpr = window.devicePixelRatio || 1;
-  c.width = rect.width * dpr;
-  c.height = rect.height * dpr;
+  c.width = Math.round(rect.width * dpr);
+  c.height = Math.round(rect.height * dpr);
   const ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
   return { ctx: ctx, width: rect.width, height: rect.height };
@@ -401,25 +643,41 @@ function drawLabMotion() {
   const { ctx, width, height } = sc;
   ctx.clearRect(0, 0, width, height);
 
+  const minVal = -95, maxVal = -40;
+  const isEnlarged = height > 140;
+
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-  ctx.stroke();
+
+  if (isEnlarged) {
+    [-50, -70, -90].forEach(val => {
+      const norm = (val - minVal) / (maxVal - minVal);
+      const y = height - (norm * (height - 30) + 15);
+      ctx.beginPath();
+      ctx.moveTo(0, y); ctx.lineTo(width, y);
+      ctx.stroke();
+      ctx.fillStyle = '#7D8593';
+      ctx.font = '10px system-ui';
+      ctx.fillText(val + ' dBm', 8, y - 4);
+    });
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+    ctx.stroke();
+  }
 
   if (!motionHist.length) return;
-  const pts = motionHist.slice(-30);
+  const pts = motionHist.slice(isEnlarged ? -60 : -30);
   const step = width / Math.max(pts.length - 1, 1);
-  const minVal = -95, maxVal = -40;
 
   ctx.beginPath();
   ctx.strokeStyle = '#46D39A';
-  ctx.lineWidth = 1.8;
+  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
   ctx.lineJoin = 'round';
 
   pts.forEach((pt, i) => {
     const norm = ((pt.dbm || -70) - minVal) / (maxVal - minVal);
-    const y = height - (norm * (height - 20) + 10);
+    const y = height - (norm * (height - (isEnlarged ? 30 : 20)) + (isEnlarged ? 15 : 10));
     const x = i * step;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -436,6 +694,8 @@ async function pollLabMotion() {
       motionHist = data.history || [];
       drawLabMotion();
       $('labMotionVar').textContent = data.variance + ' dB';
+      if ($('labMotionVarDetail')) $('labMotionVarDetail').textContent = data.variance + ' dB';
+      if ($('labMotionDbm')) $('labMotionDbm').textContent = (data.current_dbm != null ? data.current_dbm + ' dBm' : '–');
       const b = $('labMotionBadge');
       if (data.motion_detected) {
         b.textContent = 'Movement Detected'; b.className = 'lab-badge alert';
@@ -443,7 +703,9 @@ async function pollLabMotion() {
         b.textContent = 'Room Quiet'; b.className = 'lab-badge active';
       }
       if (data.target && data.target.ssid) {
-        $('labMotionTarget').textContent = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+        const ssidStr = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+        $('labMotionTarget').textContent = ssidStr;
+        if ($('labMotionSsidDetail')) $('labMotionSsidDetail').textContent = data.target.ssid;
       }
     }
   } catch (e) {}
@@ -457,16 +719,30 @@ function drawLabSpectrum() {
   const { ctx, width, height } = sc;
   ctx.clearRect(0, 0, width, height);
 
+  const isEnlarged = height > 140;
   const midX = width * 0.45;
   ctx.strokeStyle = 'rgba(255,255,255,0.08)';
   ctx.setLineDash([3, 3]);
-  ctx.beginPath(); ctx.moveTo(midX, 4); ctx.lineTo(midX, height - 16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(midX, 4); ctx.lineTo(midX, height - 18); ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.fillStyle = '#7D8593';
-  ctx.font = '9px system-ui';
-  ctx.fillText('2.4 GHz', 8, 12);
-  ctx.fillText('5 GHz', midX + 8, 12);
+  ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
+  ctx.fillText('2.4 GHz', 10, 14);
+  ctx.fillText('5 GHz', midX + 10, 14);
+
+  if (isEnlarged) {
+    ctx.fillStyle = '#4A5260';
+    ctx.font = '9px system-ui';
+    [1, 6, 11].forEach(ch => {
+      const x = 14 + ((ch - 1) / 13) * (midX - 28);
+      ctx.fillText('ch ' + ch, x - 10, height - 4);
+    });
+    [36, 48, 149, 161].forEach(ch => {
+      const x = (midX + 14) + Math.max(0, Math.min(1, (ch - 36) / (165 - 36))) * (width - midX - 28);
+      ctx.fillText('ch ' + ch, x - 12, height - 4);
+    });
+  }
 
   if (!specNetworks.length) return;
   specNetworks.forEach(ap => {
@@ -474,19 +750,27 @@ function drawLabSpectrum() {
     let x = is24 ? 14 + ((ap.chan - 1) / 13) * (midX - 28)
                  : (midX + 14) + Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36))) * (width - midX - 28);
     const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
-    const y = height - 18 - normSig * (height - 36);
+    const baseline = isEnlarged ? height - 20 : height - 18;
+    const y = baseline - normSig * (baseline - (isEnlarged ? 40 : 20));
 
     ctx.beginPath();
-    ctx.moveTo(x, height - 18);
+    ctx.moveTo(x, baseline);
     ctx.lineTo(x, y);
-    ctx.strokeStyle = ap.shared ? 'rgba(255,255,255,0.45)' : (is24 ? 'rgba(142,168,255,0.3)' : 'rgba(70,211,154,0.3)');
-    ctx.lineWidth = ap.connected ? 2.5 : 1.2;
+    ctx.strokeStyle = ap.shared ? 'rgba(255,255,255,0.5)' : (is24 ? 'rgba(142,168,255,0.35)' : 'rgba(70,211,154,0.35)');
+    ctx.lineWidth = ap.connected ? 3 : (isEnlarged ? 1.8 : 1.2);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.arc(x, y, ap.connected ? 4 : (ap.shared ? 3.5 : 2.5), 0, Math.PI * 2);
+    ctx.arc(x, y, ap.connected ? 5 : (ap.shared ? 4 : (isEnlarged ? 3.5 : 2.5)), 0, Math.PI * 2);
     ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
     ctx.fill();
+
+    if (isEnlarged && (ap.connected || (ap.dbm > -60 && ap.ssid))) {
+      ctx.fillStyle = '#ECEEF1';
+      ctx.font = '9px system-ui';
+      const label = ap.ssid.length > 12 ? ap.ssid.slice(0, 10) + '…' : ap.ssid;
+      ctx.fillText(label, Math.max(4, Math.min(width - 50, x - 16)), Math.max(26, y - 6));
+    }
   });
 }
 
@@ -498,10 +782,29 @@ async function pollLabSpectrum() {
     if (data.status === 'ok') {
       specNetworks = data.networks || [];
       drawLabSpectrum();
-      $('labSpecCount').textContent = data.total + ' APs';
-      $('labSpec24').textContent = (data.bands && data.bands['2.4GHz']) || 0;
-      $('labSpec5').textContent = (data.bands && data.bands['5GHz']) || 0;
+      const countStr = data.total + ' APs';
+      $('labSpecCount').textContent = countStr;
+      const b24 = (data.bands && data.bands['2.4GHz']) || 0;
+      const b5 = (data.bands && data.bands['5GHz']) || 0;
+      $('labSpec24').textContent = b24;
+      $('labSpec5').textContent = b5;
       $('labSpecShared').textContent = data.shared_count || 0;
+
+      if ($('labSpecTotalDetail')) $('labSpecTotalDetail').textContent = countStr;
+      if ($('labSpec24Detail')) $('labSpec24Detail').textContent = b24 + ' networks';
+      if ($('labSpec5Detail')) $('labSpec5Detail').textContent = b5 + ' networks';
+      if ($('labSpecSharedDetail')) $('labSpecSharedDetail').textContent = (data.shared_count || 0) + ' networks';
+
+      const topList = $('labTopAps');
+      if (topList && specNetworks.length) {
+        const sorted = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 5);
+        topList.innerHTML = sorted.map(ap => `
+          <div class="lab-ap-row">
+            <div class="lab-ap-ssid">${ap.ssid || 'Hidden AP'}</div>
+            <div class="lab-ap-meta">${ap.freq < 3000 ? '2.4G' : '5G'} · Ch ${ap.chan} · <b>${ap.dbm} dBm</b></div>
+          </div>
+        `).join('');
+      }
     }
   } catch (e) {}
 }
@@ -514,11 +817,22 @@ function drawLabClusters() {
   const { ctx, width, height } = sc;
   ctx.clearRect(0, 0, width, height);
 
+  const isEnlarged = height > 140;
+
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.beginPath();
   ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
   ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
   ctx.stroke();
+
+  if (isEnlarged) {
+    [0.35, 0.7].forEach(ratio => {
+      ctx.beginPath();
+      ctx.arc(width / 2, height / 2, (Math.min(width, height) / 2 - 20) * ratio, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      ctx.stroke();
+    });
+  }
 
   if (!clusterData || !clusterData.clusters) return;
   const pts = clusterData.clusters;
@@ -530,26 +844,34 @@ function drawLabClusters() {
   const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
   const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
 
-  const toScreen = (x, y) => [width / 2 + (x / padX) * (width / 2 - 14), height / 2 - (y / padY) * (height / 2 - 14)];
+  const toScreen = (x, y) => [width / 2 + (x / padX) * (width / 2 - 16), height / 2 - (y / padY) * (height / 2 - 16)];
 
   pts.forEach(pt => {
     const [sx, sy] = toScreen(pt.x, pt.y);
-    ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(sx, sy, isEnlarged ? 4 : 3, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; ctx.fill();
   });
 
   if (clusterData.live_laptop) {
     const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-    ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(lx, ly, isEnlarged ? 7 : 5, 0, Math.PI * 2);
     ctx.fillStyle = '#46D39A'; ctx.fill();
+    if (isEnlarged) {
+      ctx.fillStyle = '#46D39A'; ctx.font = '10px system-ui';
+      ctx.fillText('Laptop', lx + 9, ly + 3);
+    }
   }
   if (clusterData.live_phone) {
     const [px, py] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
-    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(px, py, isEnlarged ? 7 : 5, 0, Math.PI * 2);
     ctx.fillStyle = '#8EA8FF'; ctx.fill();
+    if (isEnlarged) {
+      ctx.fillStyle = '#8EA8FF'; ctx.font = '10px system-ui';
+      ctx.fillText('Phone', px + 9, py + 3);
+    }
     if (clusterData.live_laptop) {
       const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-      ctx.beginPath(); ctx.setLineDash([2, 2]); ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(255,255,255,0.45)';
       ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
     }
   }
@@ -563,7 +885,20 @@ async function pollLabClusters() {
     if (data.status === 'ok') {
       clusterData = data;
       drawLabClusters();
-      $('labClusterCount').textContent = (data.total_fingerprints || (data.clusters && data.clusters.length) || 0) + ' spots';
+      const spotsCount = (data.total_fingerprints || (data.clusters && data.clusters.length) || 0) + ' spots';
+      $('labClusterCount').textContent = spotsCount;
+      if ($('labClusterTotalDetail')) $('labClusterTotalDetail').textContent = spotsCount;
+
+      if (data.live_laptop && $('labClusterLapCoord')) {
+        $('labClusterLapCoord').textContent = `(${data.live_laptop.x.toFixed(2)}, ${data.live_laptop.y.toFixed(2)})`;
+      }
+      if (data.live_phone && $('labClusterPhoneCoord')) {
+        $('labClusterPhoneCoord').textContent = `(${data.live_phone.x.toFixed(2)}, ${data.live_phone.y.toFixed(2)})`;
+      }
+      if (data.live_laptop && data.live_phone && $('labClusterDist')) {
+        const d = Math.hypot(data.live_laptop.x - data.live_phone.x, data.live_laptop.y - data.live_phone.y);
+        $('labClusterDist').textContent = d.toFixed(2) + ' latent units';
+      }
     }
   } catch (e) {}
 }
@@ -578,24 +913,39 @@ function drawLabP2p() {
   const { ctx, width, height } = sc;
   ctx.clearRect(0, 0, width, height);
 
+  const isEnlarged = height > 140;
+  const maxMs = 40;
+
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.beginPath();
-  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  if (isEnlarged) {
+    [10, 20, 30].forEach(ms => {
+      const norm = ms / maxMs;
+      const y = height - (norm * (height - 30) + 15);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      ctx.fillStyle = '#7D8593';
+      ctx.font = '10px system-ui';
+      ctx.fillText(ms + ' ms', 8, y - 4);
+    });
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+    ctx.stroke();
+  }
 
   if (!p2pHist.length) return;
-  const pts = p2pHist.slice(-25);
+  const pts = p2pHist.slice(isEnlarged ? -60 : -25);
   const step = width / Math.max(pts.length - 1, 1);
-  const maxMs = 40;
 
   ctx.beginPath();
   ctx.strokeStyle = '#8EA8FF';
-  ctx.lineWidth = 1.8;
+  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
   ctx.lineJoin = 'round';
 
   pts.forEach((ms, i) => {
     const norm = Math.min(1, ms / maxMs);
-    const y = height - (norm * (height - 20) + 10);
+    const y = height - (norm * (height - (isEnlarged ? 30 : 20)) + (isEnlarged ? 15 : 10));
     const x = i * step;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -620,8 +970,19 @@ async function sendLabP2p() {
       lastP2pRtt = rtt;
       p2pHist.push(rtt);
       drawLabP2p();
-      $('labP2pRtt').textContent = rtt + ' ms';
-      $('labP2pJitter').textContent = '±' + jitter + ' ms';
+      const rttStr = rtt + ' ms';
+      const jitStr = '±' + jitter + ' ms';
+      $('labP2pRtt').textContent = rttStr;
+      $('labP2pJitter').textContent = jitStr;
+
+      if ($('labP2pRttDetail')) $('labP2pRttDetail').textContent = rttStr;
+      if ($('labP2pJitterDetail')) $('labP2pJitterDetail').textContent = jitStr;
+      if ($('labP2pSeqDetail')) $('labP2pSeqDetail').textContent = '#' + p2pSeq;
+      if ($('labP2pMinMax') && p2pHist.length) {
+        const minVal = Math.min(...p2pHist);
+        const maxVal = Math.max(...p2pHist);
+        $('labP2pMinMax').textContent = minVal + ' / ' + maxVal + ' ms';
+      }
     }
   } catch (e) {}
 }
