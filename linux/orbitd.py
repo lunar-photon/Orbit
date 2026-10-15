@@ -4936,6 +4936,18 @@ def last_known_gps_distance():
     return None, None, None, None, None
 
 
+def gps_apart_margin(max_age=900):
+    """How far apart the latest phone and computer fixes are beyond both their error circles, in
+    metres (0 or less: they could be in the same place), or None when either fix is old."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        fix = db.execute('SELECT lat, lng, acc, t FROM fixes ORDER BY t DESC LIMIT 1').fetchone()
+        lap = db.execute('SELECT lat, lng, acc, t FROM laptop ORDER BY t DESC LIMIT 1').fetchone()
+    now = time.time()
+    if not fix or not lap or fix[0] is None or lap[0] is None or now - fix[3] > max_age or now - lap[3] > max_age:
+        return None
+    return _metres(fix[0], fix[1], lap[0], lap[1]) - (fix[2] or 100) - (lap[2] or 100)
+
+
 def wifi_zone(score, common_count, strong_count, signal_gap, apart=None, method='wifi_scans'):
     """Classifies proximity into honest zones: 'Same room', 'Next room or two', 'Same building', or 'Elsewhere'."""
     if apart is not None and apart > 80:
@@ -6293,6 +6305,7 @@ class WalkAway:
         self.bt_on_since = 0.0
         self.bt_asked_at = 0.0        # last time we asked the phone to advertise
         self.bt_recheck_at = 0.0      # don't spend Bluetooth again until this time
+        self.last_anchor = None
 
     def contact(self, tunnel):
         now = time.time()
@@ -6332,13 +6345,16 @@ class WalkAway:
             self.far += 1
 
     def away(self):
-        # Placed far by the fingerprint map (> 50 m): gone
-        apart = NEARBY.get('apart')
-        if apart is not None and apart > 50:
-            return True
-
-        left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
-        return left_network or self.far >= 2
+        """Why the phone counts as gone (a short reason), or None while it may still be near."""
+        # Placed apart by more than 50 m beyond both positions' error, measured just now
+        margin = NEARBY.get('apart_margin')
+        if margin is not None and margin > 50 and time.time() - NEARBY.get('t', 0) < 90:
+            return f"{round(NEARBY.get('apart') or 0)} m apart"
+        if self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE:
+            return "left this network"
+        if self.far >= 2:
+            return "no Wi-Fi in common"
+        return None
 
     def _bt_near(self):
         """Is the phone's Bluetooth heard right now (truly within a room or so)?"""
@@ -6389,11 +6405,12 @@ class WalkAway:
                 if last_locked_state is not False:
                     last_locked_state = False
                     self.locked_episode = False
+                    self.far = 0                  # you're here: only new evidence may lock again
                     unlocked_at = time.time()
                     sys.stderr.write("Find my: PC session unlocked, monitoring walk-away state\n")
 
-                # Give a 20-second grace window after unlocking
-                if time.time() - unlocked_at < 20:
+                # You just unlocked it, so you're here: a minute before it can count you gone
+                if time.time() - unlocked_at < 60:
                     continue
 
                 # Cheap Wi-Fi anchor: on the laptop's own access point, strongly → certainly near,
@@ -6419,16 +6436,18 @@ class WalkAway:
                     self.bt_recheck_at = time.time() + self.BT_RECHECK
                     self._bt_power(False)         # confirmed near: rest Bluetooth
                     continue
-                if not self.away():
+                why = self.away()
+                if not why:
                     continue
 
                 session = graphical_session()
                 subprocess.run(['loginctl', 'lock-session', session], timeout=5)
                 self.locked_episode = True
                 last_locked_state = True
+                self.far = 0
                 self._bt_power(False)
-                sys.stderr.write("Find my: the phone walked away (Wi-Fi and Bluetooth agree), locked this computer\n")
-                findmy_event('walk_away_lock', {}, notify=False)
+                sys.stderr.write(f"Find my: the phone walked away ({why}, Bluetooth didn't hear it), locked this computer\n")
+                findmy_event('walk_away_lock', {'why': why}, notify=False)
                 auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "walk_away_lock",
                                                       "t": time.time()}) + "\n")
             except Exception as e:
@@ -9104,13 +9123,28 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 'shared_aps': common_aps[:20]
             }
 
+            # How far apart beyond both positions' error: only this can say "gone" (a 52 m gap
+            # between two fixes good to 100 m and 29 m says nothing)
+            if method == 'fingerprint_map' and extra.get('apart') is not None:
+                apart_margin = (extra['apart'] - ((extra.get('phone_at') or {}).get('acc') or 50)
+                                - ((extra.get('laptop_at') or {}).get('acc') or 50))
+            else:
+                apart_margin = gps_apart_margin()
+
             if purpose == 'presence':
                 # Signal-strength anchor: the phone's connected access point (first entry it sends),
-                # seen strongly by both — the surest sign they're in the same place.
+                # heard well by both: the surest sign they're in the same place. -80 dBm, not tighter:
+                # a phone in a pocket at the same desk reads -70s and must not drop the anchor.
                 conn = phone_raw[0] if phone_raw else None
                 cb = _bssid(conn.get('bssid')) if isinstance(conn, dict) else None
                 cr = _num(conn.get('rssi'), -127, 0) if isinstance(conn, dict) else None
-                anchored = bool(cb and cb in mine and cr is not None and cr > -72 and mine[cb] > -75)
+                anchored = bool(cb and cb in mine and cr is not None and cr > -80 and mine[cb] > -80)
+                if anchored != WALK_AWAY.last_anchor:
+                    WALK_AWAY.last_anchor = anchored
+                    sys.stderr.write(f"Find my: phone {'on' if anchored else 'off'} this computer's access point "
+                                     f"(phone {cr} dBm, here {mine.get(cb) if cb else None} dBm, "
+                                     f"{len(common_aps)} networks in common, apart margin "
+                                     f"{None if apart_margin is None else round(apart_margin)} m)\n")
                 WALK_AWAY.scan(score, phone_ap_count=len(theirs), common_count=len(common_aps),
                                strong_count=strong_count, anchored=anchored)
             NEARBY.update(
@@ -9121,6 +9155,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 phone_at=extra.get('phone_at'),
                 laptop_at=extra.get('laptop_at'),
                 apart=extra.get('apart'),
+                apart_margin=apart_margin,
                 signal_gap=round(signal_gap, 1) if signal_gap is not None else None,
                 common_count=len(common_aps),
                 strong_count=strong_count,
