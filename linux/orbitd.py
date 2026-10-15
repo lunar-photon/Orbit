@@ -4392,6 +4392,7 @@ def _findmy_db():
         CREATE TABLE IF NOT EXISTS events (t REAL, kind TEXT, detail TEXT);
         CREATE TABLE IF NOT EXISTS laptop (t REAL, lat REAL, lng REAL, acc REAL, networks INTEGER, ssid TEXT);
         CREATE TABLE IF NOT EXISTS fingerprints (t REAL, lat REAL, lng REAL, acc REAL, scan TEXT);
+        CREATE TABLE IF NOT EXISTS calibration (key TEXT PRIMARY KEY, val TEXT);
     ''')
     return db
 
@@ -4451,7 +4452,8 @@ def findmy_record(report):
         aacc = _num(anchor.get('acc'), 0, 1e6)
         # a fingerprint: the whole Wi-Fi picture at a well-known spot (see fingerprint_locate)
         fp = phone_scan(report.get('wifi'))
-        if alat is not None and alng is not None and aacc is not None and aacc <= 60 and len(fp) >= 3:
+        # (indoors the phone's fixes are rarely better than ~100 m: those count too, for less)
+        if alat is not None and alng is not None and aacc is not None and aacc <= 100 and len(fp) >= 3:
             db.execute('INSERT INTO fingerprints VALUES (?,?,?,?,?)', (now, alat, alng, aacc, json.dumps(fp)))
             db.execute('DELETE FROM fingerprints WHERE rowid IN (SELECT rowid FROM fingerprints ORDER BY t DESC LIMIT -1 OFFSET 6000)')
             _FINGERPRINTS['stale'] = True
@@ -4623,7 +4625,8 @@ def fingerprint_locate(scan):
         return None
     scored.sort()
     best = scored[:4]
-    ws = [1 / (d + 2) ** 2 for d, _, _, _ in best]
+    # closest by signal counts most; a fingerprint from a rough fix counts less
+    ws = [1 / (d + 2) ** 2 * 30 / max(acc or 30, 30) for d, _, _, acc in best]
     total = sum(ws)
     lat = sum(w * a for w, (_, a, _, _) in zip(ws, best)) / total
     lng = sum(w * b for w, (_, _, b, _) in zip(ws, best)) / total
@@ -4755,22 +4758,104 @@ LAPTOP_RINGER = LaptopRinger()
 # side they see the same ones, about equally strong; rooms apart the strengths differ; far apart
 # they share nothing. That likeness (0 to 1) drives the nearby finder on both sides and the
 # walk-away lock.
+# ---- Antenna calibration between phone and laptop ----
+# Phones and laptops read the same AP at different signal strengths due to antenna size/casing.
+# When acoustic chirp confirms they are in the same room, Orbit learns this dBm offset and normalizes it.
+_ANTENNA_CALIBRATION = {'offset_dbm': 0.0, 'samples': [], 'updated': 0.0}
+
+
+def get_antenna_offset():
+    global _ANTENNA_CALIBRATION
+    if not _ANTENNA_CALIBRATION.get('samples'):
+        try:
+            with _FINDMY_LOCK, closing(_findmy_db()) as db:
+                row = db.execute("SELECT val FROM calibration WHERE key='antenna_offset'").fetchone()
+                if row:
+                    data = json.loads(row[0])
+                    if isinstance(data, dict):
+                        _ANTENNA_CALIBRATION.update(data)
+        except Exception:
+            pass
+    return float(_ANTENNA_CALIBRATION.get('offset_dbm', 0.0))
+
+
+def record_antenna_calibration(phone_scan_dict, laptop_scan_dict):
+    """Calibrates antenna sensitivity offset between phone and laptop when confirmed in the same room.
+    Learns median (phone_rssi - laptop_rssi) across shared APs with good signal (> -80 dBm)."""
+    global _ANTENNA_CALIBRATION
+    diffs = []
+    for b, p_rssi in phone_scan_dict.items():
+        if b in laptop_scan_dict:
+            l_rssi = laptop_scan_dict[b]
+            if p_rssi >= -80 or l_rssi >= -80:
+                diffs.append(p_rssi - l_rssi)
+    if not diffs:
+        return get_antenna_offset()
+    current_samples = list(_ANTENNA_CALIBRATION.get('samples', []))
+    current_samples.extend(diffs)
+    current_samples = current_samples[-40:]
+    sorted_samples = sorted(current_samples)
+    median_offset = sorted_samples[len(sorted_samples) // 2]
+    _ANTENNA_CALIBRATION = {
+        'offset_dbm': round(float(median_offset), 1),
+        'samples': current_samples,
+        'updated': time.time()
+    }
+    try:
+        with _FINDMY_LOCK, closing(_findmy_db()) as db:
+            db.execute("INSERT OR REPLACE INTO calibration (key, val) VALUES ('antenna_offset', ?)",
+                       (json.dumps(_ANTENNA_CALIBRATION),))
+            db.commit()
+    except Exception:
+        pass
+    return _ANTENNA_CALIBRATION['offset_dbm']
+
+
+# ---- Wi-Fi temporal averaging: last 3-5 scans smoothed, transient 1-off networks pruned ----
 _LAPTOP_SCAN = {'t': 0.0, 'aps': {}, 'details': {}}
 _LAPTOP_SCAN_LOCK = threading.Lock()
+_LAPTOP_SCAN_HISTORY = collections.deque(maxlen=5)
+_PHONE_SCAN_HISTORY = collections.deque(maxlen=5)
+
+
+def _average_scan_history(history, now=None):
+    """Averages dBm per BSSID over recent scans (last 90s) and filters out transient 1-off networks."""
+    if now is None:
+        now = time.time()
+    valid = [item for item in history if now - item.get('t', 0) <= 90]
+    if not valid:
+        return {}
+    if len(valid) == 1:
+        return dict(valid[0].get('aps', {}))
+
+    counts = {}
+    sums = {}
+    for entry in valid:
+        for b, dbm in entry.get('aps', {}).items():
+            counts[b] = counts.get(b, 0) + 1
+            sums[b] = sums.get(b, 0) + dbm
+
+    averaged = {}
+    for b, c in counts.items():
+        # Ignore networks seen only once to eliminate transient scan noise
+        if c >= 2 or (c == 1 and (sums[b] / c) >= -65 and len(valid) <= 2):
+            averaged[b] = round(sums[b] / c)
+    return averaged
 
 
 def laptop_scan_now(max_age=15):
-    """{bssid: dBm} this computer sees, rescanned when older than max_age seconds."""
+    """Temporally smoothed {bssid: dBm} this computer sees across recent scans."""
     with _LAPTOP_SCAN_LOCK:
-        if time.time() - _LAPTOP_SCAN['t'] > max_age:
+        now = time.time()
+        if now - _LAPTOP_SCAN['t'] > max_age:
             aps = laptop_wifi_scan(rescan=True)
             if aps:
-                _LAPTOP_SCAN.update(
-                    t=time.time(),
-                    aps={b: dbm for b, _, dbm, _ in aps},
-                    details={b: {'ssid': ssid, 'dbm': dbm, 'connected': conn} for b, ssid, dbm, conn in aps}
-                )
-        return dict(_LAPTOP_SCAN['aps'])
+                scan_dict = {b: dbm for b, _, dbm, _ in aps}
+                details_dict = {b: {'ssid': ssid, 'dbm': dbm, 'connected': conn} for b, ssid, dbm, conn in aps}
+                _LAPTOP_SCAN.update(t=now, aps=scan_dict, details=details_dict)
+                _LAPTOP_SCAN_HISTORY.append({'t': now, 'aps': scan_dict, 'details': details_dict})
+        smoothed = _average_scan_history(_LAPTOP_SCAN_HISTORY, now=now)
+        return smoothed if smoothed else dict(_LAPTOP_SCAN.get('aps', {}))
 
 
 def laptop_scan_details():
@@ -4778,8 +4863,16 @@ def laptop_scan_details():
         return dict(_LAPTOP_SCAN.get('details', {}))
 
 
-def _wifi_identity_match(phone_raw, theirs, mine):
-    """Matches phone Wi-Fi scan with laptop Wi-Fi scan to identify shared networks and signal gap."""
+def smooth_phone_scan(raw_theirs):
+    now = time.time()
+    _PHONE_SCAN_HISTORY.append({'t': now, 'aps': raw_theirs})
+    smoothed = _average_scan_history(_PHONE_SCAN_HISTORY, now=now)
+    return smoothed if smoothed else raw_theirs
+
+
+def _wifi_identity_match(phone_raw, theirs, mine, offset_dbm=0.0):
+    """Matches phone Wi-Fi scan with laptop Wi-Fi scan to identify shared networks and signal gap.
+    Normalizes phone RSSI by subtracting antenna offset and focuses on strong shared APs (>= -75 dBm)."""
     phone_ssids = {}
     for ap in (phone_raw or [])[:120]:
         b = _bssid(ap.get('bssid'))
@@ -4788,23 +4881,37 @@ def _wifi_identity_match(phone_raw, theirs, mine):
 
     laptop_details = laptop_scan_details()
     common = []
+    strong_common = []
     gap_sum = 0.0
+    strong_gap_sum = 0.0
     for b, p_rssi in theirs.items():
         if b in mine:
             l_rssi = mine[b]
-            diff = abs(p_rssi - l_rssi)
+            p_rssi_adj = p_rssi - offset_dbm
+            diff = abs(p_rssi_adj - l_rssi)
             gap_sum += diff
             ssid = phone_ssids.get(b) or (laptop_details.get(b, {}).get('ssid') if laptop_details else '') or ''
-            common.append({
+            is_strong = (p_rssi >= -75 or l_rssi >= -75)
+            item = {
                 'bssid': b,
                 'ssid': ssid,
                 'phone_rssi': p_rssi,
+                'phone_calibrated': round(p_rssi_adj, 1),
                 'laptop_rssi': l_rssi,
-                'diff': round(diff, 1)
-            })
-    common.sort(key=lambda x: x['phone_rssi'], reverse=True)
-    signal_gap = (gap_sum / len(common)) if common else None
-    return common, signal_gap
+                'diff': round(diff, 1),
+                'strong': is_strong
+            }
+            common.append(item)
+            if is_strong:
+                strong_common.append(item)
+                strong_gap_sum += diff
+
+    common.sort(key=lambda x: (x['strong'], x['phone_rssi']), reverse=True)
+    if strong_common:
+        signal_gap = strong_gap_sum / len(strong_common)
+    else:
+        signal_gap = (gap_sum / len(common)) if common else None
+    return common, signal_gap, len(strong_common)
 
 
 def last_known_gps_distance():
@@ -4817,28 +4924,65 @@ def last_known_gps_distance():
     return None, None, None, None, None
 
 
+def wifi_zone(score, common_count, strong_count, signal_gap, apart=None, method='wifi_scans'):
+    """Classifies proximity into honest zones: 'Same room', 'Next room or two', 'Same building', or 'Elsewhere'."""
+    if apart is not None and apart > 80:
+        return "Elsewhere"
+    if common_count == 0 or score is None or score < 0.12:
+        return "Elsewhere"
+
+    if method == 'fingerprint_map' and apart is not None:
+        if apart <= 7:
+            return "Same room"
+        elif apart <= 22:
+            return "Next room or two"
+        elif apart <= 75:
+            return "Same building"
+        else:
+            return "Elsewhere"
+
+    # From calibrated Wi-Fi identity recognition:
+    if (score >= 0.62 and (strong_count >= 1 or common_count >= 3) and (signal_gap is None or signal_gap <= 8.5)) or (score >= 0.78 and (signal_gap is None or signal_gap <= 7.0)):
+        return "Same room"
+
+    if (score >= 0.30 and common_count >= 2 and (signal_gap is None or signal_gap <= 16.0)) or score >= 0.45:
+        return "Next room or two"
+
+    if common_count >= 1 or score >= 0.12:
+        return "Same building"
+
+    return "Elsewhere"
+
+
 def wifi_distance_estimate(score, signal_gap, common_count, apart=None):
-    """Estimates distance in metres between phone and laptop from Wi-Fi identity recognition."""
+    """Rough coordinate separation in metres when available, or estimation fallback."""
+    if apart is not None and apart >= 0:
+        return float(apart)
     if common_count and common_count > 0 and score is not None and score >= 0.15:
         gap_factor = (signal_gap * 0.35) if signal_gap is not None else 0.0
         dist = 0.8 + 25.0 * math.pow(max(0.0, 1.0 - score), 1.8) + gap_factor
         return round(max(0.4, dist), 1)
-    if apart is not None and apart >= 0:
-        return float(apart)
     return None
 
 
-def wifi_likeness(a, b):
-    """How alike two scans ({bssid: dBm}) are: 1 side by side, 0 nothing in common, None if
-    either saw nothing. Networks count by how strong they are: a strong one seen by only one
-    side says more than a faint one."""
-    keys = {k for k, v in a.items() if v > -88} | {k for k, v in b.items() if v > -88}
-    if not a or not b or not keys:
+def wifi_likeness(a, b, offset_dbm=0.0):
+    """How alike two scans ({bssid: dBm}) are: 1 side by side, 0 nothing in common.
+    Calibrates antenna offset, and gives priority to strong shared APs (above -75 dBm)."""
+    if not a or not b:
         return None
+    if offset_dbm:
+        a = {k: v - offset_dbm for k, v in a.items()}
+    keys = {k for k, v in a.items() if v > -88} | {k for k, v in b.items() if v > -88}
+    if not keys:
+        return None
+    # Check if strong APs exist (above -75 dBm); weak fringe APs mostly add noise
+    has_strong = any(a.get(k, -100) >= -75 or b.get(k, -100) >= -75 for k in keys)
     num = den = 0.0
     for k in keys:
         pa, pb = a.get(k), b.get(k)
         w = _signal_weight(max(v for v in (pa, pb) if v is not None))
+        if has_strong and not ((pa is not None and pa >= -75) or (pb is not None and pb >= -75)):
+            w *= 0.25
         den += w
         if pa is not None and pb is not None:
             num += w * max(0.0, 1 - abs(pa - pb) / 25)
@@ -7746,20 +7890,32 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             purpose = str(b.get('purpose', ''))
             phone_raw = b.get('wifi') or []
             mine = laptop_scan_now(8 if purpose in ('nearby', 'find_phone', 'radar') else 30)
-            theirs = phone_scan(phone_raw)
-            score = wifi_likeness(theirs, mine)
+            raw_theirs = phone_scan(phone_raw)
+            theirs = smooth_phone_scan(raw_theirs)
+
+            # Antenna calibration: when acoustic chirp confirms same room, learn dBm offset
+            calibrated_room = bool(b.get('calibrated_room'))
+            if calibrated_room:
+                offset_dbm = record_antenna_calibration(theirs, mine)
+            else:
+                offset_dbm = get_antenna_offset()
+
+            score = wifi_likeness(theirs, mine, offset_dbm=offset_dbm)
             extra = {}
+            method = 'wifi_scans'
             if purpose != 'presence':
                 sys.stderr.write(f"Nearby by Wi-Fi: {score if score is None else round(score, 2)}, "
                                  f"{len(set(theirs) & set(mine))} of {len(theirs)}/{len(mine)} networks in common\n")
-                # both placed on the Wi-Fi map the same way, and how far apart
+                # Fingerprint map prioritization: Placing both devices against stored spots
+                # beats comparing two raw scans
                 phone_at, laptop_at = fingerprint_locate(theirs), fingerprint_locate(mine)
                 extra = {'phone_at': phone_at, 'laptop_at': laptop_at}
                 if phone_at and laptop_at:
                     extra['apart'] = round(_metres(phone_at['lat'], phone_at['lng'], laptop_at['lat'], laptop_at['lng']))
+                    method = 'fingerprint_map'
 
-            # Wi-Fi identity recognition and distance estimation
-            common_aps, signal_gap = _wifi_identity_match(phone_raw, theirs, mine)
+            # Wi-Fi identity recognition with strong AP focus and antenna offset
+            common_aps, signal_gap, strong_count = _wifi_identity_match(phone_raw, theirs, mine, offset_dbm=offset_dbm)
             apart_val = extra.get('apart')
             if apart_val is None:
                 gps_dist, p_lat, p_lng, l_lat, l_lng = last_known_gps_distance()
@@ -7772,12 +7928,18 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                         extra['laptop_at'] = {'lat': l_lat, 'lng': l_lng, 'acc': 30}
 
             est_dist = wifi_distance_estimate(score, signal_gap, len(common_aps), apart_val)
+            zone = wifi_zone(score, len(common_aps), strong_count, signal_gap, apart_val, method=method)
 
             identity_info = {
                 'match_percent': round((score or 0) * 100) if score is not None else 0,
                 'common_count': len(common_aps),
+                'strong_count': strong_count,
                 'signal_gap': round(signal_gap, 1) if signal_gap is not None else None,
                 'distance': est_dist,
+                'zone': zone,
+                'zone_method': method,
+                'calibrated': bool(_ANTENNA_CALIBRATION.get('samples')),
+                'offset_dbm': offset_dbm,
                 'total_phone': len(theirs),
                 'total_laptop': len(mine),
                 'shared_aps': common_aps[:20]
@@ -7786,9 +7948,11 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             if purpose == 'presence':
                 WALK_AWAY.scan(score)
             elif purpose == 'find_phone':
-                NEARBY.update(t=time.time(), score=score, distance=est_dist)
+                NEARBY.update(t=time.time(), score=score, zone=zone, distance=est_dist)
             self.send_json({"status": "ok", "score": None if score is None else round(score, 3),
-                            "word": likeness_word(score), "networks": len(mine),
+                            "word": likeness_word(score), "zone": zone, "zone_method": method,
+                            "networks": len(mine),
+                            "calibration": {"offset_dbm": offset_dbm, "active": bool(_ANTENNA_CALIBRATION.get('samples'))},
                             "distance": est_dist, "identity": identity_info, **extra})
             return
         elif path == '/api/findmy/settings':

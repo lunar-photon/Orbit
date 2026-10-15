@@ -55,6 +55,7 @@ public final class FindMy {
     private static final String PREF_LAST = "findmy_last_report";
     private static final String PREF_QUEUE = "findmy_queue";
     private static final String PREF_SIM_PRINT = "findmy_sim_print";
+    private static final String PREF_SIM_PENDING = "findmy_sim_pending", PREF_SIM_PENDING_AT = "findmy_sim_pending_at";
     private static final String PREF_LOW_SENT = "findmy_low_sent";
     static final String PREF_LAPTOP = "findmy_laptop";
     static final String PREF_WALK = "findmy_walk_away";          // the computer's setting, as last heard
@@ -73,6 +74,7 @@ public final class FindMy {
     private static HandlerThread looperThread;
     private static LocationListener mover;
     private static long lastMovedReport;
+    private static Location lastMovedAt;
     private static Runnable findPhoneLoop;
     static final java.util.UUID ORBIT_BLE_UUID = java.util.UUID.fromString("f1d0c0de-4f72-6269-7420-46696e644d79");
     private static android.bluetooth.le.AdvertiseCallback advertising;
@@ -140,6 +142,9 @@ public final class FindMy {
             @Override public void onLocationChanged(Location l) {
                 long now = System.currentTimeMillis();
                 if (now - lastMovedReport < MOVED_MIN_GAP_MS) return;
+                // indoors a fix wobbles by ~100 m: only real movement, beyond both fixes' accuracy
+                if (lastMovedAt != null && l.distanceTo(lastMovedAt) < 250 + l.getAccuracy() + lastMovedAt.getAccuracy()) return;
+                lastMovedAt = l;
                 lastMovedReport = now;
                 report(c, "moved");
             }
@@ -295,32 +300,93 @@ public final class FindMy {
         return got[0];
     }
 
+    private static final java.util.Map<String, java.util.List<int[]>> scanHistory = new java.util.HashMap<>();
+    private static final java.util.Map<String, String> scanSsids = new java.util.HashMap<>();
+
     @SuppressLint("MissingPermission")
     private static JSONArray wifiAround(Context c) {
         return wifiAround(c, 120_000L);
     }
 
-    /** The Wi-Fi this phone sees: the scan results no older than maxAgeMs (Android scans on its
-     *  own, rarely while connected and still), and always the network it's connected to now. */
+    /** The Wi-Fi this phone sees: temporally smoothed across recent scans (averaging dBm over
+     *  the last 3-5 looks and pruning 1-off transient networks), plus the connected network. */
     @SuppressLint("MissingPermission")
     static JSONArray wifiAround(Context c, long maxAgeMs) {
         JSONArray out = new JSONArray();
         try {
             WifiManager wm = (WifiManager) c.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wm == null) return out;
+            long nowMs = System.currentTimeMillis();
+            int nowSec = (int) (nowMs / 1000);
             String connected = null;
             android.net.wifi.WifiInfo info = wm.getConnectionInfo();
             if (info != null && info.getBSSID() != null && !"02:00:00:00:00:00".equals(info.getBSSID())) {
                 connected = info.getBSSID().toLowerCase();
-                out.put(new JSONObject().put("bssid", connected).put("rssi", info.getRssi()));
             }
+
             List<ScanResult> results = wm.getScanResults();
             long nowUs = SystemClock.elapsedRealtime() * 1000;
-            for (ScanResult r : results) {
-                if (nowUs - r.timestamp > maxAgeMs * 1000) continue;
-                if (r.BSSID == null || r.BSSID.equalsIgnoreCase(connected)) continue;
-                out.put(new JSONObject().put("bssid", r.BSSID).put("ssid", r.SSID).put("rssi", r.level));
-                if (out.length() >= 60) break;
+
+            synchronized (scanHistory) {
+                // Prune entries older than 90 seconds
+                java.util.Iterator<java.util.Map.Entry<String, java.util.List<int[]>>> it = scanHistory.entrySet().iterator();
+                while (it.hasNext()) {
+                    java.util.Map.Entry<String, java.util.List<int[]>> entry = it.next();
+                    java.util.Iterator<int[]> sit = entry.getValue().iterator();
+                    while (sit.hasNext()) {
+                        if (nowSec - sit.next()[0] > 90) sit.remove();
+                    }
+                    if (entry.getValue().isEmpty()) {
+                        it.remove();
+                        scanSsids.remove(entry.getKey());
+                    }
+                }
+
+                // Add current scan results to history
+                if (connected != null && info != null) {
+                    java.util.List<int[]> l = scanHistory.get(connected);
+                    if (l == null) { l = new java.util.ArrayList<>(); scanHistory.put(connected, l); }
+                    l.add(new int[]{nowSec, info.getRssi()});
+                }
+                if (results != null) {
+                    for (ScanResult r : results) {
+                        if (nowUs - r.timestamp > maxAgeMs * 1000) continue;
+                        if (r.BSSID == null) continue;
+                        String b = r.BSSID.toLowerCase();
+                        java.util.List<int[]> l = scanHistory.get(b);
+                        if (l == null) { l = new java.util.ArrayList<>(); scanHistory.put(b, l); }
+                        l.add(new int[]{nowSec, r.level});
+                        if (r.SSID != null && !r.SSID.isEmpty()) scanSsids.put(b, r.SSID);
+                    }
+                }
+
+                // Output connected AP first
+                if (connected != null && scanHistory.containsKey(connected)) {
+                    java.util.List<int[]> vals = scanHistory.get(connected);
+                    int sum = 0;
+                    for (int[] v : vals) sum += v[1];
+                    int avg = sum / vals.size();
+                    out.put(new JSONObject().put("bssid", connected).put("rssi", avg));
+                }
+
+                // Output temporally averaged readings; prune 1-off transient networks if we have history
+                for (java.util.Map.Entry<String, java.util.List<int[]>> e : scanHistory.entrySet()) {
+                    String b = e.getKey();
+                    if (b.equalsIgnoreCase(connected)) continue;
+                    java.util.List<int[]> vals = e.getValue();
+                    int count = vals.size();
+                    int sum = 0;
+                    for (int[] v : vals) sum += v[1];
+                    int avg = sum / count;
+                    // Ignore 1-off transient networks unless signal is strong (>= -65 dBm)
+                    if (count >= 2 || avg >= -65) {
+                        JSONObject apObj = new JSONObject().put("bssid", b).put("rssi", avg);
+                        String s = scanSsids.get(b);
+                        if (s != null) apObj.put("ssid", s);
+                        out.put(apObj);
+                    }
+                    if (out.length() >= 60) break;
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "No Wi-Fi scan: " + e.getMessage());
@@ -394,36 +460,60 @@ public final class FindMy {
 
     // ---- the SIM card ----
     @SuppressLint({"MissingPermission", "HardwareIds"})
+    /** What identifies the SIM card(s) in the phone, or null while the SIM is between states
+     *  (starting up, locked, airplane mode): only a settled state is compared. Names (which a
+     *  carrier can show differently) are left out: the slot, the network code and the phone's
+     *  own subscription number for that card, which changes only with another card. */
     static String simPrint(Context c) {
         TelephonyManager tm = (TelephonyManager) c.getSystemService(Context.TELEPHONY_SERVICE);
-        if (tm == null) return "";
-        StringBuilder sb = new StringBuilder();
-        sb.append(tm.getSimState()).append('|').append(tm.getSimOperator()).append('|').append(tm.getSimOperatorName());
+        if (tm == null) return null;
+        int state = tm.getSimState();
+        if (state == TelephonyManager.SIM_STATE_ABSENT) return "v2|absent";
+        if (state != TelephonyManager.SIM_STATE_READY) return null;
+        List<String> cards = new java.util.ArrayList<>();
         try {
             if (c.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
                 SubscriptionManager sm = (SubscriptionManager) c.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
                 List<SubscriptionInfo> subs = sm != null ? sm.getActiveSubscriptionInfoList() : null;
-                if (subs != null) {
-                    for (SubscriptionInfo s : subs) {
-                        sb.append('|').append(s.getSubscriptionId()).append(':').append(s.getCarrierName())
-                                .append(':').append(s.getSimSlotIndex());
-                        if (Build.VERSION.SDK_INT < 29) sb.append(':').append(s.getIccId());
-                    }
+                if (subs == null || subs.isEmpty()) return null;          // not readable just now
+                for (SubscriptionInfo s : subs) {
+                    String net = Build.VERSION.SDK_INT >= 29 ? s.getMccString() + s.getMncString() : s.getMcc() + "" + s.getMnc();
+                    cards.add(s.getSimSlotIndex() + ":" + net + ":" + s.getSubscriptionId());
                 }
+            } else {
+                String op = tm.getSimOperator();
+                if (op == null || op.isEmpty()) return null;
+                cards.add(op);
             }
-        } catch (Exception ignored) { }
-        return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
+        java.util.Collections.sort(cards);
+        return "v2|" + android.text.TextUtils.join(",", cards);
     }
 
+    /** A SIM change is reported once it has lasted a minute (two looks in a row), never for a
+     *  passing state. */
     static void checkSim(Context c) {
         String now = simPrint(c);
+        if (now == null) return;
         String was = prefs(c).getString(PREF_SIM_PRINT, null);
-        if (was == null) {                     // first look: this is the phone's own SIM
-            prefs(c).edit().putString(PREF_SIM_PRINT, now).apply();
+        if (was == null || !was.startsWith("v2|")) {   // first look (or an older kind of look): this is its own SIM
+            prefs(c).edit().putString(PREF_SIM_PRINT, now).remove(PREF_SIM_PENDING).apply();
             return;
         }
-        if (now.equals(was)) return;
-        prefs(c).edit().putString(PREF_SIM_PRINT, now).apply();
+        if (now.equals(was)) {
+            prefs(c).edit().remove(PREF_SIM_PENDING).apply();
+            return;
+        }
+        String pending = prefs(c).getString(PREF_SIM_PENDING, "");
+        long since = prefs(c).getLong(PREF_SIM_PENDING_AT, 0);
+        if (!now.equals(pending)) {
+            prefs(c).edit().putString(PREF_SIM_PENDING, now).putLong(PREF_SIM_PENDING_AT, System.currentTimeMillis()).apply();
+            return;
+        }
+        if (System.currentTimeMillis() - since < 60_000L) return;
+        prefs(c).edit().putString(PREF_SIM_PRINT, now).remove(PREF_SIM_PENDING).apply();
         TelephonyManager tm = (TelephonyManager) c.getSystemService(Context.TELEPHONY_SERVICE);
         boolean absent = tm == null || tm.getSimState() == TelephonyManager.SIM_STATE_ABSENT;
         String operator = tm != null ? tm.getSimOperatorName() : "";
@@ -512,9 +602,13 @@ public final class FindMy {
 
     // ---- near or far, by the Wi-Fi around (no Bluetooth) ----
     /** Send the Wi-Fi this phone sees to the computer, which compares it with its own:
-     *  {score 0..1, word}. `scanFirst` asks Android for a fresh scan (it allows a few a minute). */
-    @SuppressLint("MissingPermission")
+     *  {score 0..1, word, zone}. `scanFirst` asks Android for a fresh scan (it allows a few a minute). */
     static JSONObject compareWifi(Context c, String purpose, boolean scanFirst) {
+        return compareWifi(c, purpose, scanFirst, false);
+    }
+
+    @SuppressLint("MissingPermission")
+    static JSONObject compareWifi(Context c, String purpose, boolean scanFirst, boolean calibratedRoom) {
         if (!hasLocation(c)) return null;
         try {
             if (scanFirst) {
@@ -524,7 +618,9 @@ public final class FindMy {
             // what's seen now for the nearby finder; a presence check-in can use scans up to 10 min old
             JSONArray wifi = wifiAround(c, "presence".equals(purpose) ? 600_000L : 30_000L);
             if (wifi.length() == 0) return null;
-            String res = post(c, "/api/findmy/wifi", new JSONObject().put("purpose", purpose).put("wifi", wifi).toString());
+            JSONObject req = new JSONObject().put("purpose", purpose).put("wifi", wifi);
+            if (calibratedRoom) req.put("calibrated_room", true);
+            String res = post(c, "/api/findmy/wifi", req.toString());
             return res == null ? null : new JSONObject(res);
         } catch (Exception e) {
             return null;
