@@ -7106,16 +7106,23 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
         elif path in ('/wifilab', '/findmy/wifilab'):
             self.serve_file(os.path.join(STATIC_DIR, 'wifilab.html'), 'text/html; charset=utf-8')
             return
-        elif path == '/api/findmy/wifi/spectrum':
-            self.send_json(wifi_spectrum_data())
-            return
-        elif path == '/api/findmy/wifi/clusters':
-            self.send_json(wifi_cluster_projection())
-            return
-        elif path == '/api/findmy/wifi/motion':
-            self.send_json(WIFI_MOTION.status())
-            return
-        elif path == '/api/findmy/wifi/motion/log':
+        elif path in ('/api/findmy/wifi/spectrum', '/api/findmy/wifi/clusters',
+                      '/api/findmy/wifi/motion', '/api/findmy/wifi/motion/log'):
+            # Wi-Fi Lab reveals the networks around this computer, so keep it off the internet
+            # tunnel: it's a same-network proximity tool, and the laptop browser and the phone
+            # both reach it over the LAN.
+            if is_tunnel_request(self):
+                self.send_json({"error": "Wi-Fi Lab works on the same Wi-Fi only."}, status=403)
+                return
+            if path == '/api/findmy/wifi/spectrum':
+                self.send_json(wifi_spectrum_data())
+                return
+            if path == '/api/findmy/wifi/clusters':
+                self.send_json(wifi_cluster_projection())
+                return
+            if path == '/api/findmy/wifi/motion':
+                self.send_json(WIFI_MOTION.status())
+                return
             fmt = qs.get('format', ['json'])[0]
             if fmt == 'text':
                 if os.path.exists(WIFI_MOTION.log_file):
@@ -8675,7 +8682,15 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 'seq': seq
             })
             return
-        elif path in ('/api/findmy/wifi/motion', '/api/findmy/wifi/phone_motion'):
+        elif path in ('/api/findmy/wifi/motion', '/api/findmy/wifi/phone_motion',
+                      '/api/findmy/wifi/motion/log/clear'):
+            if is_tunnel_request(self):
+                self.send_json({"error": "Wi-Fi Lab works on the same Wi-Fi only."}, status=403)
+                return
+            if path == '/api/findmy/wifi/motion/log/clear':
+                WIFI_MOTION.clear_log()
+                self.send_json({'status': 'ok', 'message': 'Disturbance log reset'})
+                return
             b = body if isinstance(body, dict) else {}
             if 'rssi' in b:
                 WIFI_MOTION.feed_phone_sample(
@@ -8685,10 +8700,6 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                     freq=b.get('freq', 0)
                 )
             self.send_json(WIFI_MOTION.status())
-            return
-        elif path == '/api/findmy/wifi/motion/log/clear':
-            WIFI_MOTION.clear_log()
-            self.send_json({'status': 'ok', 'message': 'Disturbance log reset'})
             return
         elif path in ('/api/findmy/phone/locate', '/api/findmy/phone/ring', '/api/findmy/phone/nearby'):
             # From the Find my phone page on this computer
