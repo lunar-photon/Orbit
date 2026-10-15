@@ -39,8 +39,7 @@ import java.util.concurrent.Executors;
 /**
  * Find my, in two tabs. "Your computer": where it is (map), find it (locate, sound, the Wi-Fi
  * nearby finder) and what happened there (wrong passwords, walk-away locks). "Settings": how
- * the computer and this phone look out for each other. No Bluetooth anywhere: near or far is
- * told by how alike the Wi-Fi around each of them is.
+ * the computer and this phone look out for each other.
  */
 public class FindMyActivity extends Activity {
     static final String EXTRA_PHOTO = "findmy_photo";
@@ -57,6 +56,7 @@ public class FindMyActivity extends Activity {
     private double apart = -1;          // how far apart the Wi-Fi map puts them
     private TextView tvMeterSub;
     private TextView tvSeen, tvMeter, tvRing, tvNearby, tabComputer, tabSettings;
+
     private ProgressBar pbMeter;
     private View meter;
     private ImageButton btnRing, btnNearby;
@@ -163,6 +163,11 @@ public class FindMyActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (nearby) stopBluetooth();
@@ -195,6 +200,33 @@ public class FindMyActivity extends Activity {
             }
         });
         map.loadUrl("file:///android_asset/findmap.html");
+    }
+
+    private double calculateGpsDistance() {
+        JSONObject me = wifiPhone != null ? wifiPhone : phoneFix;
+        JSONObject lap = wifiLaptop != null ? wifiLaptop : (laptop != null && laptop.has("lat") ? laptop : null);
+        if (me != null && lap != null && me.has("lat") && lap.has("lat")) {
+            Location locMe = new Location("me");
+            locMe.setLatitude(me.optDouble("lat"));
+            locMe.setLongitude(me.optDouble("lng"));
+
+            Location locLap = new Location("laptop");
+            locLap.setLatitude(lap.optDouble("lat"));
+            locLap.setLongitude(lap.optDouble("lng"));
+
+            return locMe.distanceTo(locLap);
+        }
+        return -1.0;
+    }
+
+    /** Smooth continuous progress mapping across all distance tiers (0.1m to 1km+). */
+    private static int distanceToProgress(double metres) {
+        if (metres <= 0.5) return 100;
+        if (metres <= 2.0) return (int) Math.round(90.0 + (2.0 - metres) * 6.67);
+        if (metres <= 10.0) return (int) Math.round(65.0 + (10.0 - metres) * 3.125);
+        if (metres <= 30.0) return (int) Math.round(40.0 + (30.0 - metres) * 1.25);
+        if (metres <= 100.0) return (int) Math.round(20.0 + (100.0 - metres) * 0.286);
+        return (int) Math.max(5, Math.min(20, Math.round(20.0 - (metres - 100.0) / 40.0)));
     }
 
     /** Both on the map, named: the computer and this phone (by the Wi-Fi map while Nearby runs,
@@ -546,45 +578,76 @@ public class FindMyActivity extends Activity {
             JSONObject snd = nearby && run == nearbyRun ? SoundRange.measure(this) : null;
             ui.post(() -> {
                 if (!nearby || run != nearbyRun) return;
+
                 if (r != null) {                         // both on the Wi-Fi map, the same way
                     wifiPhone = r.optJSONObject("phone_at");
                     wifiLaptop = r.optJSONObject("laptop_at");
                     apart = r.has("apart") ? r.optDouble("apart") : -1;
                     showOnMap();
                 }
+
+                double calcGps = calculateGpsDistance();
+                double serverApart = (r != null && r.has("apart") && !r.isNull("apart")) ? r.optDouble("apart") : -1;
+                double wifiDist = (r != null && r.has("distance") && !r.isNull("distance")) ? r.optDouble("distance") : -1;
+                JSONObject identity = r != null ? r.optJSONObject("identity") : null;
+                int commonCount = identity != null ? identity.optInt("common_count", 0) : 0;
+                int matchPercent = identity != null ? identity.optInt("match_percent", 0)
+                        : (r != null && r.has("score") && !r.isNull("score") ? (int) Math.round(r.optDouble("score") * 100) : 0);
+                Integer directDbm = bluetoothDbm();
+
                 if (snd != null && snd.optBoolean("heard")) {
+                    // Tier 0: Ultrasonic acoustic ranging (centimetre-level accuracy in the room)
                     double d = snd.optDouble("distance");
-                    apart = d;                       // sound beats the map for how far apart
+                    apart = d;
                     showOnMap();
-                    tvMeter.setText(d < 0.5 ? "Right here" : String.format(java.util.Locale.US, "%.1f m away", d));
-                    tvMeterSub.setText("In this room: you can hear each other");
-                    pbMeter.setProgress((int) Math.max(4, Math.min(100, 100 - d * 10)));
-                } else if (bluetoothDbm() != null) {
-                    // Bluetooth heard it: a rough distance, through walls too
-                    int dbm = bluetoothDbm();
-                    double m = FindMy.bluetoothMetres(dbm);
-                    tvMeter.setText(m < 1 ? "Within a metre" : String.format(java.util.Locale.US, "About %.0f m away", m));
-                    tvMeterSub.setText((snd != null ? "Not in this room · " : "") + "by Bluetooth");
-                    pbMeter.setProgress((int) Math.max(4, Math.min(90, (dbm + 100) * 90 / 55)));
+                    tvMeter.setText(d < 0.5 ? "Right here (<0.5m)" : String.format(java.util.Locale.US, "%.1f m away", d));
+                    tvMeterSub.setText("Acoustic ranging: in this room");
+                    pbMeter.setProgress(distanceToProgress(d));
+                } else if (directDbm != null && commonCount > 0 && wifiDist > 0 && wifiDist < 50) {
+                    // Tier 1 + 2 Fusion: Direct laptop beacon + shared ambient Wi-Fi networks confirmed
+                    double dDirect = FindMy.bluetoothMetres(directDbm);
+                    double weightDirect = Math.max(0.4, Math.min(0.85, (directDbm + 90) / 40.0));
+                    double fusedD = weightDirect * dDirect + (1.0 - weightDirect) * wifiDist;
+                    apart = fusedD;
+                    showOnMap();
+                    tvMeter.setText(fusedD < 0.8 ? "Immediate proximity (<1m)" : String.format(java.util.Locale.US, "%.1f m away", fusedD));
+                    tvMeterSub.setText(String.format(java.util.Locale.US,
+                            "Direct beacon · %d dBm · %d shared Wi-Fi (%d%% match)", directDbm, commonCount, matchPercent));
+                    pbMeter.setProgress(distanceToProgress(fusedD));
+                } else if (directDbm != null) {
+                    // Tier 1: Direct calibrated beacon alone (room & adjacent room proximity)
+                    double d = FindMy.bluetoothMetres(directDbm);
+                    apart = d;
+                    showOnMap();
+                    tvMeter.setText(d < 0.8 ? "Immediate proximity (<1m)" : String.format(java.util.Locale.US, "%.1f m away", d));
+                    tvMeterSub.setText(String.format(java.util.Locale.US, "Direct beacon signal · %d dBm", directDbm));
+                    pbMeter.setProgress(distanceToProgress(d));
+                } else if (commonCount > 0 && wifiDist > 0 && wifiDist < 60) {
+                    // Tier 2: Ambient Wi-Fi Identity Recognition (same building / wing, direct beacon out of range)
+                    apart = wifiDist;
+                    showOnMap();
+                    tvMeter.setText(wifiDist < 0.8 ? "Immediate proximity (<1m)" : String.format(java.util.Locale.US, "%.1f m away", wifiDist));
+                    double gap = identity != null ? identity.optDouble("signal_gap", 0) : 0;
+                    tvMeterSub.setText(String.format(java.util.Locale.US,
+                            "Wi-Fi Identity: %d%% match · %d shared networks · Δ %.1f dBm", matchPercent, commonCount, gap));
+                    pbMeter.setProgress(distanceToProgress(wifiDist));
+                } else if (serverApart > 0 || calcGps > 0 || wifiDist > 0) {
+                    // Tier 3: Macro separation / campus scale (different Wi-Fi environments)
+                    double d = serverApart > 0 ? serverApart : (calcGps > 0 ? calcGps : wifiDist);
+                    apart = d;
+                    showOnMap();
+                    tvMeter.setText(d < 10 ? "Right here" : (d >= 1000 ? String.format(java.util.Locale.US, "About %.1f km away", d / 1000.0) : String.format(java.util.Locale.US, "About %.0f m away", d)));
+                    tvMeterSub.setText(r != null ? r.optString("word", "Different Wi-Fi networks") : "Different Wi-Fi networks");
+                    pbMeter.setProgress(distanceToProgress(d));
                 } else if (r == null || r.isNull("score")) {
                     tvMeter.setText(r == null ? "Can't reach your computer" : r.optString("word", "No Wi-Fi to compare"));
-                    tvMeterSub.setText(snd == null ? "" : "Not in this room");
+                    tvMeterSub.setText("Scanning Wi-Fi environment…");
                     pbMeter.setProgress(0);
                 } else {
                     double s = r.optDouble("score", 0);
-                    if (snd != null) {
-                        // sound was tried and they can't hear each other: not in this room, whatever
-                        // the Wi-Fi says (it goes through walls, so on one network it can look close)
-                        tvMeter.setText("Not in this room");
-                        tvMeterSub.setText(s > 0.35 ? "A room or two away, by the Wi-Fi around"
-                                : s > 0.12 ? "In the same building, by the Wi-Fi around" : "Far away, by the Wi-Fi around");
-                        pbMeter.setProgress((int) Math.max(4, Math.min(40, s * 40 / 0.7)));
-                    } else {
-                        tvMeter.setText(r.optString("word"));
-                        tvMeterSub.setText(!SoundRange.allowed(this) ? "Allow the microphone for the distance in metres"
-                                : !bluetoothOn() ? "Turn on Bluetooth for a closer reading" : "");
-                        pbMeter.setProgress((int) Math.max(4, Math.min(60, s * 60 / 0.7)));   // the last bit is for sound
-                    }
+                    tvMeter.setText(r.optString("word"));
+                    tvMeterSub.setText("Wi-Fi identity likeness: " + Math.round(s * 100) + "%");
+                    pbMeter.setProgress((int) Math.max(4, Math.min(100, s * 100)));
                 }
                 ui.postDelayed(() -> nearbyStep(run), 1500);
             });

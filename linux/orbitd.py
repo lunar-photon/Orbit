@@ -75,17 +75,17 @@ def apk_note():
 
 def app_update_watch():
     """A new app build installed here: tell the phone, which fetches and installs it."""
-    last = apk_print()[0]
+    last = None
     while True:
-        time.sleep(20)
         try:
             sha, size = apk_print()
             if sha and sha != last:
                 last = sha
-                sys.stderr.write(f"New phone app build ({size // 1024} KB): telling the phone\n")
+                sys.stderr.write(f"Phone app build ({size // 1024} KB): telling the phone\n")
                 auth_mgr.broadcast_ndjson(json.dumps({"event": "app_update", "sha256": sha, "size": size}) + "\n")
         except Exception as e:
             sys.stderr.write(f"App update watch: {e}\n")
+        time.sleep(15)
 
 
 STAGING_DIR = os.path.join(BASE_DIR, 'staging')
@@ -4755,7 +4755,7 @@ LAPTOP_RINGER = LaptopRinger()
 # side they see the same ones, about equally strong; rooms apart the strengths differ; far apart
 # they share nothing. That likeness (0 to 1) drives the nearby finder on both sides and the
 # walk-away lock.
-_LAPTOP_SCAN = {'t': 0.0, 'aps': {}}
+_LAPTOP_SCAN = {'t': 0.0, 'aps': {}, 'details': {}}
 _LAPTOP_SCAN_LOCK = threading.Lock()
 
 
@@ -4765,8 +4765,67 @@ def laptop_scan_now(max_age=15):
         if time.time() - _LAPTOP_SCAN['t'] > max_age:
             aps = laptop_wifi_scan(rescan=True)
             if aps:
-                _LAPTOP_SCAN.update(t=time.time(), aps={b: dbm for b, _, dbm, _ in aps})
+                _LAPTOP_SCAN.update(
+                    t=time.time(),
+                    aps={b: dbm for b, _, dbm, _ in aps},
+                    details={b: {'ssid': ssid, 'dbm': dbm, 'connected': conn} for b, ssid, dbm, conn in aps}
+                )
         return dict(_LAPTOP_SCAN['aps'])
+
+
+def laptop_scan_details():
+    with _LAPTOP_SCAN_LOCK:
+        return dict(_LAPTOP_SCAN.get('details', {}))
+
+
+def _wifi_identity_match(phone_raw, theirs, mine):
+    """Matches phone Wi-Fi scan with laptop Wi-Fi scan to identify shared networks and signal gap."""
+    phone_ssids = {}
+    for ap in (phone_raw or [])[:120]:
+        b = _bssid(ap.get('bssid'))
+        if b and ap.get('ssid'):
+            phone_ssids[b] = str(ap.get('ssid'))
+
+    laptop_details = laptop_scan_details()
+    common = []
+    gap_sum = 0.0
+    for b, p_rssi in theirs.items():
+        if b in mine:
+            l_rssi = mine[b]
+            diff = abs(p_rssi - l_rssi)
+            gap_sum += diff
+            ssid = phone_ssids.get(b) or (laptop_details.get(b, {}).get('ssid') if laptop_details else '') or ''
+            common.append({
+                'bssid': b,
+                'ssid': ssid,
+                'phone_rssi': p_rssi,
+                'laptop_rssi': l_rssi,
+                'diff': round(diff, 1)
+            })
+    common.sort(key=lambda x: x['phone_rssi'], reverse=True)
+    signal_gap = (gap_sum / len(common)) if common else None
+    return common, signal_gap
+
+
+def last_known_gps_distance():
+    """Returns (distance_metres, phone_lat, phone_lng, lap_lat, lap_lng) from latest GPS fixes, or None."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        fix = db.execute('SELECT lat, lng, acc, t FROM fixes ORDER BY t DESC LIMIT 1').fetchone()
+        lap = db.execute('SELECT lat, lng, acc, t FROM laptop ORDER BY t DESC LIMIT 1').fetchone()
+    if fix and lap and fix[0] is not None and lap[0] is not None:
+        return round(_metres(fix[0], fix[1], lap[0], lap[1])), fix[0], fix[1], lap[0], lap[1]
+    return None, None, None, None, None
+
+
+def wifi_distance_estimate(score, signal_gap, common_count, apart=None):
+    """Estimates distance in metres between phone and laptop from Wi-Fi identity recognition."""
+    if common_count and common_count > 0 and score is not None and score >= 0.15:
+        gap_factor = (signal_gap * 0.35) if signal_gap is not None else 0.0
+        dist = 0.8 + 25.0 * math.pow(max(0.0, 1.0 - score), 1.8) + gap_factor
+        return round(max(0.4, dist), 1)
+    if apart is not None and apart >= 0:
+        return float(apart)
+    return None
 
 
 def wifi_likeness(a, b):
@@ -7685,8 +7744,9 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 return
             b = body if isinstance(body, dict) else {}
             purpose = str(b.get('purpose', ''))
-            mine = laptop_scan_now(8 if purpose in ('nearby', 'find_phone') else 30)
-            theirs = phone_scan(b.get('wifi'))
+            phone_raw = b.get('wifi') or []
+            mine = laptop_scan_now(8 if purpose in ('nearby', 'find_phone', 'radar') else 30)
+            theirs = phone_scan(phone_raw)
             score = wifi_likeness(theirs, mine)
             extra = {}
             if purpose != 'presence':
@@ -7697,12 +7757,39 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 extra = {'phone_at': phone_at, 'laptop_at': laptop_at}
                 if phone_at and laptop_at:
                     extra['apart'] = round(_metres(phone_at['lat'], phone_at['lng'], laptop_at['lat'], laptop_at['lng']))
+
+            # Wi-Fi identity recognition and distance estimation
+            common_aps, signal_gap = _wifi_identity_match(phone_raw, theirs, mine)
+            apart_val = extra.get('apart')
+            if apart_val is None:
+                gps_dist, p_lat, p_lng, l_lat, l_lng = last_known_gps_distance()
+                if gps_dist is not None:
+                    extra['apart'] = gps_dist
+                    apart_val = gps_dist
+                    if not extra.get('phone_at') and p_lat is not None:
+                        extra['phone_at'] = {'lat': p_lat, 'lng': p_lng, 'acc': 20}
+                    if not extra.get('laptop_at') and l_lat is not None:
+                        extra['laptop_at'] = {'lat': l_lat, 'lng': l_lng, 'acc': 30}
+
+            est_dist = wifi_distance_estimate(score, signal_gap, len(common_aps), apart_val)
+
+            identity_info = {
+                'match_percent': round((score or 0) * 100) if score is not None else 0,
+                'common_count': len(common_aps),
+                'signal_gap': round(signal_gap, 1) if signal_gap is not None else None,
+                'distance': est_dist,
+                'total_phone': len(theirs),
+                'total_laptop': len(mine),
+                'shared_aps': common_aps[:20]
+            }
+
             if purpose == 'presence':
                 WALK_AWAY.scan(score)
             elif purpose == 'find_phone':
-                NEARBY.update(t=time.time(), score=score)
+                NEARBY.update(t=time.time(), score=score, distance=est_dist)
             self.send_json({"status": "ok", "score": None if score is None else round(score, 3),
-                            "word": likeness_word(score), "networks": len(mine), **extra})
+                            "word": likeness_word(score), "networks": len(mine),
+                            "distance": est_dist, "identity": identity_info, **extra})
             return
         elif path == '/api/findmy/settings':
             client_info, token = authenticate_client(self, load_config())
