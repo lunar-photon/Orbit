@@ -5053,14 +5053,20 @@ class WifiMotionMonitor:
     def status(self):
         with self.lock:
             vals = [sig for _, sig in self.history]
+            cur_sig = self.current_signal if self.current_signal is not None else -60
             if len(vals) < 4:
                 return {
                     'status': 'ok',
                     'current_dbm': self.current_signal,
+                    'mean_dbm': cur_sig,
                     'variance': 0.0,
                     'motion_detected': False,
                     'baseline': 0.0,
-                    'history': [{'t': t, 'dbm': s} for t, s in self.history],
+                    'threshold': 1.8,
+                    'spike': 0.0,
+                    'max_spike': 0.0,
+                    'envelope': {'upper': cur_sig + 1.8, 'lower': cur_sig - 1.8},
+                    'history': [{'t': t, 'dbm': s, 'env_upper': cur_sig + 1.8, 'env_lower': cur_sig - 1.8, 'spike': 0.0, 'is_spike': False} for t, s in self.history],
                     'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
                 }
             recent = vals[-10:]
@@ -5069,15 +5075,40 @@ class WifiMotionMonitor:
 
             base_mean = sum(vals) / len(vals)
             baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
-            motion = bool(variance > 1.8)
+            threshold = 1.8
+            motion = bool(variance > threshold)
+
+            cur = self.current_signal if self.current_signal is not None else base_mean
+            spike = round(abs(cur - base_mean), 2)
+            max_spike = round(max(abs(x - base_mean) for x in vals), 2)
+
+            hist = []
+            for t, s in self.history:
+                pt_spike = round(abs(s - base_mean), 2)
+                hist.append({
+                    't': t,
+                    'dbm': s,
+                    'env_upper': round(base_mean + threshold, 2),
+                    'env_lower': round(base_mean - threshold, 2),
+                    'spike': pt_spike,
+                    'is_spike': pt_spike > threshold
+                })
 
             return {
                 'status': 'ok',
                 'current_dbm': self.current_signal,
+                'mean_dbm': round(base_mean, 1),
                 'variance': round(variance, 2),
                 'motion_detected': motion,
                 'baseline': round(baseline, 2),
-                'history': [{'t': t, 'dbm': s} for t, s in self.history],
+                'threshold': threshold,
+                'spike': spike,
+                'max_spike': max_spike,
+                'envelope': {
+                    'upper': round(base_mean + threshold, 2),
+                    'lower': round(base_mean - threshold, 2)
+                },
+                'history': hist,
                 'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
             }
 

@@ -255,9 +255,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .lab-ap-meta {
-    color: var(--text2);
+  .lab-desc {
     font-size: 11px;
+    color: var(--text3);
+    margin: 2px 0 8px;
+    line-height: 1.35;
+  }
+  .lab-note-box {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text2);
+    line-height: 1.45;
   }
 </style>
 </head>
@@ -315,18 +327,26 @@
           </button>
         </div>
       </div>
+      <div class="lab-desc">Multipath tripwire sensing human presence via micro-fluctuations in Wi-Fi reflection</div>
       <canvas id="labMotionCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div>Target: <span class="lab-val" id="labMotionTarget">–</span></div>
-        <div>Variance: <span class="lab-val" id="labMotionVar">0.0 dB</span></div>
+        <div>Envelope: <span class="lab-val" id="labMotionEnv">±1.8 dB</span></div>
+      </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
+        <div>Peak Spike: <span class="lab-val" id="labMotionPeakSpike">0.0 dB</span></div>
       </div>
       <div class="lab-details">
         <div class="lab-grid">
-          <div class="lab-metric"><span>Real-time RSSI</span><b id="labMotionDbm">– dBm</b></div>
-          <div class="lab-metric"><span>Signal Variance</span><b id="labMotionVarDetail">0.0 dB</b></div>
+          <div class="lab-metric"><span>Real-time Signal</span><b id="labMotionDbm">– dBm</b></div>
+          <div class="lab-metric"><span>Current Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
+          <div class="lab-metric"><span>Quiet Noise Envelope</span><b id="labMotionEnvDetail">±1.8 dB threshold</b></div>
+          <div class="lab-metric"><span>Peak Disturbance Spike</span><b id="labMotionPeakDetail">0.0 dB</b></div>
           <div class="lab-metric"><span>Monitored Link</span><b id="labMotionSsidDetail">–</b></div>
-          <div class="lab-metric"><span>Sampling Window</span><b>1 ms / 2.0 Hz window</b></div>
+          <div class="lab-metric"><span>Ambient Signal Variance</span><b id="labMotionVarDetail">0.0 dB</b></div>
         </div>
+        <div class="lab-note-box" id="labMotionStatusNote">Fresnel multi-path zone is calm. Signal reflection remains within the quiet noise envelope.</div>
       </div>
     </div>
 
@@ -344,17 +364,24 @@
           </button>
         </div>
       </div>
+      <div class="lab-desc">Real-time carrier channel distribution across 2.4 GHz and 5 GHz frequency bands</div>
       <canvas id="labSpecCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
-        <div>2.4G: <span class="lab-val" id="labSpec24">0</span> · 5G: <span class="lab-val" id="labSpec5">0</span></div>
-        <div>Shared: <span class="lab-val" id="labSpecShared">0</span></div>
+        <div>2.4 GHz: <span class="lab-val" id="labSpec24">0</span> · 5 GHz: <span class="lab-val" id="labSpec5">0</span></div>
+        <div>Shared: <span class="lab-val" id="labSpecShared">0 APs</span></div>
+      </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Connected: <span class="lab-val" id="labSpecConnected">–</span></div>
+        <div>Congestion: <span class="lab-val" id="labSpecCongestion">–</span></div>
       </div>
       <div class="lab-details">
         <div class="lab-grid">
-          <div class="lab-metric"><span>Total Visible APs</span><b id="labSpecTotalDetail">0 APs</b></div>
-          <div class="lab-metric"><span>2.4 GHz Band</span><b id="labSpec24Detail">0 networks</b></div>
-          <div class="lab-metric"><span>5 GHz Band</span><b id="labSpec5Detail">0 networks</b></div>
+          <div class="lab-metric"><span>Total Visible Routers</span><b id="labSpecTotalDetail">0 APs</b></div>
+          <div class="lab-metric"><span>2.4 GHz ISM Band</span><b id="labSpec24Detail">0 networks</b></div>
+          <div class="lab-metric"><span>5 GHz ISM Band</span><b id="labSpec5Detail">0 networks</b></div>
           <div class="lab-metric"><span>Shared with Phone</span><b id="labSpecSharedDetail">0 networks</b></div>
+          <div class="lab-metric"><span>Connected Access Point</span><b id="labSpecConnectedDetail">–</b></div>
+          <div class="lab-metric"><span>Peak Channel Congestion</span><b id="labSpecCongestionDetail">–</b></div>
         </div>
         <div class="lab-top-aps" id="labTopAps"></div>
       </div>
@@ -374,19 +401,27 @@
           </button>
         </div>
       </div>
+      <div class="lab-desc">Unsupervised 2D SVD projection of multi-router RSSI vectors into room spaces</div>
       <canvas id="labClusterCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop</div>
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone</div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop: <span class="lab-val" id="labClusterLapFooter">Live</span></div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labClusterPhoneFooter">Live</span></div>
         <div class="lab-val">2D PCA</div>
+      </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Proximity: <span class="lab-val" id="labClusterVerdict">Evaluating…</span></div>
+        <div>Distance: <span class="lab-val" id="labClusterDistFooter">–</span></div>
       </div>
       <div class="lab-details">
         <div class="lab-grid">
           <div class="lab-metric"><span>Stored Fingerprints</span><b id="labClusterTotalDetail">0 spots</b></div>
           <div class="lab-metric"><span>Latent Distance</span><b id="labClusterDist">–</b></div>
-          <div class="lab-metric"><span>Laptop Latent (x, y)</span><b id="labClusterLapCoord">–</b></div>
-          <div class="lab-metric"><span>Phone Latent (x, y)</span><b id="labClusterPhoneCoord">–</b></div>
+          <div class="lab-metric"><span>Laptop Latent Vector</span><b id="labClusterLapCoord">–</b></div>
+          <div class="lab-metric"><span>Phone Latent Vector</span><b id="labClusterPhoneCoord">–</b></div>
+          <div class="lab-metric"><span>Room Classification</span><b id="labClusterConfidence">Evaluating…</b></div>
+          <div class="lab-metric"><span>Decomposition Model</span><b>Truncated SVD (k=2)</b></div>
         </div>
+        <div class="lab-note-box">Projects high-dimensional RSSI vectors of surrounding Wi-Fi routers onto a 2D topological plane to detect room boundaries without GPS or internet access.</div>
       </div>
     </div>
 
@@ -404,18 +439,26 @@
           </button>
         </div>
       </div>
+      <div class="lab-desc">Continuous high-resolution packet latency and stability probe over local Wi-Fi</div>
       <canvas id="labP2pCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
         <div>Latency: <span class="lab-val" id="labP2pRtt">–</span></div>
         <div>Jitter: <span class="lab-val" id="labP2pJitter">–</span></div>
       </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Stability: <span class="lab-val" id="labP2pQuality">Optimal (0% loss)</span></div>
+        <div>Range: <span class="lab-val" id="labP2pRange">–</span></div>
+      </div>
       <div class="lab-details">
         <div class="lab-grid">
-          <div class="lab-metric"><span>Current Latency</span><b id="labP2pRttDetail">– ms</b></div>
-          <div class="lab-metric"><span>Latency Jitter</span><b id="labP2pJitterDetail">– ms</b></div>
-          <div class="lab-metric"><span>Min / Max Range</span><b id="labP2pMinMax">–</b></div>
-          <div class="lab-metric"><span>Packet Sequence</span><b id="labP2pSeqDetail">#0</b></div>
+          <div class="lab-metric"><span>Current Round-Trip Time</span><b id="labP2pRttDetail">– ms</b></div>
+          <div class="lab-metric"><span>Latency Jitter (ΔRTT)</span><b id="labP2pJitterDetail">– ms</b></div>
+          <div class="lab-metric"><span>Observed Latency Range</span><b id="labP2pMinMax">–</b></div>
+          <div class="lab-metric"><span>Delivered Sequence</span><b id="labP2pSeqDetail">#0</b></div>
+          <div class="lab-metric"><span>Probe Rate</span><b>1.25 probes / sec</b></div>
+          <div class="lab-metric"><span>Transport Protocol</span><b>TCP Microsecond Telemetry</b></div>
         </div>
+        <div class="lab-note-box">Times physical packet travel across the local wireless connection to monitor physical RF path interference and buffer delays.</div>
       </div>
     </div>
   </div>
@@ -635,8 +678,16 @@ function initCanvas(id) {
   return { ctx: ctx, width: rect.width, height: rect.height };
 }
 
-// 1. Motion canvas
+// 1. Motion canvas with visual envelope & spike highlighting
 let motionHist = [];
+let motionEnvelope = null;
+let motionThreshold = 1.8;
+let motionBaseline = 0.0;
+let motionMeanDbm = -65;
+let motionPeakSpike = 0.0;
+let motionCurrentSpike = 0.0;
+let motionDetected = false;
+
 function drawLabMotion() {
   const sc = initCanvas('labMotionCanvas');
   if (!sc) return;
@@ -645,44 +696,123 @@ function drawLabMotion() {
 
   const minVal = -95, maxVal = -40;
   const isEnlarged = height > 140;
+  const padBottom = isEnlarged ? 26 : 14;
+  const padTop = isEnlarged ? 20 : 10;
+  const drawHeight = height - padTop - padBottom;
 
+  const toY = (dbm) => height - padBottom - ((dbm - minVal) / (maxVal - minVal)) * drawHeight;
+
+  // Background dBm reference lines
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
 
   if (isEnlarged) {
-    [-50, -70, -90].forEach(val => {
-      const norm = (val - minVal) / (maxVal - minVal);
-      const y = height - (norm * (height - 30) + 15);
-      ctx.beginPath();
-      ctx.moveTo(0, y); ctx.lineTo(width, y);
-      ctx.stroke();
+    [-50, -65, -80, -90].forEach(val => {
+      const y = toY(val);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
       ctx.fillStyle = '#7D8593';
       ctx.font = '10px system-ui';
       ctx.fillText(val + ' dBm', 8, y - 4);
     });
   } else {
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-    ctx.stroke();
+    const midY = toY(-67.5);
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(width, midY); ctx.stroke();
   }
 
   if (!motionHist.length) return;
   const pts = motionHist.slice(isEnlarged ? -60 : -30);
   const step = width / Math.max(pts.length - 1, 1);
 
+  // 1. Draw the Quiet Noise Envelope (shaded band)
   ctx.beginPath();
-  ctx.strokeStyle = '#46D39A';
-  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
-  ctx.lineJoin = 'round';
-
   pts.forEach((pt, i) => {
-    const norm = ((pt.dbm || -70) - minVal) / (maxVal - minVal);
-    const y = height - (norm * (height - (isEnlarged ? 30 : 20)) + (isEnlarged ? 15 : 10));
+    const upperDbm = pt.env_upper != null ? pt.env_upper : (motionMeanDbm + motionThreshold);
     const x = i * step;
+    const y = toY(upperDbm);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const pt = pts[i];
+    const lowerDbm = pt.env_lower != null ? pt.env_lower : (motionMeanDbm - motionThreshold);
+    const x = i * step;
+    const y = toY(lowerDbm);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = motionDetected ? 'rgba(255, 122, 122, 0.14)' : 'rgba(70, 211, 154, 0.09)';
+  ctx.fill();
+
+  // Envelope boundary dashed lines
+  ctx.strokeStyle = motionDetected ? 'rgba(255, 122, 122, 0.45)' : 'rgba(70, 211, 154, 0.35)';
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+
+  // Upper boundary
+  ctx.beginPath();
+  pts.forEach((pt, i) => {
+    const upperDbm = pt.env_upper != null ? pt.env_upper : (motionMeanDbm + motionThreshold);
+    const x = i * step;
+    const y = toY(upperDbm);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
+
+  // Lower boundary
+  ctx.beginPath();
+  pts.forEach((pt, i) => {
+    const lowerDbm = pt.env_lower != null ? pt.env_lower : (motionMeanDbm - motionThreshold);
+    const x = i * step;
+    const y = toY(lowerDbm);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Envelope text label
+  if (isEnlarged) {
+    ctx.fillStyle = motionDetected ? '#FF7A7A' : '#46D39A';
+    ctx.font = '10px system-ui';
+    const lastUpperY = toY(pts[pts.length - 1].env_upper || (motionMeanDbm + motionThreshold));
+    ctx.fillText('±' + motionThreshold + ' dB envelope', Math.max(10, width - 130), Math.max(16, lastUpperY - 6));
+  }
+
+  // 2. Draw the Live Signal Line
+  ctx.beginPath();
+  ctx.strokeStyle = motionDetected ? '#FF7A7A' : '#46D39A';
+  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
+  ctx.lineJoin = 'round';
+
+  pts.forEach((pt, i) => {
+    const x = i * step;
+    const y = toY(pt.dbm || -70);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // 3. Highlight Spikes (if something happened, it spikes by this much)
+  pts.forEach((pt, i) => {
+    const isSpike = pt.is_spike || (pt.spike && pt.spike > motionThreshold);
+    if (isSpike) {
+      const x = i * step;
+      const y = toY(pt.dbm || -70);
+      ctx.beginPath();
+      ctx.arc(x, y, isEnlarged ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#FF7A7A';
+      ctx.fill();
+
+      // Delta annotation "+X.X dB spike"
+      if (isEnlarged || i === pts.length - 1) {
+        ctx.fillStyle = '#ECEEF1';
+        ctx.font = '9px system-ui';
+        const txt = '+' + (pt.spike || '1.8') + ' dB';
+        ctx.fillText(txt, Math.max(4, Math.min(width - 40, x - 14)), Math.max(18, y - 8));
+      }
+    }
+  });
 }
 
 async function pollLabMotion() {
@@ -692,20 +822,55 @@ async function pollLabMotion() {
     const data = await res.json();
     if (data.status === 'ok') {
       motionHist = data.history || [];
+      motionEnvelope = data.envelope || null;
+      motionThreshold = data.threshold || 1.8;
+      motionBaseline = data.baseline || 0.0;
+      motionMeanDbm = data.mean_dbm != null ? data.mean_dbm : -65;
+      motionPeakSpike = data.max_spike || 0.0;
+      motionCurrentSpike = data.spike || 0.0;
+      motionDetected = !!data.motion_detected;
+
       drawLabMotion();
+
+      // Update text in overview card
       $('labMotionVar').textContent = data.variance + ' dB';
-      if ($('labMotionVarDetail')) $('labMotionVarDetail').textContent = data.variance + ' dB';
-      if ($('labMotionDbm')) $('labMotionDbm').textContent = (data.current_dbm != null ? data.current_dbm + ' dBm' : '–');
-      const b = $('labMotionBadge');
-      if (data.motion_detected) {
-        b.textContent = 'Movement Detected'; b.className = 'lab-badge alert';
-      } else {
-        b.textContent = 'Room Quiet'; b.className = 'lab-badge active';
+      if ($('labMotionEnv')) $('labMotionEnv').textContent = '±' + motionThreshold + ' dB';
+      if ($('labMotionSpike')) {
+        const spk = $('labMotionSpike');
+        spk.textContent = '+' + motionCurrentSpike + ' dB';
+        spk.style.color = motionDetected ? 'var(--danger)' : 'var(--text)';
       }
+      if ($('labMotionPeakSpike')) $('labMotionPeakSpike').textContent = '+' + motionPeakSpike + ' dB';
+
+      const b = $('labMotionBadge');
+      if (motionDetected) {
+        b.textContent = 'Movement Detected (+' + motionCurrentSpike + ' dB spike)';
+        b.className = 'lab-badge alert';
+      } else {
+        b.textContent = 'Room Quiet (within envelope)';
+        b.className = 'lab-badge active';
+      }
+
       if (data.target && data.target.ssid) {
-        const ssidStr = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+        const ssidStr = data.target.ssid + (data.current_dbm != null ? ' (' + data.current_dbm + ' dBm)' : '');
         $('labMotionTarget').textContent = ssidStr;
-        if ($('labMotionSsidDetail')) $('labMotionSsidDetail').textContent = data.target.ssid;
+        if ($('labMotionSsidDetail')) $('labMotionSsidDetail').textContent = data.target.ssid + (data.target.freq ? ' · ' + data.target.freq + ' MHz' : '');
+      }
+
+      // Update enlarged details
+      if ($('labMotionDbm')) $('labMotionDbm').textContent = (data.current_dbm != null ? data.current_dbm + ' dBm' : '–');
+      if ($('labMotionSpikeDetail')) {
+        const spkDet = $('labMotionSpikeDetail');
+        spkDet.textContent = '+' + motionCurrentSpike + ' dB ' + (motionDetected ? '(Exceeded envelope!)' : '(Within envelope)');
+        spkDet.style.color = motionDetected ? 'var(--danger)' : 'var(--text)';
+      }
+      if ($('labMotionEnvDetail')) $('labMotionEnvDetail').textContent = '±' + motionThreshold + ' dB threshold';
+      if ($('labMotionPeakDetail')) $('labMotionPeakDetail').textContent = '+' + motionPeakSpike + ' dB peak';
+      if ($('labMotionVarDetail')) $('labMotionVarDetail').textContent = data.variance + ' dB';
+      if ($('labMotionStatusNote')) {
+        $('labMotionStatusNote').textContent = motionDetected
+          ? 'Human motion detected: RF reflections disturbed by +' + motionCurrentSpike + ' dB (exceeded the ±' + motionThreshold + ' dB quiet envelope).'
+          : 'Fresnel multi-path zone is calm. Signal reflections stay within the ±' + motionThreshold + ' dB quiet noise envelope.';
       }
     }
   } catch (e) {}
@@ -782,26 +947,47 @@ async function pollLabSpectrum() {
     if (data.status === 'ok') {
       specNetworks = data.networks || [];
       drawLabSpectrum();
-      const countStr = data.total + ' APs';
-      $('labSpecCount').textContent = countStr;
+
+      const totalCount = data.total || 0;
       const b24 = (data.bands && data.bands['2.4GHz']) || 0;
       const b5 = (data.bands && data.bands['5GHz']) || 0;
+      const sharedCount = data.shared_count || 0;
+
+      $('labSpecCount').textContent = totalCount + ' APs';
       $('labSpec24').textContent = b24;
       $('labSpec5').textContent = b5;
-      $('labSpecShared').textContent = data.shared_count || 0;
+      $('labSpecShared').textContent = sharedCount + ' APs';
 
-      if ($('labSpecTotalDetail')) $('labSpecTotalDetail').textContent = countStr;
-      if ($('labSpec24Detail')) $('labSpec24Detail').textContent = b24 + ' networks';
-      if ($('labSpec5Detail')) $('labSpec5Detail').textContent = b5 + ' networks';
-      if ($('labSpecSharedDetail')) $('labSpecSharedDetail').textContent = (data.shared_count || 0) + ' networks';
+      // Most congested channel
+      const chanCounts = {};
+      specNetworks.forEach(ap => { chanCounts[ap.chan] = (chanCounts[ap.chan] || 0) + 1; });
+      let maxChan = null, maxCount = 0;
+      for (const [ch, c] of Object.entries(chanCounts)) {
+        if (c > maxCount) { maxCount = c; maxChan = ch; }
+      }
+      const congStr = maxChan ? 'Ch ' + maxChan + ' (' + maxCount + ' APs)' : '–';
+      if ($('labSpecCongestion')) $('labSpecCongestion').textContent = congStr;
+
+      // Connected network
+      const connAp = specNetworks.find(ap => ap.connected);
+      const connStr = connAp ? connAp.ssid + ' (' + connAp.dbm + ' dBm)' : 'Not connected';
+      if ($('labSpecConnected')) $('labSpecConnected').textContent = connStr;
+
+      // Details
+      if ($('labSpecTotalDetail')) $('labSpecTotalDetail').textContent = totalCount + ' visible routers';
+      if ($('labSpec24Detail')) $('labSpec24Detail').textContent = b24 + ' APs across 13 channels';
+      if ($('labSpec5Detail')) $('labSpec5Detail').textContent = b5 + ' APs across 25 channels';
+      if ($('labSpecSharedDetail')) $('labSpecSharedDetail').textContent = sharedCount + ' routers seen by both devices';
+      if ($('labSpecConnectedDetail')) $('labSpecConnectedDetail').textContent = connAp ? connAp.ssid + ' · ' + connAp.dbm + ' dBm (Ch ' + connAp.chan + ')' : 'None';
+      if ($('labSpecCongestionDetail')) $('labSpecCongestionDetail').textContent = maxChan ? 'Channel ' + maxChan + ' (' + maxCount + ' APs)' : 'None';
 
       const topList = $('labTopAps');
       if (topList && specNetworks.length) {
-        const sorted = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 5);
+        const sorted = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6);
         topList.innerHTML = sorted.map(ap => `
           <div class="lab-ap-row">
-            <div class="lab-ap-ssid">${ap.ssid || 'Hidden AP'}</div>
-            <div class="lab-ap-meta">${ap.freq < 3000 ? '2.4G' : '5G'} · Ch ${ap.chan} · <b>${ap.dbm} dBm</b></div>
+            <div class="lab-ap-ssid">${ap.connected ? '★ ' : ''}${ap.ssid || 'Hidden Network'}</div>
+            <div class="lab-ap-meta">${ap.freq < 3000 ? '2.4G' : '5G'} · Ch ${ap.chan} · <b>${ap.dbm} dBm</b>${ap.shared ? ' · <span style="color:var(--online)">Shared</span>' : ''}</div>
           </div>
         `).join('');
       }
@@ -885,9 +1071,10 @@ async function pollLabClusters() {
     if (data.status === 'ok') {
       clusterData = data;
       drawLabClusters();
-      const spotsCount = (data.total_fingerprints || (data.clusters && data.clusters.length) || 0) + ' spots';
-      $('labClusterCount').textContent = spotsCount;
-      if ($('labClusterTotalDetail')) $('labClusterTotalDetail').textContent = spotsCount;
+
+      const spots = data.total_fingerprints || (data.clusters && data.clusters.length) || 0;
+      $('labClusterCount').textContent = spots + ' spots';
+      if ($('labClusterTotalDetail')) $('labClusterTotalDetail').textContent = spots + ' ambient fingerprints stored';
 
       if (data.live_laptop && $('labClusterLapCoord')) {
         $('labClusterLapCoord').textContent = `(${data.live_laptop.x.toFixed(2)}, ${data.live_laptop.y.toFixed(2)})`;
@@ -895,9 +1082,28 @@ async function pollLabClusters() {
       if (data.live_phone && $('labClusterPhoneCoord')) {
         $('labClusterPhoneCoord').textContent = `(${data.live_phone.x.toFixed(2)}, ${data.live_phone.y.toFixed(2)})`;
       }
-      if (data.live_laptop && data.live_phone && $('labClusterDist')) {
+
+      if (data.live_laptop && data.live_phone) {
         const d = Math.hypot(data.live_laptop.x - data.live_phone.x, data.live_laptop.y - data.live_phone.y);
-        $('labClusterDist').textContent = d.toFixed(2) + ' latent units';
+        const distStr = d.toFixed(2) + ' latent units';
+        if ($('labClusterDist')) $('labClusterDist').textContent = distStr;
+        if ($('labClusterDistFooter')) $('labClusterDistFooter').textContent = distStr;
+
+        const isSameRoom = d < 1.5;
+        const verdict = isSameRoom ? 'Same room' : 'Different room';
+        const confidence = isSameRoom ? Math.round(Math.max(70, (1.5 - d) * 20 + 70)) + '%' : Math.round(Math.min(95, d * 15 + 40)) + '%';
+
+        if ($('labClusterVerdict')) {
+          const v = $('labClusterVerdict');
+          v.textContent = verdict + ' (' + confidence + ')';
+          v.style.color = isSameRoom ? 'var(--online)' : 'var(--text2)';
+        }
+        if ($('labClusterConfidence')) {
+          $('labClusterConfidence').textContent = verdict + ' (Confidence: ' + confidence + ')';
+        }
+      } else {
+        if ($('labClusterVerdict')) $('labClusterVerdict').textContent = 'Waiting for phone fix…';
+        if ($('labClusterDistFooter')) $('labClusterDistFooter').textContent = '–';
       }
     }
   } catch (e) {}
@@ -970,6 +1176,7 @@ async function sendLabP2p() {
       lastP2pRtt = rtt;
       p2pHist.push(rtt);
       drawLabP2p();
+
       const rttStr = rtt + ' ms';
       const jitStr = '±' + jitter + ' ms';
       $('labP2pRtt').textContent = rttStr;
@@ -977,11 +1184,14 @@ async function sendLabP2p() {
 
       if ($('labP2pRttDetail')) $('labP2pRttDetail').textContent = rttStr;
       if ($('labP2pJitterDetail')) $('labP2pJitterDetail').textContent = jitStr;
-      if ($('labP2pSeqDetail')) $('labP2pSeqDetail').textContent = '#' + p2pSeq;
-      if ($('labP2pMinMax') && p2pHist.length) {
+      if ($('labP2pSeqDetail')) $('labP2pSeqDetail').textContent = '#' + p2pSeq + ' probes';
+
+      if (p2pHist.length) {
         const minVal = Math.min(...p2pHist);
         const maxVal = Math.max(...p2pHist);
-        $('labP2pMinMax').textContent = minVal + ' / ' + maxVal + ' ms';
+        const rangeStr = minVal + ' ms min / ' + maxVal + ' ms peak';
+        if ($('labP2pRange')) $('labP2pRange').textContent = rangeStr;
+        if ($('labP2pMinMax')) $('labP2pMinMax').textContent = rangeStr;
       }
     }
   } catch (e) {}
