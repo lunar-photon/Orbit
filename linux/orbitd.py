@@ -5031,6 +5031,18 @@ class WifiMotionMonitor:
         self.last_disturbance_time = 0.0
         self.event_counter = 0
 
+        # Phone motion tracking (foreground active only; zero background battery drain)
+        self.phone_history = collections.deque(maxlen=30)
+        self.phone_events = collections.deque(maxlen=40)
+        self.phone_last_seen = 0.0
+        self.phone_signal = None
+        self.phone_ssid = ""
+        self.phone_bssid = ""
+        self.phone_freq = 0
+        self.phone_active_event = None
+        self.phone_last_disturbance_time = 0.0
+        self.phone_event_counter = 0
+
         # Primary log path on laptop (~/.config/orbit/wifi_disturbance.log)
         self.log_file = os.path.join(ORBIT_CONFIG_DIR, 'wifi_disturbance.log')
         try:
@@ -5064,6 +5076,7 @@ class WifiMotionMonitor:
                     self.event_counter += 1
                     self.events.append({
                         'id': self.event_counter,
+                        'source': 'laptop',
                         'date': m.group(1),
                         'time': m.group(2),
                         'peak_spike': float(m.group(3)),
@@ -5085,7 +5098,7 @@ class WifiMotionMonitor:
                     f"Variance: {ev['variance']:.2f} dB | SSID: \"{ev['ssid']}\"\n")
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(line)
-            print(f"[Orbit Wi-Fi Lab] {ev['time']} Disturbance detected: +{ev['peak_spike']} dB spike (RSSI: {ev['dbm']} dBm, Base: {ev['baseline']} dBm) on {ev['ssid']}", flush=True)
+            print(f"[Orbit Wi-Fi Lab] {ev['time']} Disturbance detected on laptop: +{ev['peak_spike']} dB spike (RSSI: {ev['dbm']} dBm, Base: {ev['baseline']} dBm) on {ev['ssid']}", flush=True)
         except Exception:
             pass
 
@@ -5103,13 +5116,75 @@ class WifiMotionMonitor:
     def clear_log(self):
         with self.lock:
             self.events.clear()
+            self.phone_events.clear()
             self.active_event = None
+            self.phone_active_event = None
             try:
                 with open(self.log_file, 'w', encoding='utf-8') as f:
                     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     f.write(f"[{now_str}] Disturbance log reset.\n")
             except Exception:
                 pass
+
+    def feed_phone_sample(self, rssi, ssid="", bssid="", freq=0):
+        try:
+            val = int(rssi)
+        except (ValueError, TypeError):
+            return
+        if val == -127 or val == 0:
+            return
+        now = time.time()
+        with self.lock:
+            self.phone_last_seen = now
+            self.phone_signal = val
+            if ssid: self.phone_ssid = ssid
+            if bssid: self.phone_bssid = bssid.lower()
+            if freq: self.phone_freq = freq
+            self.phone_history.append((now, val))
+
+            vals = [s for _, s in self.phone_history]
+            if len(vals) >= 4:
+                base_mean = sum(vals) / len(vals)
+                threshold = 1.8
+                spike = round(abs(val - base_mean), 2)
+                recent = vals[-10:]
+                rec_mean = sum(recent) / len(recent)
+                variance = round(math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent)), 2)
+
+                is_disturbed = (spike > threshold) or (variance > threshold)
+                if is_disturbed:
+                    if self.phone_active_event and (now - self.phone_last_disturbance_time < 3.0):
+                        self.phone_active_event['peak_spike'] = max(self.phone_active_event['peak_spike'], spike)
+                        self.phone_active_event['duration'] = round(now - self.phone_active_event['start_time'], 1)
+                        self.phone_active_event['variance'] = max(self.phone_active_event['variance'], variance)
+                        self.phone_active_event['end_time'] = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
+                    else:
+                        self.phone_event_counter += 1
+                        t_str = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
+                        d_str = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d')
+                        ev = {
+                            'id': self.phone_event_counter,
+                            'source': 'phone',
+                            'timestamp': now,
+                            'start_time': now,
+                            'time': t_str,
+                            'date': d_str,
+                            'spike': spike,
+                            'peak_spike': spike,
+                            'dbm': val,
+                            'baseline': round(base_mean, 1),
+                            'threshold': threshold,
+                            'variance': variance,
+                            'ssid': self.phone_ssid or 'Wi-Fi (Phone)',
+                            'duration': 0.5
+                        }
+                        self.phone_active_event = ev
+                        self.phone_events.append(ev)
+                        # Note: Phone does not log to disk/background file to avoid battery drain
+                    self.phone_last_disturbance_time = now
+                else:
+                    if self.phone_active_event and (now - self.phone_last_disturbance_time >= 3.0):
+                        self.phone_active_event = None
 
     def _loop(self):
         while True:
@@ -5152,6 +5227,7 @@ class WifiMotionMonitor:
                                     d_str = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d')
                                     ev = {
                                         'id': self.event_counter,
+                                        'source': 'laptop',
                                         'timestamp': now,
                                         'start_time': now,
                                         'time': t_str,
@@ -5162,7 +5238,7 @@ class WifiMotionMonitor:
                                         'baseline': round(base_mean, 1),
                                         'threshold': threshold,
                                         'variance': variance,
-                                        'ssid': self.connected_ssid or 'Wi-Fi',
+                                        'ssid': self.connected_ssid or 'Wi-Fi (Laptop)',
                                         'duration': 0.5
                                     }
                                     self.active_event = ev
@@ -5179,56 +5255,45 @@ class WifiMotionMonitor:
 
     def status(self):
         with self.lock:
+            now = time.time()
             vals = [sig for _, sig in self.history]
             cur_sig = self.current_signal if self.current_signal is not None else -60
-            ev_list = list(self.events)
-            last_ev = ev_list[-1] if ev_list else None
-            if len(vals) < 4:
-                return {
-                    'status': 'ok',
-                    'current_dbm': self.current_signal,
-                    'mean_dbm': cur_sig,
-                    'variance': 0.0,
-                    'motion_detected': False,
-                    'baseline': 0.0,
-                    'threshold': 1.8,
-                    'spike': 0.0,
-                    'max_spike': 0.0,
-                    'envelope': {'upper': cur_sig + 1.8, 'lower': cur_sig - 1.8},
-                    'history': [{'t': t, 'dbm': s, 'env_upper': cur_sig + 1.8, 'env_lower': cur_sig - 1.8, 'spike': 0.0, 'is_spike': False} for t, s in self.history],
-                    'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq},
-                    'events': ev_list,
-                    'last_event': last_ev,
-                    'total_events': len(ev_list),
-                    'log_path': self.log_file
-                }
-            recent = vals[-10:]
-            mean = sum(recent) / len(recent)
-            variance = math.sqrt(sum((x - mean) ** 2 for x in recent) / len(recent))
-
-            base_mean = sum(vals) / len(vals)
-            baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
+            laptop_events = list(self.events)
+            last_ev = laptop_events[-1] if laptop_events else None
             threshold = 1.8
-            motion = bool(variance > threshold)
 
-            cur = self.current_signal if self.current_signal is not None else base_mean
-            spike = round(abs(cur - base_mean), 2)
-            max_spike = round(max(abs(x - base_mean) for x in vals), 2)
+            if len(vals) < 4:
+                base_mean = cur_sig
+                variance = 0.0
+                baseline = 0.0
+                motion = False
+                spike = 0.0
+                max_spike = 0.0
+                hist = [{'t': t, 'dbm': s, 'env_upper': cur_sig + threshold, 'env_lower': cur_sig - threshold, 'spike': 0.0, 'is_spike': False} for t, s in self.history]
+            else:
+                recent = vals[-10:]
+                mean = sum(recent) / len(recent)
+                variance = math.sqrt(sum((x - mean) ** 2 for x in recent) / len(recent))
+                base_mean = sum(vals) / len(vals)
+                baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
+                motion = bool((abs(cur_sig - base_mean) > threshold) or (variance > threshold))
+                spike = round(abs(cur_sig - base_mean), 2)
+                max_spike = round(max(abs(x - base_mean) for x in vals), 2)
+                hist = []
+                for t, s in self.history:
+                    pt_spike = round(abs(s - base_mean), 2)
+                    hist.append({
+                        't': t,
+                        'dbm': s,
+                        'env_upper': round(base_mean + threshold, 2),
+                        'env_lower': round(base_mean - threshold, 2),
+                        'spike': pt_spike,
+                        'is_spike': pt_spike > threshold
+                    })
 
-            hist = []
-            for t, s in self.history:
-                pt_spike = round(abs(s - base_mean), 2)
-                hist.append({
-                    't': t,
-                    'dbm': s,
-                    'env_upper': round(base_mean + threshold, 2),
-                    'env_lower': round(base_mean - threshold, 2),
-                    'spike': pt_spike,
-                    'is_spike': pt_spike > threshold
-                })
-
-            return {
-                'status': 'ok',
+            laptop_status = {
+                'source': 'laptop',
+                'active': True,
                 'current_dbm': self.current_signal,
                 'mean_dbm': round(base_mean, 1),
                 'variance': round(variance, 2),
@@ -5243,9 +5308,116 @@ class WifiMotionMonitor:
                 },
                 'history': hist,
                 'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq},
-                'events': ev_list,
+                'events': laptop_events,
                 'last_event': last_ev,
-                'total_events': len(ev_list),
+                'total_events': len(laptop_events),
+                'log_path': self.log_file
+            }
+
+            # Phone telemetry evaluation (active only while phone has lab open in foreground)
+            phone_vals = [sig for _, sig in self.phone_history]
+            phone_is_active = (now - self.phone_last_seen < 4.5) and (len(phone_vals) > 0)
+            phone_events_list = list(self.phone_events)
+
+            if phone_is_active:
+                p_cur_sig = self.phone_signal if self.phone_signal is not None else (phone_vals[-1] if phone_vals else -65)
+                if len(phone_vals) < 4:
+                    p_base_mean = p_cur_sig
+                    p_variance = 0.0
+                    p_baseline = 0.0
+                    p_motion = False
+                    p_spike = 0.0
+                    p_max_spike = 0.0
+                    p_hist = [{'t': t, 'dbm': s, 'env_upper': p_cur_sig + threshold, 'env_lower': p_cur_sig - threshold, 'spike': 0.0, 'is_spike': False} for t, s in self.phone_history]
+                else:
+                    p_recent = phone_vals[-10:]
+                    p_mean = sum(p_recent) / len(p_recent)
+                    p_variance = math.sqrt(sum((x - p_mean) ** 2 for x in p_recent) / len(p_recent))
+                    p_base_mean = sum(phone_vals) / len(phone_vals)
+                    p_baseline = math.sqrt(sum((x - p_base_mean) ** 2 for x in phone_vals) / len(phone_vals))
+                    p_motion = bool((abs(p_cur_sig - p_base_mean) > threshold) or (p_variance > threshold))
+                    p_spike = round(abs(p_cur_sig - p_base_mean), 2)
+                    p_max_spike = round(max(abs(x - p_base_mean) for x in phone_vals), 2)
+                    p_hist = []
+                    for t, s in self.phone_history:
+                        pt_spike = round(abs(s - p_base_mean), 2)
+                        p_hist.append({
+                            't': t,
+                            'dbm': s,
+                            'env_upper': round(p_base_mean + threshold, 2),
+                            'env_lower': round(p_base_mean - threshold, 2),
+                            'spike': pt_spike,
+                            'is_spike': pt_spike > threshold
+                        })
+                phone_status = {
+                    'source': 'phone',
+                    'active': True,
+                    'status': 'Active (Foreground)',
+                    'current_dbm': self.phone_signal,
+                    'mean_dbm': round(p_base_mean, 1),
+                    'variance': round(p_variance, 2),
+                    'motion_detected': p_motion,
+                    'baseline': round(p_baseline, 2),
+                    'threshold': threshold,
+                    'spike': p_spike,
+                    'max_spike': p_max_spike,
+                    'envelope': {
+                        'upper': round(p_base_mean + threshold, 2),
+                        'lower': round(p_base_mean - threshold, 2)
+                    },
+                    'history': p_hist,
+                    'target': {'ssid': self.phone_ssid, 'bssid': self.phone_bssid, 'freq': self.phone_freq},
+                    'events': phone_events_list,
+                    'last_event': phone_events_list[-1] if phone_events_list else None,
+                    'total_events': len(phone_events_list),
+                    'log_path': 'Foreground memory only (No background battery drain)'
+                }
+            else:
+                phone_status = {
+                    'source': 'phone',
+                    'active': False,
+                    'status': 'Standby (Zero background battery)',
+                    'current_dbm': None,
+                    'mean_dbm': None,
+                    'variance': 0.0,
+                    'motion_detected': False,
+                    'baseline': 0.0,
+                    'threshold': threshold,
+                    'spike': 0.0,
+                    'max_spike': 0.0,
+                    'envelope': {'upper': None, 'lower': None},
+                    'history': [],
+                    'target': {'ssid': self.phone_ssid, 'bssid': self.phone_bssid, 'freq': self.phone_freq},
+                    'events': phone_events_list,
+                    'last_event': phone_events_list[-1] if phone_events_list else None,
+                    'total_events': len(phone_events_list),
+                    'log_path': 'Foreground memory only (No background battery drain)'
+                }
+
+            # Combined events tagged with source ('laptop' / 'phone')
+            combined_events = list(laptop_events) + list(phone_events_list)
+            combined_events.sort(key=lambda ev: ev.get('timestamp') or 0.0)
+
+            overall_motion = motion or (phone_status['active'] and phone_status['motion_detected'])
+
+            return {
+                'status': 'ok',
+                'laptop': laptop_status,
+                'phone': phone_status,
+                'events': combined_events,
+                'current_dbm': self.current_signal,
+                'mean_dbm': round(base_mean, 1),
+                'variance': round(variance, 2),
+                'motion_detected': overall_motion,
+                'baseline': round(baseline, 2),
+                'threshold': threshold,
+                'spike': spike,
+                'max_spike': max_spike,
+                'envelope': laptop_status['envelope'],
+                'history': hist,
+                'target': laptop_status['target'],
+                'last_event': last_ev,
+                'total_events': len(laptop_events),
                 'log_path': self.log_file
             }
 
@@ -8432,6 +8604,17 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 'server_t': time.time(),
                 'seq': seq
             })
+            return
+        elif path in ('/api/findmy/wifi/motion', '/api/findmy/wifi/phone_motion'):
+            b = body if isinstance(body, dict) else {}
+            if 'rssi' in b:
+                WIFI_MOTION.feed_phone_sample(
+                    rssi=b.get('rssi'),
+                    ssid=b.get('ssid', ''),
+                    bssid=b.get('bssid', ''),
+                    freq=b.get('freq', 0)
+                )
+            self.send_json(WIFI_MOTION.status())
             return
         elif path == '/api/findmy/wifi/motion/log/clear':
             WIFI_MOTION.clear_log()

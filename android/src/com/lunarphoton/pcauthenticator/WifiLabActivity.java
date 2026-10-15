@@ -2,7 +2,10 @@ package com.lunarphoton.pcauthenticator;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Bitmap;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.WebChromeClient;
@@ -13,6 +16,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import org.json.JSONObject;
 
 public class WifiLabActivity extends Activity {
     private WebView webView;
@@ -64,6 +68,36 @@ public class WifiLabActivity extends Activity {
                 String deviceName = getIntent().getStringExtra("device_name");
                 if (tvSub != null) tvSub.setText(deviceName != null && !deviceName.isEmpty() ? "RF telemetry · " + deviceName : "Live RF telemetry & spectrum");
             });
+        }
+
+        @android.webkit.JavascriptInterface
+        public String getPhoneWifiInfo() {
+            try {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm == null) return "{}";
+                WifiInfo info = wm.getConnectionInfo();
+                if (info == null) return "{}";
+                int rssi = info.getRssi();
+                if (rssi == -127 || rssi == 0) return "{}";
+                String ssid = info.getSSID();
+                if (ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2) {
+                    ssid = ssid.substring(1, ssid.length() - 1);
+                }
+                JSONObject obj = new JSONObject();
+                obj.put("available", true);
+                obj.put("rssi", rssi);
+                obj.put("ssid", ssid != null ? ssid : "");
+                obj.put("bssid", info.getBSSID() != null ? info.getBSSID().toLowerCase() : "");
+                int freq = 0;
+                if (android.os.Build.VERSION.SDK_INT >= 21) {
+                    freq = info.getFrequency();
+                }
+                obj.put("freq", freq);
+                obj.put("t", System.currentTimeMillis() / 1000.0);
+                return obj.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
         }
     }
 

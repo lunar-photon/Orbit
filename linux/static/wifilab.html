@@ -376,6 +376,24 @@
     background: var(--danger);
     display: inline-block;
   }
+  .lab-sensor-tag {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .lab-sensor-tag.laptop {
+    background: rgba(70, 211, 154, 0.15);
+    color: var(--online);
+    border: 1px solid rgba(70, 211, 154, 0.25);
+  }
+  .lab-sensor-tag.phone {
+    background: rgba(142, 168, 255, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(142, 168, 255, 0.25);
+  }
 
   /* Disturbance Event Log */
   .lab-log-section {
@@ -654,31 +672,32 @@
           <h3>Presence Disturbance</h3>
         </div>
         <div class="lab-header-actions">
-          <span class="lab-badge" id="labMotionBadge">Quiet</span>
+          <span class="lab-badge active" id="labMotionBadge">Laptop: Quiet</span>
+          <span class="lab-badge" id="labMotionPhoneBadge">Phone: Standby</span>
           <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardMotion')">
             <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
             <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
           </button>
         </div>
       </div>
-      <div class="lab-desc">Multipath tripwire sensing human presence via micro-fluctuations in Wi-Fi reflection</div>
+      <div class="lab-desc">Multipath tripwire sensing human presence across laptop &amp; phone RF reflections</div>
       <canvas id="labMotionCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
-        <div>Target: <span class="lab-val" id="labMotionTarget">–</span></div>
-        <div>Envelope: <span class="lab-val" id="labMotionEnv">±1.8 dB</span></div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop: <span class="lab-val" id="labMotionTarget">–</span></div>
         <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
-        <div>Peak Spike: <span class="lab-val" id="labMotionPeakSpike">0.0 dB</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
-        <div>Last Disturbance: <span class="lab-val" id="labMotionLastLog">Quiet (None)</span></div>
-        <div>Laptop Log: <span class="lab-val" id="labMotionTotalLogs">0 events</span></div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labMotionPhoneTarget">Standby</span></div>
+        <div>Disturbance: <span class="lab-val" id="labMotionPhoneSpike">–</span></div>
+      </div>
+      <div class="lab-footer" style="margin-top:2px;">
+        <div>Laptop Log: <span class="lab-val" id="labMotionTotalLogs">Continuous (~/.config/orbit)</span></div>
+        <div>Phone Mode: <span class="lab-val" id="labMotionPhoneMode" style="color:var(--online);">Zero background battery</span></div>
       </div>
       <div class="lab-recent-movements">
         <div class="lab-recent-header">
           <span>Recent Movements</span>
-          <span class="lab-recent-hint">Last 5 disturbances</span>
+          <span class="lab-recent-hint">Laptop &amp; Phone disturbances</span>
         </div>
         <div class="lab-recent-list" id="labRecentMovements">
           <div class="lab-recent-empty">No movements detected yet. Multi-path reflections calm.</div>
@@ -686,18 +705,18 @@
       </div>
       <div class="lab-details">
         <div class="lab-grid">
-          <div class="lab-metric"><span>Real-time Signal</span><b id="labMotionDbm">– dBm</b></div>
-          <div class="lab-metric"><span>Current Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
-          <div class="lab-metric"><span>Quiet Noise Envelope</span><b id="labMotionEnvDetail">±1.8 dB threshold</b></div>
-          <div class="lab-metric"><span>Peak Disturbance Spike</span><b id="labMotionPeakDetail">0.0 dB</b></div>
-          <div class="lab-metric"><span>Monitored Link</span><b id="labMotionSsidDetail">–</b></div>
-          <div class="lab-metric"><span>Ambient Signal Variance</span><b id="labMotionVarDetail">0.0 dB</b></div>
+          <div class="lab-metric"><span>Laptop Signal</span><b id="labMotionLapDbm">– dBm</b></div>
+          <div class="lab-metric"><span>Laptop Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
+          <div class="lab-metric"><span>Phone Signal</span><b id="labMotionPhoneDbmDetail">Standby</b></div>
+          <div class="lab-metric"><span>Phone Disturbance</span><b id="labMotionPhoneSpikeDetail">Standby</b></div>
+          <div class="lab-metric"><span>Quiet Noise Envelope</span><b>±1.8 dB threshold</b></div>
+          <div class="lab-metric"><span>Phone Logging Policy</span><b style="color:var(--online);">Zero background drain</b></div>
         </div>
-        <div class="lab-note-box" id="labMotionStatusNote">Fresnel multi-path zone is calm. Signal reflection remains within the quiet noise envelope.</div>
+        <div class="lab-note-box" id="labMotionStatusNote">Laptop continuously monitors ambient reflections and logs events. Phone presence detector operates in foreground without background battery consumption.</div>
         <div class="lab-log-section">
           <div class="lab-log-header">
             <div style="display:flex;align-items:center;gap:6px;">
-              <span class="lab-log-title">Disturbance Event Log (Laptop)</span>
+              <span class="lab-log-title">Continuous Disturbance Log (Laptop)</span>
               <span class="lab-log-badge" id="labMotionLogCount">0 logged</span>
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
@@ -973,10 +992,14 @@ function renderRecentMovements(events) {
   const sorted = [...events].reverse().slice(0, 5);
   container.innerHTML = sorted.map(ev => {
     const ago = formatTimeAgo(ev);
+    const isPhone = ev.source === 'phone';
+    const tagClass = isPhone ? 'phone' : 'laptop';
+    const tagLabel = isPhone ? 'Phone' : 'Laptop';
     return `
       <div class="lab-recent-item">
         <div class="lab-recent-time-badge">
-          <span class="lab-recent-dot"></span>
+          <span class="lab-recent-dot" style="${isPhone ? 'background:#8EA8FF;' : ''}"></span>
+          <span class="lab-sensor-tag ${tagClass}">${tagLabel}</span>
           <span class="lab-recent-rel">${ago}</span>
           <span class="lab-recent-clock">${ev.time || ''}</span>
         </div>
@@ -990,16 +1013,24 @@ function renderRecentMovements(events) {
 }
 
 // ----------------------------------------------------
-// 1. Motion canvas with visual envelope & spike highlighting
+// 1. Dual Motion canvas (Laptop + Phone) with visual envelope & spikes
 // ----------------------------------------------------
-let motionHist = [];
-let motionEnvelope = null;
-let motionThreshold = 1.8;
-let motionBaseline = 0.0;
-let motionMeanDbm = -65;
-let motionPeakSpike = 0.0;
-let motionCurrentSpike = 0.0;
-let motionDetected = false;
+let laptopMotionHist = [];
+let laptopMotionMeanDbm = -65;
+let laptopMotionThreshold = 1.8;
+let laptopMotionSpike = 0.0;
+let laptopMotionPeakSpike = 0.0;
+let laptopMotionDetected = false;
+
+let phoneMotionHist = [];
+let phoneMotionMeanDbm = -65;
+let phoneMotionThreshold = 1.8;
+let phoneMotionSpike = 0.0;
+let phoneMotionPeakSpike = 0.0;
+let phoneMotionDetected = false;
+let phoneMotionActive = false;
+let phoneMotionStatus = "Standby (Zero background battery)";
+
 let motionEvents = [];
 
 function renderMotionLog(events, logPath) {
@@ -1019,20 +1050,10 @@ function renderMotionLog(events, logPath) {
 
   if (!events || events.length === 0) {
     list.innerHTML = '<div class="lab-log-empty">Fresnel quiet baseline maintained. No disturbances recorded yet.</div>';
-    if ($('labMotionLastLog')) {
-      $('labMotionLastLog').textContent = 'Quiet (None)';
-      $('labMotionLastLog').style.color = 'var(--text2)';
-    }
     return;
   }
 
   const sorted = [...events].reverse();
-  const latest = sorted[0];
-  if ($('labMotionLastLog') && latest) {
-    $('labMotionLastLog').textContent = `${latest.time} (+${latest.peak_spike} dB)`;
-    $('labMotionLastLog').style.color = 'var(--danger)';
-  }
-
   list.innerHTML = sorted.slice(0, 40).map(ev => `
     <div class="lab-log-item">
       <div style="display:flex;align-items:center;gap:6px;">
@@ -1090,163 +1111,252 @@ function drawLabMotion() {
     ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(width, midY); ctx.stroke();
   }
 
-  if (!motionHist.length) return;
-  const pts = motionHist.slice(isEnlarged ? -60 : -30);
-  const step = width / Math.max(pts.length - 1, 1);
+  // 1. Draw Laptop Waveform (Green #46D39A)
+  if (laptopMotionHist.length) {
+    const pts = laptopMotionHist.slice(isEnlarged ? -60 : -30);
+    const step = width / Math.max(pts.length - 1, 1);
 
-  // 1. Draw Quiet Noise Envelope (shaded band)
-  ctx.beginPath();
-  pts.forEach((pt, i) => {
-    const upperDbm = pt.env_upper != null ? pt.env_upper : (motionMeanDbm + motionThreshold);
-    const x = i * step;
-    const y = toY(upperDbm);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (motionMeanDbm - motionThreshold);
-    const x = i * step;
-    const y = toY(lowerDbm);
-    ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fillStyle = motionDetected ? 'rgba(255, 122, 122, 0.14)' : 'rgba(70, 211, 154, 0.09)';
-  ctx.fill();
+    // Shaded Quiet Envelope
+    ctx.beginPath();
+    pts.forEach((pt, i) => {
+      const upperDbm = pt.env_upper != null ? pt.env_upper : (laptopMotionMeanDbm + laptopMotionThreshold);
+      const x = i * step;
+      const y = toY(upperDbm);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (laptopMotionMeanDbm - laptopMotionThreshold);
+      const x = i * step;
+      const y = toY(lowerDbm);
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = laptopMotionDetected ? 'rgba(255, 122, 122, 0.12)' : 'rgba(70, 211, 154, 0.08)';
+    ctx.fill();
 
-  // Dashed envelope boundaries
-  ctx.strokeStyle = motionDetected ? 'rgba(255, 122, 122, 0.35)' : 'rgba(70, 211, 154, 0.28)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([3, 3]);
-
-  // Upper boundary
-  ctx.beginPath();
-  pts.forEach((pt, i) => {
-    const upperDbm = pt.env_upper != null ? pt.env_upper : (motionMeanDbm + motionThreshold);
-    const x = i * step;
-    const y = toY(upperDbm);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // Lower boundary
-  ctx.beginPath();
-  pts.forEach((pt, i) => {
-    const lowerDbm = pt.env_lower != null ? pt.env_lower : (motionMeanDbm - motionThreshold);
-    const x = i * step;
-    const y = toY(lowerDbm);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Envelope text label
-  if (isEnlarged) {
-    ctx.fillStyle = motionDetected ? '#FF7A7A' : '#46D39A';
-    ctx.font = '10px system-ui';
-    const lastUpperY = toY(pts[pts.length - 1].env_upper || (motionMeanDbm + motionThreshold));
-    ctx.fillText('±' + motionThreshold + ' dB envelope', Math.max(10, width - 130), Math.max(16, lastUpperY - 6));
-  }
-
-  // 2. Live Signal Line
-  ctx.beginPath();
-  ctx.strokeStyle = motionDetected ? '#FF7A7A' : '#46D39A';
-  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
-  ctx.lineJoin = 'round';
-
-  pts.forEach((pt, i) => {
-    const x = i * step;
-    const y = toY(pt.dbm || -70);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // 3. Highlight Spikes
-  pts.forEach((pt, i) => {
-    const isSpike = pt.is_spike || (pt.spike && pt.spike > motionThreshold);
-    if (isSpike) {
+    // Signal Line
+    ctx.beginPath();
+    ctx.strokeStyle = laptopMotionDetected ? '#FF7A7A' : '#46D39A';
+    ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
+    ctx.lineJoin = 'round';
+    pts.forEach((pt, i) => {
       const x = i * step;
       const y = toY(pt.dbm || -70);
-      ctx.beginPath();
-      ctx.arc(x, y, isEnlarged ? 5 : 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#FF7A7A';
-      ctx.fill();
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
 
-      // Delta annotation "+X.X dB"
-      if (isEnlarged || i === pts.length - 1) {
-        ctx.fillStyle = '#ECEEF1';
-        ctx.font = '9px system-ui';
-        const txt = '+' + (pt.spike || '1.8') + ' dB';
-        ctx.fillText(txt, Math.max(4, Math.min(width - 40, x - 14)), Math.max(18, y - 8));
+    // Spikes
+    pts.forEach((pt, i) => {
+      if (pt.is_spike) {
+        const x = i * step;
+        const y = toY(pt.dbm || -70);
+        ctx.beginPath();
+        ctx.arc(x, y, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#FF7A7A';
+        ctx.fill();
       }
+    });
+  }
+
+  // 2. Draw Phone Waveform (Blue #8EA8FF) when active
+  if (phoneMotionActive && phoneMotionHist.length) {
+    const pts = phoneMotionHist.slice(isEnlarged ? -60 : -30);
+    const step = width / Math.max(pts.length - 1, 1);
+
+    // Shaded Quiet Envelope
+    ctx.beginPath();
+    pts.forEach((pt, i) => {
+      const upperDbm = pt.env_upper != null ? pt.env_upper : (phoneMotionMeanDbm + phoneMotionThreshold);
+      const x = i * step;
+      const y = toY(upperDbm);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (phoneMotionMeanDbm - phoneMotionThreshold);
+      const x = i * step;
+      const y = toY(lowerDbm);
+      ctx.lineTo(x, y);
     }
-  });
+    ctx.closePath();
+    ctx.fillStyle = phoneMotionDetected ? 'rgba(255, 122, 122, 0.12)' : 'rgba(142, 168, 255, 0.08)';
+    ctx.fill();
+
+    // Signal Line
+    ctx.beginPath();
+    ctx.strokeStyle = phoneMotionDetected ? '#FF7A7A' : '#8EA8FF';
+    ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
+    ctx.lineJoin = 'round';
+    pts.forEach((pt, i) => {
+      const x = i * step;
+      const y = toY(pt.dbm || -70);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Spikes
+    pts.forEach((pt, i) => {
+      if (pt.is_spike) {
+        const x = i * step;
+        const y = toY(pt.dbm || -70);
+        ctx.beginPath();
+        ctx.arc(x, y, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#FF7A7A';
+        ctx.fill();
+      }
+    });
+  }
+
+  // Minimalist Sensor Legend (clean dots and labels in top/corner)
+  ctx.font = '10px system-ui';
+  // Laptop legend
+  ctx.fillStyle = '#46D39A';
+  ctx.beginPath(); ctx.arc(14, 14, 3.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#A6AEBB';
+  ctx.fillText('Laptop Sensor', 22, 17);
+
+  // Phone legend
+  const phoneX = 110;
+  ctx.fillStyle = phoneMotionActive ? '#8EA8FF' : '#555C66';
+  ctx.beginPath(); ctx.arc(phoneX, 14, 3.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = phoneMotionActive ? '#A6AEBB' : '#6A7280';
+  ctx.fillText(phoneMotionActive ? 'Phone Sensor' : 'Phone (Standby)', phoneX + 8, 17);
 }
 
 async function pollLabMotion() {
   if (document.hidden) return;
   try {
-    const res = await fetch('/api/findmy/wifi/motion');
+    let phonePayload = null;
+    if (window.OrbitLab && typeof window.OrbitLab.getPhoneWifiInfo === 'function') {
+      try {
+        const raw = window.OrbitLab.getPhoneWifiInfo();
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.available && parsed.rssi) {
+            phonePayload = parsed;
+          }
+        }
+      } catch (err) {}
+    }
+
+    const fetchOpts = phonePayload ? {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(phonePayload)
+    } : { method: 'GET' };
+
+    const res = await fetch('/api/findmy/wifi/motion', fetchOpts);
     const data = await res.json();
     if (data.status === 'ok') {
-      motionHist = data.history || [];
-      motionEnvelope = data.envelope || null;
-      motionThreshold = data.threshold || 1.8;
-      motionBaseline = data.baseline || 0.0;
-      motionMeanDbm = data.mean_dbm != null ? data.mean_dbm : -65;
-      motionPeakSpike = data.max_spike || 0.0;
-      motionCurrentSpike = data.spike || 0.0;
-      motionDetected = !!data.motion_detected;
+      const lap = data.laptop || data;
+      laptopMotionHist = lap.history || [];
+      laptopMotionThreshold = lap.threshold || 1.8;
+      laptopMotionMeanDbm = lap.mean_dbm != null ? lap.mean_dbm : -65;
+      laptopMotionPeakSpike = lap.max_spike || 0.0;
+      laptopMotionSpike = lap.spike || 0.0;
+      laptopMotionDetected = !!lap.motion_detected;
+
+      const ph = data.phone || null;
+      if (ph) {
+        phoneMotionActive = !!ph.active;
+        phoneMotionStatus = ph.status || (phoneMotionActive ? "Active (Foreground)" : "Standby (Zero background battery)");
+        phoneMotionHist = ph.history || [];
+        phoneMotionThreshold = ph.threshold || 1.8;
+        phoneMotionMeanDbm = ph.mean_dbm != null ? ph.mean_dbm : -65;
+        phoneMotionPeakSpike = ph.max_spike || 0.0;
+        phoneMotionSpike = ph.spike || 0.0;
+        phoneMotionDetected = !!ph.motion_detected;
+      }
+
+      motionEvents = data.events || lap.events || [];
 
       drawLabMotion();
 
-      if ($('labMotionEnv')) $('labMotionEnv').textContent = '±' + motionThreshold + ' dB';
+      // Dual Badges
+      const bLap = $('labMotionBadge');
+      if (bLap) {
+        if (laptopMotionDetected) {
+          bLap.textContent = 'Laptop: Movement (+' + laptopMotionSpike + ' dB)';
+          bLap.className = 'lab-badge alert';
+        } else {
+          bLap.textContent = 'Laptop: Quiet';
+          bLap.className = 'lab-badge active';
+        }
+      }
+      const bPhone = $('labMotionPhoneBadge');
+      if (bPhone) {
+        if (!phoneMotionActive) {
+          bPhone.textContent = 'Phone: Standby';
+          bPhone.className = 'lab-badge';
+        } else if (phoneMotionDetected) {
+          bPhone.textContent = 'Phone: Movement (+' + phoneMotionSpike + ' dB)';
+          bPhone.className = 'lab-badge alert';
+        } else {
+          bPhone.textContent = 'Phone: Quiet';
+          bPhone.className = 'lab-badge active';
+        }
+      }
+
+      // Footer values
+      if ($('labMotionTarget')) {
+        const ssid = lap.target && lap.target.ssid ? lap.target.ssid : 'Wi-Fi';
+        const dbmStr = lap.current_dbm != null ? lap.current_dbm + ' dBm' : '–';
+        $('labMotionTarget').textContent = `${ssid} (${dbmStr})`;
+      }
+      if ($('labMotionPhoneTarget')) {
+        if (phoneMotionActive) {
+          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Wi-Fi';
+          const pDbm = ph.current_dbm != null ? ph.current_dbm + ' dBm' : '–';
+          $('labMotionPhoneTarget').textContent = `${pSsid} (${pDbm})`;
+        } else {
+          $('labMotionPhoneTarget').textContent = 'Standby (Zero battery)';
+        }
+      }
+
       if ($('labMotionSpike')) {
         const spk = $('labMotionSpike');
-        spk.textContent = '+' + motionCurrentSpike + ' dB';
-        spk.style.color = motionDetected ? 'var(--danger)' : 'var(--text)';
+        spk.textContent = '+' + laptopMotionSpike + ' dB';
+        spk.style.color = laptopMotionDetected ? 'var(--danger)' : 'var(--text)';
       }
-      if ($('labMotionPeakSpike')) $('labMotionPeakSpike').textContent = '+' + motionPeakSpike + ' dB';
-
-      const b = $('labMotionBadge');
-      if (motionDetected) {
-        b.textContent = 'Movement Detected (+' + motionCurrentSpike + ' dB spike)';
-        b.className = 'lab-badge alert';
-      } else {
-        b.textContent = 'Room Quiet (within envelope)';
-        b.className = 'lab-badge active';
-      }
-
-      if (data.target && data.target.ssid) {
-        const ssidStr = data.target.ssid + (data.current_dbm != null ? ' (' + data.current_dbm + ' dBm)' : '');
-        $('labMotionTarget').textContent = ssidStr;
-        if ($('labNavTarget')) $('labNavTarget').textContent = data.target.ssid;
-        if ($('labMotionSsidDetail')) $('labMotionSsidDetail').textContent = data.target.ssid + (data.target.freq ? ' · ' + data.target.freq + ' MHz' : '');
+      if ($('labMotionPhoneSpike')) {
+        const pSpk = $('labMotionPhoneSpike');
+        if (phoneMotionActive) {
+          pSpk.textContent = '+' + phoneMotionSpike + ' dB';
+          pSpk.style.color = phoneMotionDetected ? 'var(--danger)' : 'var(--text)';
+        } else {
+          pSpk.textContent = '–';
+          pSpk.style.color = 'var(--text3)';
+        }
       }
 
-      // Details
-      if ($('labMotionDbm')) $('labMotionDbm').textContent = (data.current_dbm != null ? data.current_dbm + ' dBm' : '–');
-      if ($('labMotionSpikeDetail')) {
-        const spkDet = $('labMotionSpikeDetail');
-        spkDet.textContent = '+' + motionCurrentSpike + ' dB ' + (motionDetected ? '(Exceeded envelope!)' : '(Within envelope)');
-        spkDet.style.color = motionDetected ? 'var(--danger)' : 'var(--text)';
+      if ($('labMotionTotalLogs')) {
+        $('labMotionTotalLogs').textContent = (lap.total_events || 0) + ' events';
       }
-      if ($('labMotionEnvDetail')) $('labMotionEnvDetail').textContent = '±' + motionThreshold + ' dB threshold';
-      if ($('labMotionPeakDetail')) $('labMotionPeakDetail').textContent = '+' + motionPeakSpike + ' dB peak';
-      if ($('labMotionVarDetail')) $('labMotionVarDetail').textContent = data.variance + ' dB';
+
+      // Details view
+      if ($('labMotionLapDbm')) $('labMotionLapDbm').textContent = (lap.current_dbm != null ? lap.current_dbm + ' dBm' : '–');
+      if ($('labMotionPhoneDbmDetail')) $('labMotionPhoneDbmDetail').textContent = (phoneMotionActive && ph.current_dbm != null ? ph.current_dbm + ' dBm' : 'Standby');
+      if ($('labMotionSpikeDetail')) $('labMotionSpikeDetail').textContent = '+' + laptopMotionSpike + ' dB ' + (laptopMotionDetected ? '(Exceeded envelope)' : '(Within envelope)');
+      if ($('labMotionPhoneSpikeDetail')) $('labMotionPhoneSpikeDetail').textContent = phoneMotionActive ? ('+' + phoneMotionSpike + ' dB ' + (phoneMotionDetected ? '(Exceeded envelope)' : '(Within envelope)')) : 'Standby';
       if ($('labMotionStatusNote')) {
-        $('labMotionStatusNote').textContent = motionDetected
-          ? 'Human motion detected: RF reflections disturbed by +' + motionCurrentSpike + ' dB (exceeded the ±' + motionThreshold + ' dB quiet envelope).'
-          : 'Fresnel multi-path zone is calm. Signal reflections stay within the ±' + motionThreshold + ' dB quiet noise envelope.';
+        const parts = [];
+        if (laptopMotionDetected) parts.push('Laptop RF zone disturbed (+' + laptopMotionSpike + ' dB).');
+        else parts.push('Laptop Fresnel zone quiet.');
+        if (phoneMotionActive) {
+          if (phoneMotionDetected) parts.push('Phone RF zone disturbed (+' + phoneMotionSpike + ' dB).');
+          else parts.push('Phone Fresnel zone quiet.');
+        } else {
+          parts.push('Phone presence sensor is in standby (preserves battery; no background logging).');
+        }
+        $('labMotionStatusNote').textContent = parts.join(' ');
       }
 
-      if (data.events != null) {
-        motionEvents = data.events;
-        renderMotionLog(motionEvents, data.log_path);
-        renderRecentMovements(motionEvents);
-      }
+      renderMotionLog(lap.events || [], lap.log_path);
+      renderRecentMovements(motionEvents);
     }
   } catch (e) {}
 }
