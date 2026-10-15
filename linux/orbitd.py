@@ -62,6 +62,17 @@ def apk_print():
     return _APK_PRINT['sha'], st.st_size
 
 
+def apk_note():
+    """The signed release note beside the app build (Orbit.apk.json: version, SHA-256, signature),
+    or None. The phone checks its signature itself; this only hands it over."""
+    try:
+        with open(apk_file() + '.json') as f:
+            note = json.load(f)
+        return note if isinstance(note, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def app_update_watch():
     """A new app build installed here: tell the phone, which fetches and installs it."""
     last = apk_print()[0]
@@ -6213,7 +6224,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             sha, size = apk_print()
-            self.send_json({"status": "ok", "sha256": sha, "size": size})
+            self.send_json({"status": "ok", "sha256": sha, "size": size, "note": apk_note()})
             return
         elif path in ('/apk', '/PCAuthenticator.apk', '/authenticator.apk', '/download'):
             self.serve_apk()

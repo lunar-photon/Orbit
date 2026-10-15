@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.lunarphoton.pcauthenticator"
-    android:versionCode="2"
-    android:versionName="1.1.0">
+    package="com.lunarphoton.pcauthenticator">
+    <!-- versionCode / versionName: set by build-apk.sh, newer with every build -->
 
     <uses-sdk
         android:minSdkVersion="24"

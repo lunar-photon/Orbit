@@ -29,11 +29,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Orbit updates itself from the computer: when the computer has a different build than the
- * one running here (it says so on the live link, and the phone also checks now and then),
- * the phone downloads it into its own private storage, never Downloads, and installs it with
- * Android's package installer, then deletes the download. Android asks once (Orbit wasn't the
- * app that installed Orbit); after that, on Android 12+, updates install without asking.
+ * Orbit updates itself: from the computer (it says so on the live link when it has a new build,
+ * and the phone checks now and then) and from the GitHub repo (every 6 hours, which also covers
+ * being away from the computer). Each build comes with a release note (version, SHA-256) signed
+ * with a key that stays on the computer; this app carries the public half and installs only a
+ * build whose note is validly signed, newer than itself, and whose download matches the note.
+ * (The APK's own signature is the public Android debug key: on its own it proves nothing.)
+ * The download goes to this app's own storage, never Downloads, and is deleted afterwards.
+ * Android asks once (Orbit wasn't the app that installed Orbit); after that, on Android 12+,
+ * updates install without asking.
  */
 public final class AppUpdater {
     private static final String TAG = "AppUpdater";
@@ -41,7 +45,8 @@ public final class AppUpdater {
     private static final String PROGRESS_CHANNEL = "orbit_update_progress";   // quiet: no sound per step
     private static final int NOTE_ID = 7408;
     private static final String PREF_OWN_SHA = "update_own_sha", PREF_OWN_AT = "update_own_at",
-            PREF_TRIED = "update_tried_sha", PREF_TRIED_AT = "update_tried_at", PREF_CHECKED = "update_checked_at";
+            PREF_TRIED = "update_tried_sha", PREF_TRIED_AT = "update_tried_at", PREF_CHECKED = "update_checked_at",
+            PREF_GITHUB_AT = "update_github_at";
     private static final ExecutorService worker = Executors.newSingleThreadExecutor();
     private static volatile boolean busy;
 
@@ -71,17 +76,33 @@ public final class AppUpdater {
         });
     }
 
+    // GitHub: the public repo carries each pushed build and its signed release note
+    private static final String GITHUB = "https://raw.githubusercontent.com/lunar-photon/Orbit/main/";
+
     private static void run(Context c, String offered) throws Exception {
+        // from the computer: its build, if its signed note says it's newer than this one
         PairedDevice active = DeviceManager.getActiveDevice(c);
-        if (active == null || !active.isPaired()) return;
-        String base = active.getBaseUrl();
-        String sha = offered;
-        if (sha == null || sha.isEmpty()) {
+        if (active != null && active.isPaired()) {
+            String base = active.getBaseUrl();
             String res = NetworkUtils.httpGetWithAuth(base + "/api/app/latest", active.authToken, 10000);
-            if (res == null) return;
-            sha = new JSONObject(res).optString("sha256", "");
+            JSONObject note = res == null ? null : verified(c, new JSONObject(res).optJSONObject("note"));
+            if (note != null && note.optLong("versionCode") > ownVersion(c)) {
+                fetchAndInstall(c, base + "/apk", active.authToken, note, "your computer");
+                return;
+            }
         }
-        if (sha.isEmpty() || sha.equalsIgnoreCase(ownSha(c))) return;
+        // from GitHub (every 6 hours, or when the computer's out of reach)
+        SharedPreferences p = FindMy.prefs(c);
+        if (System.currentTimeMillis() - p.getLong(PREF_GITHUB_AT, 0) < 6 * 3600_000L) return;
+        p.edit().putLong(PREF_GITHUB_AT, System.currentTimeMillis()).apply();
+        JSONObject note = verified(c, fetchJson(GITHUB + "Orbit.apk.json"));
+        if (note != null && note.optLong("versionCode") > ownVersion(c)) {
+            fetchAndInstall(c, GITHUB + "Orbit.apk", null, note, "GitHub");
+        }
+    }
+
+    private static void fetchAndInstall(Context c, String url, String token, JSONObject note, String from) throws Exception {
+        String sha = note.optString("sha256");
         SharedPreferences p = FindMy.prefs(c);
         // the same build failed or was declined lately: not again for an hour
         if (sha.equals(p.getString(PREF_TRIED, "")) && System.currentTimeMillis() - p.getLong(PREF_TRIED_AT, 0) < 3600_000L) return;
@@ -90,21 +111,71 @@ public final class AppUpdater {
         if (Build.VERSION.SDK_INT >= 26 && !c.getPackageManager().canRequestPackageInstalls()) {
             Intent allow = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + c.getPackageName()))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            showNote(c, "Orbit can update itself", "Allow Orbit to install updates from your computer: tap, then turn on \"Allow from this source\".", allow);
+            showNote(c, "Orbit can update itself", "Allow Orbit to install its updates: tap, then turn on \"Allow from this source\".", allow);
             p.edit().remove(PREF_TRIED).apply();     // ask again once allowed
             return;
         }
-
         File apk = new File(c.getCacheDir(), "orbit-update.apk");
         try {
-            if (!download(c, base + "/apk", active.authToken, apk, sha)) {
+            if (!download(c, url, token, apk, sha)) {
                 cancelNote(c);
                 return;
             }
+            Log.i(TAG, "Installing " + note.optString("versionName") + " from " + from);
             progress(c, "Installing Orbit update…", -1);
             install(c, apk);
         } finally {
             apk.delete();
+        }
+    }
+
+    /** The release note, if it's really signed with the update key this app carries; else null. */
+    static JSONObject verified(Context c, JSONObject note) {
+        if (note == null) return null;
+        try {
+            byte[] der = android.util.Base64.decode(c.getString(R.string.update_public_key), android.util.Base64.DEFAULT);
+            java.security.PublicKey key = java.security.KeyFactory.getInstance("EC")
+                    .generatePublic(new java.security.spec.X509EncodedKeySpec(der));
+            java.security.Signature v = java.security.Signature.getInstance("SHA256withECDSA");
+            v.initVerify(key);
+            v.update(("orbit-update:" + note.getLong("versionCode") + ":" + note.getString("sha256").toLowerCase())
+                    .getBytes("UTF-8"));
+            if (v.verify(android.util.Base64.decode(note.getString("sig"), android.util.Base64.DEFAULT))) return note;
+            Log.w(TAG, "Release note with a bad signature: ignored");
+        } catch (Exception e) {
+            Log.w(TAG, "Release note unreadable: " + e.getMessage());
+        }
+        return null;
+    }
+
+    static long ownVersion(Context c) {
+        try {
+            PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+        } catch (Exception e) {
+            return Long.MAX_VALUE;               // unknown: install nothing
+        }
+    }
+
+    private static JSONObject fetchJson(String url) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setUseCaches(false);
+            if (conn.getResponseCode() != 200) return null;
+            try (InputStream in = conn.getInputStream()) {
+                java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+                return new JSONObject(b.toString("UTF-8"));
+            }
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -139,8 +210,10 @@ public final class AppUpdater {
         try {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);
-            NetworkUtils.applyTunnelHeaders(conn);
-            NetworkUtils.setAuth(conn, token);
+            if (token != null) {                     // the computer; GitHub gets no key of ours
+                NetworkUtils.applyTunnelHeaders(conn);
+                NetworkUtils.setAuth(conn, token);
+            }
             if (conn.getResponseCode() != 200) return false;
             long total = conn.getContentLengthLong(), got = 0;
             int shown = -1;
@@ -161,7 +234,7 @@ public final class AppUpdater {
         } finally {
             conn.disconnect();
         }
-        boolean ok = sha.equalsIgnoreCase(sha256(to));      // exactly the build the computer named
+        boolean ok = sha.equalsIgnoreCase(sha256(to));      // exactly the build the signed note names
         if (!ok) Log.w(TAG, "Downloaded build doesn't match; not installing");
         return ok;
     }
