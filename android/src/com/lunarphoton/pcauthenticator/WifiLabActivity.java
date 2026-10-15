@@ -180,19 +180,38 @@ public class WifiLabActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (webView != null) webView.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.resumeTimers();
+            webView.evaluateJavascript("if (typeof startAllPolling === 'function') startAllPolling();", null);
+        }
     }
 
     @Override
     protected void onPause() {
+        if (webView != null) {
+            webView.evaluateJavascript("if (typeof stopAllPolling === 'function') stopAllPolling();", null);
+            webView.onPause();
+            webView.pauseTimers();
+        }
         super.onPause();
-        if (webView != null) webView.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        if (webView != null) {
+            webView.evaluateJavascript("if (typeof stopAllPolling === 'function') stopAllPolling();", null);
+            webView.pauseTimers();
+        }
+        super.onStop();
     }
 
     @Override
     protected void onDestroy() {
         if (webView != null) {
+            webView.evaluateJavascript("if (typeof stopAllPolling === 'function') stopAllPolling();", null);
             webView.stopLoading();
+            webView.pauseTimers();
             webView.destroy();
         }
         super.onDestroy();

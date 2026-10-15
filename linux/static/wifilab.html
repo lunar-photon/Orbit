@@ -148,10 +148,12 @@
     display: flex;
     flex-direction: column;
     position: relative;
+    cursor: pointer;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
   .lab-card:hover {
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   }
   .lab-card-header {
     display: flex;
@@ -304,6 +306,75 @@
   .lab-ap-meta {
     color: var(--text2);
     font-size: 11px;
+  }
+
+  .lab-recent-movements {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .lab-recent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .lab-recent-hint {
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: none;
+    font-weight: normal;
+  }
+  .lab-recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .lab-recent-empty {
+    font-size: 11px;
+    color: var(--text3);
+    padding: 6px 0;
+    font-style: italic;
+  }
+  .lab-recent-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .lab-recent-time-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .lab-recent-rel {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .lab-recent-clock {
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--text3);
+  }
+  .lab-recent-spike {
+    font-weight: 600;
+    color: var(--danger);
+  }
+  .lab-recent-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--danger);
+    display: inline-block;
   }
 
   /* Disturbance Event Log */
@@ -569,7 +640,7 @@
   <main class="lab-grid-container">
 
     <!-- 1. Motion & Presence Disturbance -->
-    <article class="lab-card" id="cardMotion">
+    <article class="lab-card" id="cardMotion" onclick="onCardClicked(event, 'cardMotion')">
       <div class="lab-fs-back-bar">
         <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
@@ -578,7 +649,7 @@
         <span style="font-size:12px;color:var(--text3);">Presence Disturbance Full-Screen</span>
       </div>
 
-      <div class="lab-card-header" onclick="toggleCardFullscreen('cardMotion')">
+      <div class="lab-card-header">
         <div class="lab-card-title-wrap">
           <h3>Presence Disturbance</h3>
         </div>
@@ -603,6 +674,15 @@
       <div class="lab-footer" style="margin-top:2px;">
         <div>Last Disturbance: <span class="lab-val" id="labMotionLastLog">Quiet (None)</span></div>
         <div>Laptop Log: <span class="lab-val" id="labMotionTotalLogs">0 events</span></div>
+      </div>
+      <div class="lab-recent-movements">
+        <div class="lab-recent-header">
+          <span>Recent Movements</span>
+          <span class="lab-recent-hint">Last 5 disturbances</span>
+        </div>
+        <div class="lab-recent-list" id="labRecentMovements">
+          <div class="lab-recent-empty">No movements detected yet. Multi-path reflections calm.</div>
+        </div>
       </div>
       <div class="lab-details">
         <div class="lab-grid">
@@ -634,7 +714,7 @@
     </article>
 
     <!-- 2. Spectrum Constellation -->
-    <article class="lab-card" id="cardSpec">
+    <article class="lab-card" id="cardSpec" onclick="onCardClicked(event, 'cardSpec')">
       <div class="lab-fs-back-bar">
         <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
@@ -643,7 +723,7 @@
         <span style="font-size:12px;color:var(--text3);">Spectrum Constellation Full-Screen</span>
       </div>
 
-      <div class="lab-card-header" onclick="toggleCardFullscreen('cardSpec')">
+      <div class="lab-card-header">
         <div class="lab-card-title-wrap">
           <h3>Spectrum Constellation</h3>
         </div>
@@ -679,7 +759,7 @@
     </article>
 
     <!-- 3. Topographic Room Clusters (2D SVD) -->
-    <article class="lab-card" id="cardCluster">
+    <article class="lab-card" id="cardCluster" onclick="onCardClicked(event, 'cardCluster')">
       <div class="lab-fs-back-bar">
         <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
@@ -688,7 +768,7 @@
         <span style="font-size:12px;color:var(--text3);">Topographic Room Clusters Full-Screen</span>
       </div>
 
-      <div class="lab-card-header" onclick="toggleCardFullscreen('cardCluster')">
+      <div class="lab-card-header">
         <div class="lab-card-title-wrap">
           <h3>Topographic Room Clusters</h3>
         </div>
@@ -725,7 +805,7 @@
     </article>
 
     <!-- 4. P2P Direct Probe & Latency RTT -->
-    <article class="lab-card" id="cardP2p">
+    <article class="lab-card" id="cardP2p" onclick="onCardClicked(event, 'cardP2p')">
       <div class="lab-fs-back-bar">
         <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
@@ -734,7 +814,7 @@
         <span style="font-size:12px;color:var(--text3);">P2P RTT Timing Full-Screen</span>
       </div>
 
-      <div class="lab-card-header" onclick="toggleCardFullscreen('cardP2p')">
+      <div class="lab-card-header">
         <div class="lab-card-title-wrap">
           <h3>Peer-to-Peer RTT Timing</h3>
         </div>
@@ -826,6 +906,16 @@ function toggleCardFullscreen(cardId) {
   }
 }
 
+function onCardClicked(e, cardId) {
+  // If clicking an interactive button, link, log action, or fullscreen back bar, don't toggle
+  if (e.target.closest('button, a, .lab-fs-back-bar, .lab-log-btn, .lab-log-link')) return;
+  const card = $(cardId);
+  if (!card) return;
+  // If already fullscreen, tapping inside the body should not close it
+  if (card.classList.contains('fullscreen')) return;
+  toggleCardFullscreen(cardId);
+}
+
 // Keyboard navigation: Escape key closes fullscreen
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && isFullscreenOpen()) {
@@ -845,6 +935,58 @@ function initCanvas(id) {
   const ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
   return { ctx: ctx, width: rect.width, height: rect.height };
+}
+
+// Human-readable relative time formatting
+function formatTimeAgo(ev) {
+  if (!ev) return '';
+  let epochSec = ev.timestamp;
+  if (!epochSec && ev.date && ev.time) {
+    try {
+      const dt = new Date(`${ev.date}T${ev.time}`);
+      if (!isNaN(dt.getTime())) {
+        epochSec = dt.getTime() / 1000;
+      }
+    } catch (e) {}
+  }
+  if (!epochSec) return ev.time || '';
+  const nowSec = Date.now() / 1000;
+  const diff = Math.max(0, Math.floor(nowSec - epochSec));
+  if (diff < 5) return 'Just now';
+  if (diff < 60) return `${diff}s ago`;
+  const mins = Math.floor(diff / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+// Render the last 5 human-readable movements on phone overview
+function renderRecentMovements(events) {
+  const container = $('labRecentMovements');
+  if (!container) return;
+  if (!events || events.length === 0) {
+    container.innerHTML = '<div class="lab-recent-empty">No movements detected yet. Multi-path reflections calm.</div>';
+    return;
+  }
+  const sorted = [...events].reverse().slice(0, 5);
+  container.innerHTML = sorted.map(ev => {
+    const ago = formatTimeAgo(ev);
+    return `
+      <div class="lab-recent-item">
+        <div class="lab-recent-time-badge">
+          <span class="lab-recent-dot"></span>
+          <span class="lab-recent-rel">${ago}</span>
+          <span class="lab-recent-clock">${ev.time || ''}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="lab-recent-spike">+${ev.peak_spike} dB</span>
+          <span style="font-size:10px;color:var(--text3);">${ev.dbm} dBm</span>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 // ----------------------------------------------------
@@ -912,6 +1054,7 @@ async function clearMotionLog(e) {
     if (data.status === 'ok') {
       motionEvents = [];
       renderMotionLog([], null);
+      renderRecentMovements([]);
     }
   } catch (err) {}
 }
@@ -1102,6 +1245,7 @@ async function pollLabMotion() {
       if (data.events != null) {
         motionEvents = data.events;
         renderMotionLog(motionEvents, data.log_path);
+        renderRecentMovements(motionEvents);
       }
     }
   } catch (e) {}
@@ -1486,12 +1630,53 @@ function refreshAllTelemetry() {
   sendLabP2p();
 }
 
-// Polling interval timers
-refreshAllTelemetry();
-setInterval(pollLabMotion, 800);
-setInterval(sendLabP2p, 1200);
-setInterval(pollLabSpectrum, 4000);
-setInterval(pollLabClusters, 4000);
+// Battery-conserving lifecycle polling
+let motionTimer = null;
+let p2pTimer = null;
+let specTimer = null;
+let clusterTimer = null;
+let isPollingActive = false;
+
+function startAllPolling() {
+  if (isPollingActive) return;
+  isPollingActive = true;
+  refreshAllTelemetry();
+  if (!motionTimer) motionTimer = setInterval(pollLabMotion, 800);
+  if (!p2pTimer) p2pTimer = setInterval(sendLabP2p, 1200);
+  if (!specTimer) specTimer = setInterval(pollLabSpectrum, 4000);
+  if (!clusterTimer) clusterTimer = setInterval(pollLabClusters, 4000);
+}
+
+function stopAllPolling() {
+  isPollingActive = false;
+  if (motionTimer) { clearInterval(motionTimer); motionTimer = null; }
+  if (p2pTimer) { clearInterval(p2pTimer); p2pTimer = null; }
+  if (specTimer) { clearInterval(specTimer); specTimer = null; }
+  if (clusterTimer) { clearInterval(clusterTimer); clusterTimer = null; }
+}
+
+window.startAllPolling = startAllPolling;
+window.stopAllPolling = stopAllPolling;
+
+// Immediately stop polling and release CPU/radio when hidden, blurred, or tab switched
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopAllPolling();
+  } else {
+    startAllPolling();
+  }
+});
+window.addEventListener('pagehide', stopAllPolling);
+window.addEventListener('pageshow', startAllPolling);
+window.addEventListener('blur', () => {
+  if (isEmbedded) stopAllPolling();
+});
+window.addEventListener('focus', () => {
+  if (isEmbedded) startAllPolling();
+});
+
+// Boot initial polling
+startAllPolling();
 
 // Auto-redraw on resize
 window.addEventListener('resize', () => {
