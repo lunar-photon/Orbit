@@ -6159,26 +6159,46 @@ class WalkAway:
         return left_network or self.far >= 2
 
     def loop(self):
+        last_locked_state = None
+        unlocked_at = 0.0
         while True:
-            time.sleep(15)
+            time.sleep(10)
             try:
                 if not findmy_settings().get('walk_away_lock'):
                     continue
                 # Keep Bluetooth actively advertising and scanning for walk-away presence
                 ORBIT_BLE.ensure_active()
-                if self.locked_episode or not self.away():
-                    continue
-                if is_pc_locked() is not False:          # locked already, or nobody logged in
+
+                locked = is_pc_locked()
+                if locked is not False:          # locked already, or nobody logged in
                     self.locked_episode = True
+                    last_locked_state = True
                     continue
+
+                # The PC is unlocked! If it was previously locked, re-arm the walk-away monitor
+                if last_locked_state is not False:
+                    last_locked_state = False
+                    self.locked_episode = False
+                    unlocked_at = time.time()
+                    sys.stderr.write("Find my: PC session unlocked, monitoring walk-away state\n")
+
+                # Give a 20-second grace window after unlocking
+                if time.time() - unlocked_at < 20:
+                    continue
+
+                if not self.away():
+                    continue
+
                 # Extra proximity safeguard: if Bluetooth is heard, do not lock
                 ble = ORBIT_BLE.phone_reading()
                 if ble.get('dbm') is not None and ble.get('age', 999) < 90:
                     self.far = 0
                     continue
+
                 session = graphical_session()
                 subprocess.run(['loginctl', 'lock-session', session], timeout=5)
                 self.locked_episode = True
+                last_locked_state = True
                 sys.stderr.write("Find my: the phone walked away, locked this computer\n")
                 findmy_event('walk_away_lock', {}, notify=False)
                 auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "walk_away_lock",
