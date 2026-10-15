@@ -7108,12 +7108,6 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             return
         elif path in ('/api/findmy/wifi/spectrum', '/api/findmy/wifi/clusters',
                       '/api/findmy/wifi/motion', '/api/findmy/wifi/motion/log'):
-            # Wi-Fi Lab reveals the networks around this computer, so keep it off the internet
-            # tunnel: it's a same-network proximity tool, and the laptop browser and the phone
-            # both reach it over the LAN.
-            if is_tunnel_request(self):
-                self.send_json({"error": "Wi-Fi Lab works on the same Wi-Fi only."}, status=403)
-                return
             if path == '/api/findmy/wifi/spectrum':
                 self.send_json(wifi_spectrum_data())
                 return
@@ -8688,9 +8682,6 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             return
         elif path in ('/api/findmy/wifi/motion', '/api/findmy/wifi/phone_motion',
                       '/api/findmy/wifi/motion/log/clear'):
-            if is_tunnel_request(self):
-                self.send_json({"error": "Wi-Fi Lab works on the same Wi-Fi only."}, status=403)
-                return
             if path == '/api/findmy/wifi/motion/log/clear':
                 WIFI_MOTION.clear_log()
                 self.send_json({'status': 'ok', 'message': 'Disturbance log reset'})

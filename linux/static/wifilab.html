@@ -50,6 +50,19 @@
   .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 rgba(70,211,154,.5); animation: pulse 2.4s infinite; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(70,211,154,.45);} 70%{box-shadow:0 0 0 6px rgba(70,211,154,0);} 100%{box-shadow:0 0 0 0 rgba(70,211,154,0);} }
 
+  .hero-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
+    padding: 16px 18px; display: flex; flex-direction: column; gap: 7px; }
+  .hero-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 500; }
+  .hero-ssid { color: var(--text); font-weight: 600; font-size: 14px; }
+  .hero-when { color: var(--text-3); font-size: 12px; }
+  .hero-headline { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); margin-top: 1px; }
+  .hero-sub { font-size: 13px; color: var(--text-2); }
+  .hero-timebar { margin: 6px 0 2px; }
+  .time-track { height: 4px; background: var(--raised); border-radius: 999px; overflow: hidden; }
+  .time-fill { height: 100%; width: 70%; border-radius: 999px; background: linear-gradient(90deg, rgba(142,168,255,0.4), var(--good)); transition: all .4s ease; }
+  .time-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-top: 5px; }
+  .hero-status { font-size: 12.5px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
+
   .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
     padding: 14px; display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 12px; }
@@ -140,16 +153,34 @@
     <button class="back" aria-label="Back" onclick="history.length > 1 ? history.back() : (location.href='/findmy')">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
     </button>
-    <h1>Wi-Fi Lab</h1>
+    <div style="flex:1;min-width:0;">
+      <h1>Wi-Fi Lab</h1>
+      <p style="font-size:12px;color:var(--text-3);margin-top:2px;">Signal insights from the air around your laptop</p>
+    </div>
     <span class="conn"><span class="dot"></span><span id="connName">Live</span></span>
   </header>
+
+  <!-- Room Insight Hero Card -->
+  <div class="hero-card" id="roomHero">
+    <div class="hero-top">
+      <span class="hero-ssid" id="heroSsid">IISERTVM</span>
+      <span class="hero-when">Right now</span>
+    </div>
+    <div class="hero-headline" id="heroHeadline">Reading the room…</div>
+    <div class="hero-sub" id="heroSub">Smoothing the last few minutes of signal</div>
+    <div class="hero-timebar">
+      <div class="time-track"><div class="time-fill" id="heroTimeFill"></div></div>
+      <div class="time-labels"><span>2 min ago</span><span>now</span></div>
+    </div>
+    <div class="hero-status" id="heroStatus">Watching for anything worth noticing…</div>
+  </div>
 
   <!-- Same-place check (Wi-Fi identity) -->
   <section class="card" id="card-same" data-title="Same-place check" onclick="cardTap(event, 'card-same')">
     <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
     <div class="row">
       <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></div>
-      <div class="ttl"><h2>Same-place check</h2><p>How much your phone and laptop see the same Wi-Fi.</p></div>
+      <div class="ttl"><h2>Same-place check</h2><p>How much the phone and laptop share.</p></div>
       <span class="badge" id="spBadge">—</span>
     </div>
     <div class="meter"><i id="spMeter"></i></div>
@@ -168,11 +199,11 @@
     <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
     <div class="row">
       <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--good)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3l2.5-7 4 18 3.5-11H22"/></svg></div>
-      <div class="ttl"><h2>Movement</h2><p>Signal ripples give away movement near the laptop.</p></div>
+      <div class="ttl"><h2>Movement</h2><p>Raw, with the smoothed trend.</p></div>
       <span class="badge good" id="motionBadge">Quiet</span>
     </div>
     <canvas class="viz" id="motionCanvas"></canvas>
-    <div class="legend"><span><i style="background:#46D39A"></i> Room</span><span><i style="background:#8EA8FF"></i> Nearby (phone)</span></div>
+    <div class="legend"><span><i style="background:#46D39A"></i> raw</span><span><i style="background:#8EA8FF"></i> smoothed</span></div>
     <div class="read" id="motionRead">Room <b>quiet</b></div>
     <details>
       <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Disturbance log <span id="logCount" style="color:var(--text-3)"></span>
@@ -190,7 +221,7 @@
     <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
     <div class="row">
       <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-5M9 20V9M14 20v-8M19 20V5"/></svg></div>
-      <div class="ttl"><h2>Wi-Fi spectrum</h2><p>Every network in range, by band and strength.</p></div>
+      <div class="ttl"><h2>Wi-Fi spectrum</h2><p>Networks by band and strength.</p></div>
       <span class="badge" id="specBadge">—</span>
     </div>
     <canvas class="viz" id="specCanvas"></canvas>
@@ -224,8 +255,8 @@
     <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
     <div class="row">
       <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
-      <div class="ttl"><h2>Link latency</h2><p>How fast the phone and laptop answer each other.</p></div>
-      <span class="badge good" id="linkBadge">—</span>
+      <div class="ttl"><h2>Link latency</h2><p>Raw, with the smoothed trend.</p></div>
+      <span class="badge good" id="linkBadge">Steady</span>
     </div>
     <canvas class="viz" id="linkCanvas"></canvas>
     <div class="read" id="linkRead">Measuring…</div>
@@ -235,7 +266,7 @@
     </details>
   </section>
 
-  <footer>Readings come from this computer and your phone on the same Wi-Fi. Nothing here leaves your devices.</footer>
+  <footer>Everything is computed on your own two devices. The insights come from smoothing the readings and flagging what stands out — no data leaves your devices.</footer>
 </div>
 
 <script>
@@ -376,6 +407,25 @@
       const vicTxt = !phoneActive ? '<span class="sep">·</span>nearby <b style="color:var(--text-3)">phone off</b>'
         : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'movement' : 'calm') + '</b>';
       $('motionRead').innerHTML = roomTxt + vicTxt;
+
+      if ($('heroSsid') && lap.ssid) $('heroSsid').textContent = lap.ssid;
+      if ($('heroHeadline')) {
+        if (roomMoving) {
+          $('heroHeadline').textContent = 'Movement in the room';
+          $('heroSub').textContent = 'Signal ripple of +' + roomSpike + ' dB detected';
+          $('heroStatus').textContent = 'Disturbance actively rippling Wi-Fi multipath reflections.';
+          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, var(--good), var(--danger))';
+        } else if (roomHist.length > 5) {
+          $('heroHeadline').textContent = 'Room quiet';
+          $('heroSub').textContent = 'Smoothing the last few minutes of signal';
+          $('heroStatus').textContent = 'Watching for anything worth noticing…';
+          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, rgba(142,168,255,0.4), var(--good))';
+        } else {
+          $('heroHeadline').textContent = 'Reading the room…';
+          $('heroSub').textContent = 'Smoothing the last few minutes of signal';
+          $('heroStatus').textContent = 'Watching for anything worth noticing…';
+        }
+      }
     } catch (e) {}
   }
 
