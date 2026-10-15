@@ -201,8 +201,8 @@
 
                         <ImageButton
                             android:id="@+id/btn_findmy_locate"
-                            android:layout_width="60dp"
-                            android:layout_height="60dp"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
                             android:background="@drawable/findmy_action"
                             android:contentDescription="Locate"
                             android:src="@drawable/ic_o_refresh"
@@ -227,8 +227,8 @@
 
                         <ImageButton
                             android:id="@+id/btn_findmy_ring"
-                            android:layout_width="60dp"
-                            android:layout_height="60dp"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
                             android:background="@drawable/findmy_action"
                             android:contentDescription="Play sound"
                             android:src="@drawable/ic_o_volume_up"
@@ -253,8 +253,8 @@
 
                         <ImageButton
                             android:id="@+id/btn_findmy_nearby"
-                            android:layout_width="60dp"
-                            android:layout_height="60dp"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
                             android:background="@drawable/findmy_action"
                             android:contentDescription="Nearby"
                             android:src="@drawable/ic_o_wifi"
@@ -267,6 +267,32 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
                             android:text="Nearby"
+                            android:textColor="@color/o_text_2" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
+
+                        <ImageButton
+                            android:id="@+id/btn_findmy_wifilab"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:background="@drawable/findmy_action"
+                            android:contentDescription="Wi-Fi Lab"
+                            android:src="@drawable/ic_o_flask"
+                            android:tint="@color/o_text" />
+
+                        <TextView
+                            android:id="@+id/tv_findmy_wifilab"
+                            style="@style/Text.Caption"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="Wi-Fi Lab"
                             android:textColor="@color/o_text_2" />
                     </LinearLayout>
 
@@ -311,20 +337,6 @@
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="2dp"
                         android:text="" />
-
-                    <TextView
-                        android:id="@+id/btn_findmy_wifilab"
-                        android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="14dp"
-                        android:background="@drawable/findmy_btn"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:fontFamily="@font/geist_semibold"
-                        android:gravity="center"
-                        android:text="Open Wi-Fi Lab (Spectrum &amp; Motion)"
-                        android:textColor="@color/o_accent"
-                        android:textSize="13sp" />
                 </LinearLayout>
 
                 <TextView
