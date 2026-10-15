@@ -5566,6 +5566,8 @@ def wifi_spectrum_data():
     now_ts = time.time()
     nearby_active = (now_ts < NEARBY.get('until', 0))
     nearby_recent = (now_ts - NEARBY.get('t', 0) < 60)
+    if findmy_settings().get('walk_away_lock'):
+        ORBIT_BLE.ensure_active()
 
     laptop_loc = None
     try:
@@ -5623,7 +5625,20 @@ def wifi_spectrum_data():
     ble_reading = ORBIT_BLE.phone_reading()
     ble_m = None
     if ble_reading and ble_reading.get('dbm') is not None:
-        ble_m = round(math.pow(10, (-59 - ble_reading['dbm']) / 22), 1)
+        ble_m = ble_reading.get('distance') or round(math.pow(10, (-59 - ble_reading['dbm']) / 22), 1)
+
+    # Bluetooth proximity fusion for Same-place check
+    if ble_m is not None:
+        distance = ble_m
+        if ble_m <= 1.5:
+            zone = "Same desk"
+            score = max(score or 0.0, round(0.95 + 0.04 * max(0.0, 1.0 - ble_m / 1.5), 3))
+        elif ble_m <= 4.0:
+            zone = "Same room"
+            score = max(score or 0.0, round(0.85 + 0.09 * (1.0 - (ble_m - 1.5) / 2.5), 3))
+        elif ble_m <= 8.0:
+            zone = "Nearby room"
+            score = max(score or 0.0, round(0.70 + 0.14 * (1.0 - (ble_m - 4.0) / 4.0), 3))
 
     same_place = {
         'active': nearby_active,
@@ -5768,7 +5783,7 @@ class OrbitBluetooth:
     SESSION = 300
 
     def __init__(self):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.adv = None                 # bluetoothctl advertising
         self.scan = None                # bluetoothctl scanning for the phone
         self.adv_until = self.scan_until = 0.0
