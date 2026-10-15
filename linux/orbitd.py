@@ -4512,11 +4512,11 @@ def findmy_event(kind, detail, notify=True):
         return
     titles = {
         'sim_changed': ("Your phone's SIM card changed",
-                        f"Now: {detail.get('operator') or 'unknown network'}. If you didn't do this, open Find my phone."),
-        'sim_removed': ("Your phone's SIM card was removed", "If you didn't do this, open Find my phone."),
-        'wrong_unlock': ("Someone tried to unlock your phone", "A photo was taken. Open Find my phone to see it."),
+                        f"Now: {detail.get('operator') or 'unknown network'}. If you didn't do this, open Locate."),
+        'sim_removed': ("Your phone's SIM card was removed", "If you didn't do this, open Locate."),
+        'wrong_unlock': ("Someone tried to unlock your phone", "A photo was taken. Open Locate to see it."),
     }
-    title, text = titles.get(kind, ('Find my phone', kind))
+    title, text = titles.get(kind, ('Locate', kind))
     icon = detail.get('photo') if kind == 'wrong_unlock' and detail.get('photo') else 'find-location'
     try:
         subprocess.Popen(['notify-send', '-u', 'critical', '-i', icon, '-a', 'Orbit', title, text],

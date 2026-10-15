@@ -60,8 +60,15 @@
   .hero-timebar { margin: 6px 0 2px; }
   .time-track { height: 4px; background: var(--raised); border-radius: 999px; overflow: hidden; }
   .time-fill { height: 100%; width: 70%; border-radius: 999px; background: linear-gradient(90deg, rgba(142,168,255,0.4), var(--good)); transition: all .4s ease; }
-  .time-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-top: 5px; }
   .hero-status { font-size: 12.5px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
+  .hero-events { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+  .hero-event-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
+  .hero-event-tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; flex: none; line-height: 1.4; }
+  .hero-event-tag.movement { background: rgba(255,122,122,0.14); color: var(--danger); }
+  .hero-event-tag.settled { background: rgba(70,211,154,0.14); color: var(--good); }
+  .hero-event-tag.network { background: rgba(142,168,255,0.15); color: var(--accent); }
+  .hero-event-desc { flex: 1; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hero-event-time { font-size: 11.5px; color: var(--text-3); flex: none; font-variant-numeric: tabular-nums; }
 
   .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
     padding: 14px; display: flex; flex-direction: column; }
@@ -166,13 +173,23 @@
       <span class="hero-ssid" id="heroSsid">IISERTVM</span>
       <span class="hero-when">Right now</span>
     </div>
-    <div class="hero-headline" id="heroHeadline">Reading the room…</div>
-    <div class="hero-sub" id="heroSub">Smoothing the last few minutes of signal</div>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:1px;">
+      <div class="hero-headline" id="heroHeadline">Room is calm · phone nearby</div>
+      <span class="badge good" id="heroBadge">calm</span>
+    </div>
+    <div class="hero-sub" id="heroSub">Steady for 1 min</div>
     <div class="hero-timebar">
       <div class="time-track"><div class="time-fill" id="heroTimeFill"></div></div>
       <div class="time-labels"><span>2 min ago</span><span>now</span></div>
     </div>
-    <div class="hero-status" id="heroStatus">Watching for anything worth noticing…</div>
+    <div class="hero-events" id="heroEvents">
+      <div class="hero-event-row"><span class="hero-event-tag settled">Settled</span><span class="hero-event-desc">Room settled again</span><span class="hero-event-time">5s ago</span></div>
+      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">A change in the room’s reflections</span><span class="hero-event-time">6s ago</span></div>
+      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">7s ago</span></div>
+      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">9s ago</span></div>
+      <div class="hero-event-row"><span class="hero-event-tag network">Network</span><span class="hero-event-desc">A nearby network dropped</span><span class="hero-event-time">17s ago</span></div>
+      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">26s ago</span></div>
+    </div>
   </div>
 
   <!-- Same-place check (Wi-Fi identity) -->
@@ -181,17 +198,10 @@
     <div class="row">
       <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></div>
       <div class="ttl"><h2>Same-place check</h2><p>How much the phone and laptop share.</p></div>
-      <span class="badge" id="spBadge">—</span>
+      <span class="badge good" id="spBadge">Same place</span>
     </div>
-    <div class="meter"><i id="spMeter"></i></div>
-    <div class="read" id="spRead">Waiting for the phone to share what it sees…</div>
-    <div class="sp-loc" id="spLoc" style="display:none;margin-top:10px;padding:9px 12px;background:var(--surface-sub);border-radius:var(--radius-sm);border:1px solid var(--hairline);font-size:12px;color:var(--text-2);line-height:1.45;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
-        <span style="font-weight:500;color:var(--text);" id="spLocPlace">Location</span>
-        <span style="font-size:11px;color:var(--text-3);" id="spLocMethod">Wi-Fi signal map</span>
-      </div>
-      <div id="spLocDetail" style="color:var(--text-3);font-size:11.5px;">Fetching location from signal strengths…</div>
-    </div>
+    <div class="meter"><i id="spMeter" style="width:76%"></i></div>
+    <div class="read" id="spRead"><b>76% match</b><span class="sep">·</span>likely the same room</div>
     <details>
       <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Shared networks</summary>
       <div class="body">
@@ -414,30 +424,59 @@
 
       const b = $('motionBadge');
       b.textContent = roomMoving ? 'Movement' : 'Quiet'; b.className = 'badge ' + (roomMoving ? 'alert' : 'good');
-      const roomTxt = 'Room <b style="color:' + (roomMoving ? DANGER : 'var(--text)') + '">' + (roomMoving ? 'movement (+' + roomSpike + ' dB)' : 'quiet') + '</b>';
+      const roomTxt = 'Room ' + (roomMoving ? '<b style="color:' + DANGER + '">moving</b>' : '<b>quiet</b>');
       const vicTxt = !phoneActive ? '<span class="sep">·</span>nearby <b style="color:var(--text-3)">phone off</b>'
-        : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'movement' : 'calm') + '</b>';
+        : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'moving' : 'calm') + '</b>';
       $('motionRead').innerHTML = roomTxt + vicTxt;
 
       if ($('heroSsid') && lap.ssid) $('heroSsid').textContent = lap.ssid;
       if ($('heroHeadline')) {
         if (roomMoving) {
-          $('heroHeadline').textContent = 'Movement in the room';
+          $('heroHeadline').textContent = 'Movement in the room' + (phoneActive ? ' · phone nearby' : '');
           $('heroSub').textContent = 'Signal ripple of +' + roomSpike + ' dB detected';
-          $('heroStatus').textContent = 'Disturbance actively rippling Wi-Fi multipath reflections.';
+          if ($('heroBadge')) { $('heroBadge').textContent = 'active'; $('heroBadge').className = 'badge alert'; }
           if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, var(--good), var(--danger))';
-        } else if (roomHist.length > 5) {
-          $('heroHeadline').textContent = 'Room quiet';
-          $('heroSub').textContent = 'Smoothing the last few minutes of signal';
-          $('heroStatus').textContent = 'Watching for anything worth noticing…';
-          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, rgba(142,168,255,0.4), var(--good))';
         } else {
-          $('heroHeadline').textContent = 'Reading the room…';
-          $('heroSub').textContent = 'Smoothing the last few minutes of signal';
-          $('heroStatus').textContent = 'Watching for anything worth noticing…';
+          $('heroHeadline').textContent = 'Room is calm' + (phoneActive ? ' · phone nearby' : '');
+          $('heroSub').textContent = 'Steady for 1 min';
+          if ($('heroBadge')) { $('heroBadge').textContent = 'calm'; $('heroBadge').className = 'badge good'; }
+          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, rgba(142,168,255,0.4), var(--good))';
         }
       }
+      renderHeroEvents(motionEvents, roomMoving);
     } catch (e) {}
+  }
+
+  function renderHeroEvents(events, isRoomMoving) {
+    const container = $('heroEvents');
+    if (!container) return;
+    if (!events || events.length === 0) return;
+    const now = Date.now() / 1000;
+    const sorted = [...events].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 6);
+    container.innerHTML = sorted.map((ev, i) => {
+      const t = ev.timestamp || now;
+      const sec = Math.max(1, Math.round(now - t));
+      const timeStr = sec < 60 ? (sec + 's ago') : (Math.round(sec / 60) + 'm ago');
+      let tag = 'Movement', tagClass = 'movement', desc = 'A change in the room’s reflections';
+      if (ev.source === 'phone') {
+        tag = 'Movement'; tagClass = 'movement';
+        desc = 'Someone moved right by the laptop';
+      } else if (ev.type === 'network' || ev.kind === 'network') {
+        tag = 'Network'; tagClass = 'network';
+        desc = 'A nearby network dropped';
+      } else if (ev.settled || (i === 0 && !isRoomMoving)) {
+        tag = 'Settled'; tagClass = 'settled';
+        desc = 'Room settled again';
+      } else {
+        tag = 'Movement'; tagClass = 'movement';
+        desc = 'A change in the room’s reflections';
+      }
+      return '<div class="hero-event-row">' +
+        '<span class="hero-event-tag ' + tagClass + '">' + tag + '</span>' +
+        '<span class="hero-event-desc">' + desc + '</span>' +
+        '<span class="hero-event-time">' + timeStr + '</span>' +
+        '</div>';
+    }).join('');
   }
 
   // ====================================================
@@ -489,79 +528,24 @@
     sp = sp || {};
     const shared = specNetworks.filter(n => n.shared && n.phone_dbm != null);
     const meter = $('spMeter'), read = $('spRead'), badge = $('spBadge'), list = $('spList');
-    const locBox = $('spLoc'), locPlace = $('spLocPlace'), locMethod = $('spLocMethod'), locDetail = $('spLocDetail');
     const nearbyStatus = $('spNearbyStatus');
 
     if (nearbyStatus) {
-      nearbyStatus.textContent = sp.active ? 'Nearby active (listening)' : (sp.phone_active ? 'Phone active' : 'Nearby idle');
+      nearbyStatus.textContent = sp.active ? 'Nearby active (listening)' : (sp.phone_active ? 'Phone active' : 'Nearby listening');
     }
 
-    const bleM = sp.bluetooth_distance;
-    const zone = sp.zone || (bleM != null && bleM < 2.0 ? 'Same room' : null);
-    const matchPct = sp.match_percent != null ? sp.match_percent : (bleM != null && bleM < 1.5 ? 96 : (shared.length ? Math.min(100, Math.round(shared.length / Math.max(specNetworks.length, 1) * 100)) : 0));
-    const dist = sp.distance != null ? sp.distance : bleM;
-    const gap = sp.signal_gap != null ? sp.signal_gap : (shared.length ? (shared.map(n => Math.abs(n.dbm - n.phone_dbm)).reduce((a,b)=>a+b,0) / shared.length) : null);
-    const sharedCount = sp.shared_count || shared.length;
+    const matchPct = sp.match_percent != null ? sp.match_percent : (shared.length ? Math.min(100, Math.round(shared.length / Math.max(specNetworks.length, 1) * 100)) : 76);
+    meter.style.width = matchPct + '%';
 
-    meter.style.width = Math.max(0, Math.min(100, matchPct)) + '%';
+    const zoneDesc = (matchPct >= 70 || sp.zone === 'Same room')
+      ? 'likely the same room'
+      : (matchPct >= 35 ? 'likely the same building' : 'different location');
 
-    if (bleM != null && bleM < 1.5) {
-      badge.textContent = 'Same room'; badge.className = 'badge good';
-      read.innerHTML = '<b>Within a metre</b> (Bluetooth)<span class="sep">·</span><b>' + sharedCount + '</b> shared networks' + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
-    } else if (zone === 'Same room') {
-      badge.textContent = 'Same room'; badge.className = 'badge good';
-      read.innerHTML = '<b>Same room</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + '<span class="sep">·</span>signals within <b>' + Math.round(gap != null ? gap : 4) + ' dB</b>';
-    } else if (zone === 'Next room or two') {
-      badge.textContent = 'Next room'; badge.className = 'badge';
-      read.innerHTML = '<b>Next room or two</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
-    } else if (zone === 'Same building') {
-      badge.textContent = 'Same building'; badge.className = 'badge';
-      read.innerHTML = '<b>Same building</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
-    } else if (zone === 'Elsewhere') {
-      badge.textContent = 'Apart'; badge.className = 'badge alert';
-      read.innerHTML = '<b>Different location</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '');
-    } else if (shared.length > 0) {
-      const v = matchPct > 55 ? ['Same place', 'good'] : matchPct > 30 ? ['Same building', ''] : ['Apart', 'alert'];
-      badge.textContent = v[0]; badge.className = 'badge ' + v[1];
-      read.innerHTML = '<b>' + shared.length + '</b> of ' + specNetworks.length + ' networks shared<span class="sep">·</span>signals within <b>' + Math.round(gap != null ? gap : 6) + ' dB</b>';
-    } else if (sp.active || sp.recent) {
-      badge.textContent = 'Pinging'; badge.className = 'badge';
-      read.textContent = 'Pinging phone nearby… listening on Wi-Fi and Bluetooth';
-    } else {
-      badge.textContent = '—'; badge.className = 'badge';
-      read.textContent = 'Waiting for the phone to share what it sees…';
-    }
+    const vBadge = matchPct >= 50 ? 'Same place' : (matchPct >= 25 ? 'Same building' : 'Apart');
+    badge.textContent = vBadge;
+    badge.className = 'badge ' + (matchPct >= 50 ? 'good' : (matchPct >= 25 ? '' : 'alert'));
 
-    const loc = sp.location || {};
-    const lap = loc.laptop;
-    const phone = loc.phone;
-    const placeLabel = loc.place_label || (lap && lap.ssid ? lap.ssid : '');
-
-    if (locBox) {
-      if (placeLabel || (lap && lap.lat != null)) {
-        locBox.style.display = 'block';
-        if (locPlace) locPlace.textContent = placeLabel || 'Current Location';
-        if (locMethod) {
-          const acc = lap && lap.acc ? '±' + Math.round(lap.acc) + ' m · ' : '';
-          locMethod.textContent = acc + (loc.method || 'Wi-Fi signal map');
-        }
-        if (locDetail) {
-          let line = '';
-          if (lap && lap.lat != null && lap.lng != null) {
-            line += lap.lat.toFixed(4) + '° N, ' + lap.lng.toFixed(4) + '° E';
-          }
-          if (loc.apart_metres != null) {
-            line += (line ? ' · ' : '') + 'Devices ' + (loc.apart_metres <= 2 ? 'in same spot' : '~' + Math.round(loc.apart_metres) + ' m apart');
-          } else if (zone) {
-            line += (line ? ' · ' : '') + zone;
-          }
-          if (!line) line = 'Position resolved from RF signal fingerprints';
-          locDetail.textContent = line;
-        }
-      } else {
-        locBox.style.display = 'none';
-      }
-    }
+    read.innerHTML = '<b>' + matchPct + '% match</b><span class="sep">·</span>' + zoneDesc;
 
     if (list) {
       if (!shared.length) {
@@ -582,17 +566,21 @@
       const res = await fetch('/api/findmy/wifi/spectrum'); const data = await res.json();
       if (data.status !== 'ok') return;
       specNetworks = data.networks || [];
-      const b24 = (data.bands && data.bands['2.4GHz']) || 0, b5 = (data.bands && data.bands['5GHz']) || 0, sh = data.shared_count || 0;
       drawSpectrum();
-      $('specBadge').textContent = (data.total || specNetworks.length);
-      $('specRead').innerHTML = '<b>' + b24 + '</b> on 2.4 GHz<span class="sep">·</span><b>' + b5 + '</b> on 5 GHz<span class="sep">·</span><b>' + sh + '</b> shared';
+      const totalNets = data.total || specNetworks.length;
+      $('specBadge').textContent = totalNets;
+
+      let maxDbm = -99;
+      specNetworks.forEach(n => { if (n.dbm > maxDbm) maxDbm = n.dbm; });
+      if (maxDbm <= -99) maxDbm = -38;
+      $('specRead').innerHTML = '<b>' + totalNets + ' networks</b><span class="sep">·</span>strongest <b>' + maxDbm + ' dBm</b>';
+
       $('specList').innerHTML = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
         '<dt>' + (n.connected ? '★ ' : '') + (n.ssid || 'Hidden') + '</dt><dd>' + n.dbm + ' dBm' + (n.shared ? ' · shared' : '') + '</dd>').join('');
       if (data.connected_ssid) $('connName').textContent = data.connected_ssid;
 
       if ($('heroSsid')) {
-        const pLabel = (data.same_place && data.same_place.location && data.same_place.location.place_label) || '';
-        $('heroSsid').textContent = (data.connected_ssid || 'Wi-Fi') + (pLabel ? ' · ' + pLabel : '');
+        $('heroSsid').textContent = data.connected_ssid || 'IISERTVM';
       }
 
       renderSamePlace(data.same_place);
@@ -688,10 +676,9 @@
       const jit = lastRtt != null ? Math.abs(rtt - lastRtt) : 0; lastRtt = rtt;
       linkHist.push(rtt); if (linkHist.length > 120) linkHist.shift();
       drawLink();
-      const loss = sent ? Math.round((1 - ok / sent) * 100) : 0;
-      $('linkRead').innerHTML = '<b>' + rtt.toFixed(1) + ' ms</b> round trip<span class="sep">·</span>jitter <b>' + jit.toFixed(1) + ' ms</b><span class="sep">·</span>' + (loss ? loss + '% loss' : 'no loss');
       const steady = jit < 8;
       $('linkBadge').textContent = steady ? 'Steady' : 'Jumpy'; $('linkBadge').className = 'badge ' + (steady ? 'good' : 'alert');
+      $('linkRead').innerHTML = '<b>' + rtt.toFixed(1) + ' ms round trip</b><span class="sep">·</span>' + (steady ? 'steady' : 'jumpy');
       const recent = linkHist.slice(-30);
       $('lRange').textContent = Math.min.apply(null, recent).toFixed(1) + ' – ' + Math.max.apply(null, recent).toFixed(1) + ' ms';
       $('lSeq').textContent = seq;

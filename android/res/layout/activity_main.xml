@@ -545,7 +545,7 @@
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:baselineAligned="false" android:orientation="horizontal">
                             <Button android:id="@+id/btn_camera_view" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:background="@drawable/btn_tint_pink" android:drawableTop="@drawable/ic_o_video" android:drawableTint="@color/o_pink" android:text="Desk view" />
                             <Button android:id="@+id/btn_phone_webcam" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_sky" android:drawableTop="@drawable/ic_o_camera" android:drawableTint="@color/o_sky" android:text="Orbit Cam" />
-                            <Button android:id="@+id/btn_find_my" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_violet" android:drawableTop="@drawable/ic_o_target" android:drawableTint="@color/o_violet" android:text="Find my" />
+                            <Button android:id="@+id/btn_find_my" style="@style/Btn.Tile" android:layout_width="0dp" android:layout_height="84dp" android:layout_weight="1" android:layout_marginStart="8dp" android:background="@drawable/btn_tint_violet" android:drawableTop="@drawable/ic_o_target" android:drawableTint="@color/o_violet" android:text="Locate" />
                         </LinearLayout>
                     </LinearLayout>
 
