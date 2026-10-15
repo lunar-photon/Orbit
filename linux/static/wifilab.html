@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wi-Fi Lab · Orbit</title>
+<link rel="icon" href="/icon-192.png">
+<style>
+  :root {
+    --ground: #0D0F12; --surface: #15181D; --raised: #1D2128; --line: #262B33;
+    --text: #ECEEF1; --text2: #A6AEBB; --text3: #7D8593;
+    --accent: #8EA8FF; --online: #46D39A; --warning: #FFB347; --danger: #FF7A7A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--ground); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+    padding: 24px; min-height: 100vh;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; max-width: 1200px; margin-left: auto; margin-right: auto;
+  }
+  .title-group h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .title-group p { font-size: 13px; color: var(--text2); margin-top: 4px; }
+  .back-btn {
+    font: inherit; font-size: 13px; font-weight: 500; color: var(--text);
+    background: var(--raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 16px; cursor: pointer; text-decoration: none; display: inline-flex;
+    align-items: center; gap: 6px;
+  }
+  .back-btn:hover { border-color: #3e4654; }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px; max-width: 1200px; margin-left: auto; margin-right: auto;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px; display: flex; flex-direction: column; position: relative; overflow: hidden;
+  }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .card-header h2 { font-size: 16px; font-weight: 600; }
+  .card-header .desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
+    background: var(--raised); color: var(--text2); border: 1px solid var(--line);
+  }
+  .badge.active { background: rgba(70, 211, 154, 0.15); color: var(--online); border-color: rgba(70, 211, 154, 0.3); }
+  .badge.alert { background: rgba(255, 122, 122, 0.15); color: var(--danger); border-color: rgba(255, 122, 122, 0.3); }
+
+  canvas {
+    width: 100%; height: 240px; background: #0A0C0E; border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.04); display: block;
+  }
+  .card-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 14px; font-size: 12px; color: var(--text2);
+  }
+  .metric-val { font-size: 14px; font-weight: 600; color: var(--text); }
+
+  /* Legend indicators */
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text3); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-group">
+    <h1>Wi-Fi Laboratory</h1>
+    <p>Real-time electromagnetic telemetry across all ambient access points</p>
+  </div>
+  <a href="/findmy" class="back-btn">← Back to Map</a>
+</header>
+
+<div class="grid">
+
+  <!-- 1. Motion & Shadowing Tripwire Radar -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Presence Disturbance</h2>
+        <div class="desc">Fresnel-zone human motion tripwire via signal variance</div>
+      </div>
+      <span class="badge" id="motionBadge">Monitoring</span>
+    </div>
+    <canvas id="motionCanvas"></canvas>
+    <div class="card-footer">
+      <div>Target: <span class="metric-val" id="motionTarget">–</span></div>
+      <div>Variance: <span class="metric-val" id="motionVar">0.0 dB</span></div>
+    </div>
+  </div>
+
+  <!-- 2. RF Spectrum & Channel Constellation -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Spectrum Constellation</h2>
+        <div class="desc">2.4 GHz and 5 GHz channels across all visible routers</div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="dot" style="background: var(--accent);"></span> 2.4 GHz</div>
+        <div class="legend-item"><span class="dot" style="background: var(--online);"></span> 5 GHz</div>
+        <div class="legend-item"><span class="dot" style="background: #FFF; box-shadow: 0 0 6px #FFF;"></span> Shared with Phone</div>
+      </div>
+    </div>
+    <canvas id="spectrumCanvas"></canvas>
+    <div class="card-footer">
+      <div>Routers in Range: <span class="metric-val" id="spectrumCount">0</span></div>
+      <div>Shared Links: <span class="metric-val" id="spectrumShared">0</span></div>
+    </div>
+  </div>
+
+  <!-- 3. Topographic Room Clusters (2D PCA) -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Topographic Room Clusters</h2>
+        <div class="desc">2D mathematical projection of indoor fingerprint spots</div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="dot" style="background: rgba(255,255,255,0.3);"></span> History Spots</div>
+        <div class="legend-item"><span class="dot" style="background: var(--online);"></span> Laptop</div>
+        <div class="legend-item"><span class="dot" style="background: var(--accent);"></span> Phone</div>
+      </div>
+    </div>
+    <canvas id="clusterCanvas"></canvas>
+    <div class="card-footer">
+      <div>Fingerprint Memory: <span class="metric-val" id="clusterPoints">0 spots</span></div>
+      <div>Current State: <span class="metric-val" id="clusterState">Calibrated</span></div>
+    </div>
+  </div>
+
+  <!-- 4. P2P Direct Probe & Latency RTT -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Peer-to-Peer RTT Timing</h2>
+        <div class="desc">Microsecond round-trip packet latency and radio jitter</div>
+      </div>
+      <span class="badge active" id="p2pBadge">Direct Link</span>
+    </div>
+    <canvas id="p2pCanvas"></canvas>
+    <div class="card-footer">
+      <div>Round-Trip Time: <span class="metric-val" id="p2pRtt">–</span></div>
+      <div>Jitter: <span class="metric-val" id="p2pJitter">–</span></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Canvas high-DPI initialization
+function setupCanvas(id) {
+  const c = document.getElementById(id);
+  const rect = c.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { canvas: c, ctx: ctx, width: rect.width, height: rect.height };
+}
+
+// 1. Motion Disturbance Plotter
+const motionState = {
+  history: [],
+  render: function() {
+    const { ctx, width, height } = setupCanvas('motionCanvas');
+    ctx.clearRect(0, 0, width, height);
+
+    // Draw grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let y = 40; y < height; y += 40) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+    }
+
+    if (!this.history.length) return;
+
+    // Draw baseline band
+    const midY = height / 2;
+    ctx.fillStyle = 'rgba(70, 211, 154, 0.05)';
+    ctx.fillRect(0, midY - 20, width, 40);
+
+    // Draw waveform line
+    ctx.beginPath();
+    ctx.strokeStyle = '#46D39A';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+
+    const pts = this.history.slice(-40);
+    const step = width / Math.max(pts.length - 1, 1);
+    const minVal = -95, maxVal = -40;
+
+    pts.forEach((pt, i) => {
+      const dbm = pt.dbm || -70;
+      const norm = (dbm - minVal) / (maxVal - minVal);
+      const y = height - (norm * (height - 30) + 15);
+      const x = i * step;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Pulse dot on latest sample
+    if (pts.length > 0) {
+      const last = pts[pts.length - 1];
+      const norm = (last.dbm - minVal) / (maxVal - minVal);
+      const y = height - (norm * (height - 30) + 15);
+      const x = (pts.length - 1) * step;
+      ctx.fillStyle = '#46D39A';
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+};
+
+// 2. Spectrum Constellation Plotter
+const spectrumState = {
+  networks: [],
+  render: function() {
+    const { ctx, width, height } = setupCanvas('spectrumCanvas');
+    ctx.clearRect(0, 0, width, height);
+
+    // 2.4 GHz (left half) vs 5 GHz (right half)
+    const midX = width * 0.45;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(midX, 10); ctx.lineTo(midX, height - 20); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#7D8593';
+    ctx.font = '10px system-ui';
+    ctx.fillText('2.4 GHz Band (Ch 1 - 14)', 14, 16);
+    ctx.fillText('5 GHz Band (Ch 36 - 165)', midX + 14, 16);
+
+    if (!this.networks.length) return;
+
+    this.networks.forEach(ap => {
+      const is24 = ap.freq < 3000;
+      let x = 0;
+      if (is24) {
+        x = 20 + ((ap.chan - 1) / 13) * (midX - 40);
+      } else {
+        const cNorm = Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36)));
+        x = (midX + 20) + cNorm * (width - midX - 40);
+      }
+
+      // Signal Y (clamped between -95 and -30)
+      const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
+      const y = height - 25 - normSig * (height - 60);
+
+      // Draw beacon lollipop line
+      ctx.beginPath();
+      ctx.moveTo(x, height - 25);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = ap.shared ? 'rgba(255, 255, 255, 0.4)' : (is24 ? 'rgba(142, 168, 255, 0.25)' : 'rgba(70, 211, 154, 0.25)');
+      ctx.lineWidth = ap.connected ? 3 : 1.5;
+      ctx.stroke();
+
+      // Draw node circle
+      ctx.beginPath();
+      ctx.arc(x, y, ap.connected ? 6 : (ap.shared ? 5 : 3.5), 0, Math.PI * 2);
+      ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
+      ctx.fill();
+
+      // Label top/connected APs
+      if (ap.connected || ap.dbm > -60) {
+        ctx.fillStyle = '#ECEEF1';
+        ctx.font = '10px system-ui';
+        ctx.fillText(ap.ssid.substring(0, 10), x - 12, y - 8);
+      }
+    });
+  }
+};
+
+// 3. Topographic Room Cluster Plotter (2D PCA)
+const clusterState = {
+  clusters: [],
+  laptop: null,
+  phone: null,
+  render: function() {
+    const { ctx, width, height } = setupCanvas('clusterCanvas');
+    ctx.clearRect(0, 0, width, height);
+
+    // Crosshairs
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
+    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    if (!this.clusters.length) return;
+
+    // Determine scale bounds
+    let minX = -10, maxX = 10, minY = -10, maxY = 10;
+    this.clusters.forEach(pt => {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    });
+    const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
+    const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
+
+    const toScreen = (x, y) => {
+      const sx = width / 2 + (x / padX) * (width / 2 - 20);
+      const sy = height / 2 - (y / padY) * (height / 2 - 20);
+      return [sx, sy];
+    };
+
+    // Draw stored spots
+    this.clusters.forEach(pt => {
+      const [sx, sy] = toScreen(pt.x, pt.y);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.fill();
+    });
+
+    // Draw Laptop marker
+    if (this.laptop) {
+      const [lx, ly] = toScreen(this.laptop.x, this.laptop.y);
+      ctx.beginPath();
+      ctx.arc(lx, ly, 7, 0, Math.PI * 2);
+      ctx.fillStyle = '#46D39A';
+      ctx.fill();
+      ctx.strokeStyle = '#0D0F12';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Draw Phone marker
+    if (this.phone) {
+      const [px, py] = toScreen(this.phone.x, this.phone.y);
+      ctx.beginPath();
+      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.fillStyle = '#8EA8FF';
+      ctx.fill();
+      ctx.strokeStyle = '#0D0F12';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Inter-device link line
+      if (this.laptop) {
+        const [lx, ly] = toScreen(this.laptop.x, this.laptop.y);
+        ctx.beginPath();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.moveTo(lx, ly); ctx.lineTo(px, py);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+};
+
+// 4. P2P Direct Probe Plotter
+const p2pState = {
+  history: [],
+  render: function() {
+    const { ctx, width, height } = setupCanvas('p2pCanvas');
+    ctx.clearRect(0, 0, width, height);
+
+    // Target baseline threshold lines (10ms, 25ms, 50ms)
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let y = 30; y < height; y += 45) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+    }
+
+    if (!this.history.length) return;
+
+    // Draw latency trajectory
+    ctx.beginPath();
+    ctx.strokeStyle = '#8EA8FF';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+
+    const pts = this.history.slice(-30);
+    const step = width / Math.max(pts.length - 1, 1);
+    const maxLatency = 50; // ms scale
+
+    pts.forEach((ms, i) => {
+      const norm = Math.min(1, ms / maxLatency);
+      const y = height - (norm * (height - 30) + 15);
+      const x = i * step;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Pulse dot on current latency
+    if (pts.length > 0) {
+      const current = pts[pts.length - 1];
+      const norm = Math.min(1, current / maxLatency);
+      const y = height - (norm * (height - 30) + 15);
+      const x = (pts.length - 1) * step;
+      ctx.fillStyle = '#8EA8FF';
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+};
+
+// Data polling loops
+async function pollMotion() {
+  try {
+    const res = await fetch('/api/findmy/wifi/motion');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      motionState.history = data.history || [];
+      motionState.render();
+
+      const badge = document.getElementById('motionBadge');
+      if (data.motion_detected) {
+        badge.textContent = 'Movement Detected';
+        badge.className = 'badge alert';
+      } else {
+        badge.textContent = 'Room Quiet';
+        badge.className = 'badge active';
+      }
+      document.getElementById('motionVar').textContent = data.variance + ' dB';
+      if (data.target && data.target.ssid) {
+        document.getElementById('motionTarget').textContent = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+      }
+    }
+  } catch (e) { }
+}
+
+async function pollSpectrum() {
+  try {
+    const res = await fetch('/api/findmy/wifi/spectrum');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      spectrumState.networks = data.networks || [];
+      spectrumState.render();
+      document.getElementById('spectrumCount').textContent = data.total;
+      document.getElementById('spectrumShared').textContent = data.shared_count;
+    }
+  } catch (e) { }
+}
+
+async function pollClusters() {
+  try {
+    const res = await fetch('/api/findmy/wifi/clusters');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      clusterState.clusters = data.clusters || [];
+      clusterState.laptop = data.live_laptop;
+      clusterState.phone = data.live_phone;
+      clusterState.render();
+      document.getElementById('clusterPoints').textContent = (data.total_fingerprints || data.clusters.length) + ' spots';
+    }
+  } catch (e) { }
+}
+
+let lastRtt = 0;
+let seq = 0;
+async function sendP2pProbe() {
+  const t0 = performance.now();
+  seq++;
+  try {
+    const res = await fetch('/api/findmy/p2p/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t: Date.now() / 1000, seq: seq })
+    });
+    if (res.ok) {
+      const t1 = performance.now();
+      const rtt = Math.round((t1 - t0) * 10) / 10;
+      const jitter = Math.round(Math.abs(rtt - lastRtt) * 10) / 10;
+      lastRtt = rtt;
+
+      p2pState.history.push(rtt);
+      p2pState.render();
+
+      document.getElementById('p2pRtt').textContent = rtt + ' ms';
+      document.getElementById('p2pJitter').textContent = '±' + jitter + ' ms';
+    }
+  } catch (e) { }
+}
+
+// Initial renders and timers
+window.addEventListener('resize', () => {
+  motionState.render();
+  spectrumState.render();
+  clusterState.render();
+  p2pState.render();
+});
+
+pollMotion();
+pollSpectrum();
+pollClusters();
+sendP2pProbe();
+
+setInterval(pollMotion, 500);
+setInterval(sendP2pProbe, 750);
+setInterval(pollSpectrum, 5000);
+setInterval(pollClusters, 3000);
+</script>
+</body>
+</html>

@@ -311,6 +311,18 @@
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="2dp"
                         android:text="" />
+
+                    <TextView
+                        android:id="@+id/btn_findmy_wifilab"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/findmy_action"
+                        android:fontFamily="@font/geist_medium"
+                        android:gravity="center"
+                        android:text="Open Wi-Fi Lab (Spectrum &amp; Motion)"
+                        android:textColor="@color/o_accent"
+                        android:textSize="13sp" />
                 </LinearLayout>
 
                 <TextView

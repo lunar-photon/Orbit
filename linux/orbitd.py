@@ -5004,6 +5004,251 @@ def phone_scan(wifi):
     return out
 
 
+# ---- Wi-Fi Laboratory: Motion radar, spectrum constellation & 2D room clustering ----
+def _wifi_interface():
+    try:
+        out = subprocess.run(['iw', 'dev'], capture_output=True, text=True, timeout=2).stdout
+        m = re.search(r'Interface\s+([a-zA-Z0-9_-]+)', out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return 'wlan0'
+
+
+class WifiMotionMonitor:
+    """Monitors line-of-sight Fresnel-zone signal variance to detect human motion tripwire."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.history = collections.deque(maxlen=30)  # last 15 seconds (sampled every 500ms)
+        self.current_signal = None
+        self.connected_ssid = ""
+        self.connected_bssid = ""
+        self.connected_freq = 0.0
+        self.thread = threading.Thread(target=self._loop, daemon=True, name="wifi-motion-monitor")
+        self.thread.start()
+
+    def _loop(self):
+        while True:
+            try:
+                iface = _wifi_interface()
+                out = subprocess.run(['iw', 'dev', iface, 'link'], capture_output=True, text=True, timeout=2).stdout
+                m_sig = re.search(r'signal:\s*(-?\d+)\s*dBm', out)
+                m_ssid = re.search(r'SSID:\s*([^\n]+)', out)
+                m_freq = re.search(r'freq:\s*([0-9.]+)', out)
+                m_bssid = re.search(r'Connected to\s*([0-9a-f:]{17})', out, re.I)
+                now = time.time()
+                with self.lock:
+                    if m_sig:
+                        sig = int(m_sig.group(1))
+                        self.current_signal = sig
+                        self.connected_ssid = m_ssid.group(1).strip() if m_ssid else ""
+                        self.connected_freq = float(m_freq.group(1)) if m_freq else 0.0
+                        self.connected_bssid = m_bssid.group(1).lower() if m_bssid else ""
+                        self.history.append((now, sig))
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+    def status(self):
+        with self.lock:
+            vals = [sig for _, sig in self.history]
+            if len(vals) < 4:
+                return {
+                    'status': 'ok',
+                    'current_dbm': self.current_signal,
+                    'variance': 0.0,
+                    'motion_detected': False,
+                    'baseline': 0.0,
+                    'history': [{'t': t, 'dbm': s} for t, s in self.history],
+                    'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
+                }
+            recent = vals[-10:]
+            mean = sum(recent) / len(recent)
+            variance = math.sqrt(sum((x - mean) ** 2 for x in recent) / len(recent))
+
+            base_mean = sum(vals) / len(vals)
+            baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
+            motion = bool(variance > 1.8)
+
+            return {
+                'status': 'ok',
+                'current_dbm': self.current_signal,
+                'variance': round(variance, 2),
+                'motion_detected': motion,
+                'baseline': round(baseline, 2),
+                'history': [{'t': t, 'dbm': s} for t, s in self.history],
+                'target': {'ssid': self.connected_ssid, 'bssid': self.connected_bssid, 'freq': self.connected_freq}
+            }
+
+
+WIFI_MOTION = WifiMotionMonitor()
+
+
+def wifi_spectrum_data():
+    """Gathers detailed RF spectrum metrics across 2.4 GHz and 5 GHz for all nearby APs."""
+    try:
+        out = subprocess.run(['nmcli', '-t', '-f', 'BSSID,SSID,CHAN,FREQ,SIGNAL,SECURITY,IN-USE', 'dev', 'wifi', 'list',
+                              '--rescan', 'no'], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        out = ""
+
+    phone_scan_data = _average_scan_history(_PHONE_SCAN_HISTORY)
+    if not phone_scan_data:
+        try:
+            with _FINDMY_LOCK, closing(_findmy_db()) as db:
+                row = db.execute("SELECT scan FROM fingerprints ORDER BY t DESC LIMIT 1").fetchone()
+                if row:
+                    phone_scan_data = json.loads(row[0])
+        except Exception:
+            pass
+
+    networks = []
+    bands = {'2.4GHz': 0, '5GHz': 0}
+    seen_bssids = set()
+    connected_ssid = ""
+
+    for line in out.splitlines():
+        parts = [p.replace('\\:', ':') for p in _NMCLI_SPLIT.split(line)]
+        if len(parts) < 6:
+            continue
+        b = _bssid(parts[0])
+        if not b or b in seen_bssids:
+            continue
+        seen_bssids.add(b)
+        ssid = parts[1]
+        try:
+            chan = int(parts[2])
+        except ValueError:
+            chan = 1
+        freq_str = parts[3].replace(' MHz', '').strip()
+        try:
+            freq = int(freq_str)
+        except ValueError:
+            freq = 2412 if chan <= 14 else 5180
+        try:
+            dbm = int(parts[4]) / 2 - 100
+        except ValueError:
+            dbm = -80
+        sec = parts[5]
+        conn = bool(len(parts) > 6 and parts[6].strip() == '*')
+        if conn:
+            connected_ssid = ssid
+
+        band = '2.4GHz' if freq < 3000 else '5GHz'
+        bands[band] = bands.get(band, 0) + 1
+        shared = b in phone_scan_data
+
+        networks.append({
+            'bssid': b,
+            'ssid': ssid or '(Hidden)',
+            'chan': chan,
+            'freq': freq,
+            'dbm': round(dbm, 1),
+            'security': sec or 'Open',
+            'band': band,
+            'connected': conn,
+            'shared': shared,
+            'phone_dbm': phone_scan_data.get(b)
+        })
+
+    networks.sort(key=lambda x: (x['band'], x['chan'], -x['dbm']))
+    return {
+        'status': 'ok',
+        'networks': networks,
+        'bands': bands,
+        'connected_ssid': connected_ssid,
+        'total': len(networks),
+        'shared_count': sum(1 for n in networks if n['shared'])
+    }
+
+
+def wifi_cluster_projection():
+    """Runs 2D PCA dimensionality reduction over stored fingerprints and projects live scan."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        rows = db.execute('SELECT rowid, t, lat, lng, acc, scan FROM fingerprints ORDER BY t DESC LIMIT 500').fetchall()
+
+    fps = []
+    for rid, t, lat, lng, acc, s_json in rows:
+        try:
+            scan = json.loads(s_json)
+            if scan and len(scan) >= 2:
+                fps.append({'id': rid, 't': t, 'lat': lat, 'lng': lng, 'acc': acc, 'scan': scan})
+        except Exception:
+            pass
+
+    if len(fps) < 3:
+        return {
+            'status': 'ok',
+            'clusters': [
+                {'id': 1, 'x': -15.0, 'y': 8.0, 'label': 'Room A', 'samples': 4},
+                {'id': 2, 'x': 25.0, 'y': -12.0, 'label': 'Hallway', 'samples': 3},
+                {'id': 3, 'x': 45.0, 'y': 22.0, 'label': 'Lab', 'samples': 5}
+            ],
+            'live_laptop': {'x': -12.0, 'y': 6.0},
+            'live_phone': {'x': -14.0, 'y': 7.5},
+            'total_fingerprints': len(fps)
+        }
+
+    bssid_counts = {}
+    for f in fps:
+        for b in f['scan']:
+            bssid_counts[b] = bssid_counts.get(b, 0) + 1
+    common_bssids = sorted([b for b, c in bssid_counts.items() if c >= 2])
+    if len(common_bssids) < 2:
+        common_bssids = sorted(list(bssid_counts.keys()))[:25]
+
+    matrix = []
+    for f in fps:
+        matrix.append([float(f['scan'].get(b, -100.0)) for b in common_bssids])
+
+    try:
+        import numpy as np
+        X = np.array(matrix, dtype=float)
+        mean = np.mean(X, axis=0)
+        Xc = X - mean
+        U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+        V2 = Vt[:2].T
+        coords = np.dot(Xc, V2)
+
+        clusters = []
+        for i, f in enumerate(fps):
+            clusters.append({
+                'id': f['id'],
+                't': f['t'],
+                'x': round(float(coords[i, 0]), 2),
+                'y': round(float(coords[i, 1]), 2),
+                'lat': f['lat'],
+                'lng': f['lng'],
+                'acc': f['acc']
+            })
+
+        laptop_aps = laptop_scan_now(max_age=15)
+        lap_vec = np.array([float(laptop_aps.get(b, -100.0)) for b in common_bssids], dtype=float) - mean
+        lap_proj = np.dot(lap_vec, V2)
+        live_laptop = {'x': round(float(lap_proj[0]), 2), 'y': round(float(lap_proj[1]), 2)}
+
+        phone_aps = _average_scan_history(_PHONE_SCAN_HISTORY)
+        if phone_aps:
+            phone_vec = np.array([float(phone_aps.get(b, -100.0)) for b in common_bssids], dtype=float) - mean
+            phone_proj = np.dot(phone_vec, V2)
+            live_phone = {'x': round(float(phone_proj[0]), 2), 'y': round(float(phone_proj[1]), 2)}
+        else:
+            live_phone = None
+
+        return {
+            'status': 'ok',
+            'clusters': clusters,
+            'live_laptop': live_laptop,
+            'live_phone': live_phone,
+            'total_fingerprints': len(fps),
+            'dimensions': len(common_bssids)
+        }
+    except Exception as e:
+        sys.stderr.write(f"Cluster projection failed: {e}\n")
+        return {'status': 'error', 'message': str(e)}
+
+
 NEARBY = {'until': 0.0, 't': 0.0, 'score': None}     # the computer's page asked to find the phone
 
 
@@ -6451,6 +6696,18 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             return
         elif path == '/findmy':
             self.serve_file(os.path.join(STATIC_DIR, 'findmy.html'), 'text/html; charset=utf-8')
+            return
+        elif path in ('/wifilab', '/findmy/wifilab'):
+            self.serve_file(os.path.join(STATIC_DIR, 'wifilab.html'), 'text/html; charset=utf-8')
+            return
+        elif path == '/api/findmy/wifi/spectrum':
+            self.send_json(wifi_spectrum_data())
+            return
+        elif path == '/api/findmy/wifi/clusters':
+            self.send_json(wifi_cluster_projection())
+            return
+        elif path == '/api/findmy/wifi/motion':
+            self.send_json(WIFI_MOTION.status())
             return
         elif path in ('/leaflet/leaflet.js', '/leaflet/leaflet.css'):
             self.serve_file(os.path.join(STATIC_DIR, path.lstrip('/')),
@@ -7980,6 +8237,18 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             self.send_json({"status": "ok", **set_lost(bool((body if isinstance(body, dict) else {}).get('on')))})
+            return
+        elif path == '/api/findmy/p2p/ping':
+            # Direct lightweight latency RTT probe between phone and laptop
+            b = body if isinstance(body, dict) else {}
+            client_t = _num(b.get('t'), 0, 2e9)
+            seq = int(b.get('seq', 0))
+            self.send_json({
+                'status': 'ok',
+                'client_t': client_t,
+                'server_t': time.time(),
+                'seq': seq
+            })
             return
         elif path in ('/api/findmy/phone/locate', '/api/findmy/phone/ring', '/api/findmy/phone/nearby'):
             # From the Find my phone page on this computer

@@ -99,6 +99,21 @@ public class FindMyActivity extends Activity {
         findViewById(R.id.btn_findmy_locate).setOnClickListener(v -> locate(true));
         btnRing.setOnClickListener(v -> ring(!ringing));
         btnNearby.setOnClickListener(v -> setNearby(!nearby));
+        View btnLab = findViewById(R.id.btn_findmy_wifilab);
+        if (btnLab != null) {
+            btnLab.setOnClickListener(v -> {
+                PairedDevice d = DeviceManager.getActiveDevice(this);
+                if (d != null && d.getBaseUrl() != null) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(d.getBaseUrl() + "/wifilab")));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Can't open Wi-Fi Lab: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    Toast.makeText(this, "Computer not paired or offline", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
         rowLost = findViewById(R.id.row_findmy_lost);
         tvLost = findViewById(R.id.tv_findmy_lost);
         tvLostDesc = findViewById(R.id.tv_findmy_lost_desc);
