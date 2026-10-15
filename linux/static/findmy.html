@@ -201,6 +201,35 @@
     }
   }
 
+  .lab-fs-back-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lab-card.fullscreen .lab-fs-back-bar {
+    display: flex;
+  }
+  .lab-fs-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .lab-fs-back-btn:hover {
+    background: var(--raised);
+    border-color: var(--text3);
+  }
+
   .lab-details {
     display: none;
   }
@@ -423,6 +452,13 @@
 
     <!-- 1. Motion & Presence Disturbance -->
     <div class="lab-card" id="cardMotion">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Presence Disturbance Full-Screen</span>
+      </div>
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardMotion')">
         <div style="display:flex;align-items:center;gap:8px;">
           <h3 style="margin:0;">Presence Disturbance</h3>
@@ -480,6 +516,13 @@
 
     <!-- 2. Spectrum Constellation -->
     <div class="lab-card" id="cardSpec">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Spectrum Constellation Full-Screen</span>
+      </div>
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardSpec')">
         <div style="display:flex;align-items:center;gap:8px;">
           <h3 style="margin:0;">Spectrum Constellation</h3>
@@ -517,6 +560,13 @@
 
     <!-- 3. Topographic Room Clusters (2D PCA) -->
     <div class="lab-card" id="cardCluster">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Topographic Room Clusters Full-Screen</span>
+      </div>
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardCluster')">
         <div style="display:flex;align-items:center;gap:8px;">
           <h3 style="margin:0;">Topographic Room Clusters</h3>
@@ -555,6 +605,13 @@
 
     <!-- 4. P2P Direct Probe & Latency RTT -->
     <div class="lab-card" id="cardP2p">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">P2P RTT Timing Full-Screen</span>
+      </div>
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardP2p')">
         <div style="display:flex;align-items:center;gap:8px;">
           <h3 style="margin:0;">Peer-to-Peer RTT Timing</h3>
@@ -763,7 +820,13 @@ if (location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
   switchTab('lab');
 }
 
-// ---- Fullscreen Card Enlarge / Collapse ----
+const moduleTitles = {
+  cardMotion: 'Presence Disturbance',
+  cardSpec: 'Spectrum Constellation',
+  cardCluster: 'Topographic Room Clusters',
+  cardP2p: 'Peer-to-Peer RTT Timing'
+};
+
 function isFullscreenOpen() {
   return document.body.classList.contains('has-fullscreen');
 }
@@ -771,6 +834,11 @@ function isFullscreenOpen() {
 function closeLabFullscreen() {
   document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
   document.body.classList.remove('has-fullscreen');
+  try {
+    if (window.OrbitLab && typeof window.OrbitLab.onModuleClosed === 'function') {
+      window.OrbitLab.onModuleClosed();
+    }
+  } catch (e) {}
   setTimeout(() => {
     drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
   }, 40);
@@ -786,11 +854,23 @@ function toggleCardFullscreen(cardId) {
     document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
     card.classList.add('fullscreen');
     document.body.classList.add('has-fullscreen');
+    const title = moduleTitles[cardId] || 'Module';
+    try {
+      if (window.OrbitLab && typeof window.OrbitLab.onModuleOpened === 'function') {
+        window.OrbitLab.onModuleOpened(title);
+      }
+    } catch (e) {}
     setTimeout(() => {
       drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
     }, 40);
   }
 }
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isFullscreenOpen()) {
+    closeLabFullscreen();
+  }
+});
 
 // ---- Wi-Fi Lab Canvas Drawing & Polling ----
 function initCanvas(id) {

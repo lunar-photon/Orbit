@@ -27,7 +27,7 @@ public class WifiLabActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_wifi_lab);
 
-        findViewById(R.id.btn_wifilab_back).setOnClickListener(v -> finish());
+        findViewById(R.id.btn_wifilab_back).setOnClickListener(v -> handleBack());
         findViewById(R.id.btn_wifilab_refresh).setOnClickListener(v -> reload());
         findViewById(R.id.btn_wifilab_retry).setOnClickListener(v -> reload());
 
@@ -46,6 +46,27 @@ public class WifiLabActivity extends Activity {
         loadUrl();
     }
 
+    public class OrbitLabBridge {
+        @android.webkit.JavascriptInterface
+        public void onModuleOpened(String title) {
+            runOnUiThread(() -> {
+                TextView tvTitle = findViewById(R.id.tv_wifilab_title);
+                if (tvTitle != null && title != null) tvTitle.setText(title);
+                if (tvSub != null) tvSub.setText("Enlarged view · Tap back to overview");
+            });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void onModuleClosed() {
+            runOnUiThread(() -> {
+                TextView tvTitle = findViewById(R.id.tv_wifilab_title);
+                if (tvTitle != null) tvTitle.setText("Wi-Fi Lab");
+                String deviceName = getIntent().getStringExtra("device_name");
+                if (tvSub != null) tvSub.setText(deviceName != null && !deviceName.isEmpty() ? "RF telemetry · " + deviceName : "Live RF telemetry & spectrum");
+            });
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
         webView.setBackgroundColor(0xFF0D0F12);
@@ -57,6 +78,8 @@ public class WifiLabActivity extends Activity {
         s.setAllowContentAccess(false);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
+
+        webView.addJavascriptInterface(new OrbitLabBridge(), "OrbitLab");
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -133,21 +156,25 @@ public class WifiLabActivity extends Activity {
         }
     }
 
-    @Override
-    public void onBackPressed() {
+    private void handleBack() {
         if (webView != null) {
             webView.evaluateJavascript("(function(){ if (typeof isFullscreenOpen === 'function' && isFullscreenOpen()) { closeLabFullscreen(); return true; } return false; })()", value -> {
                 if (!"true".equals(value)) {
                     if (webView.canGoBack()) {
                         webView.goBack();
                     } else {
-                        super.onBackPressed();
+                        finish();
                     }
                 }
             });
         } else {
-            super.onBackPressed();
+            finish();
         }
+    }
+
+    @Override
+    public void onBackPressed() {
+        handleBack();
     }
 
     @Override

@@ -3,133 +3,198 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Find my phone · Orbit</title>
+<title>Wi-Fi Lab · Orbit</title>
 <link rel="icon" href="/icon-192.png">
-<link rel="stylesheet" href="/leaflet/leaflet.css">
 <style>
   :root {
-    --ground: #0D0F12; --surface: #15181D; --raised: #1D2128; --line: #262B33;
-    --text: #ECEEF1; --text2: #A6AEBB; --text3: #7D8593;
-    --accent: #8EA8FF; --online: #46D39A; --danger: #FF7A7A;
+    --ground: #0D0F12;
+    --surface: #15181D;
+    --raised: #1D2128;
+    --line: #262B33;
+    --text: #ECEEF1;
+    --text2: #A6AEBB;
+    --text3: #7D8593;
+    --accent: #8EA8FF;
+    --online: #46D39A;
+    --danger: #FF7A7A;
+    --warning: #FFB347;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text);
-    font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif; }
-  #map { position: fixed; inset: 0; background: #1a1d22; }
-  .panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow-y: auto; overflow-x: hidden;
-    background: rgba(21, 24, 29, 0.96); border: 1px solid var(--line); border-radius: 18px; padding: 18px;
-    z-index: 1000; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); transition: width 0.25s ease; }
-  .panel.wide { width: 380px; }
-  h1 { margin: 0; font-size: 20px; font-weight: 600; }
-  .sub { margin-top: 4px; color: var(--text2); font-size: 13px; line-height: 1.4; }
-  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
-  .stat { background: var(--raised); border-radius: 12px; padding: 10px; }
-  .stat b { display: block; font-size: 15px; font-weight: 600; }
-  .stat span { font-size: 11px; color: var(--text3); }
-  .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  button { font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--raised);
-    border: 1px solid var(--line); border-radius: 12px; height: 44px; cursor: pointer; }
-  button:hover { border-color: #3a414c; }
-  button.on { background: var(--accent); color: #0D0F12; border-color: var(--accent); }
-  button:disabled { opacity: 0.5; cursor: default; }
-  .note { margin-top: 10px; font-size: 12px; color: var(--text2); min-height: 16px; }
-  .meter { margin-top: 14px; background: var(--raised); border-radius: 12px; padding: 12px; display: none; }
-  .meter.show { display: block; }
-  .bar { height: 10px; border-radius: 5px; background: #2a3039; overflow: hidden; margin: 8px 0 6px; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--online); border-radius: 5px; transition: width 0.6s; }
-  .meter b { font-size: 15px; }
-  h2 { font-size: 13px; color: var(--text2); font-weight: 600; margin: 18px 0 8px; }
-  .event { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
-  .event:first-of-type { border-top: none; }
-  .event img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; cursor: zoom-in; }
-  .event .when { color: var(--text3); font-size: 12px; }
-  .empty { color: var(--text3); font-size: 13px; }
-  .alert { color: var(--danger); }
-  #big { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: none; align-items: center;
-    justify-content: center; z-index: 2000; cursor: zoom-out; }
-  #big img { max-width: 92%; max-height: 92%; border-radius: 12px; }
-  .leaflet-container { font: inherit; }
-  .tag { background: rgba(13, 15, 18, 0.9); color: #ECEEF1; border: 0; border-radius: 8px; padding: 3px 8px; font-weight: 600; box-shadow: none; }
-  .tag::before { display: none; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--ground);
+    color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-  /* Segmented tabs matching Orbit styling */
-  .tabs { display: flex; background: var(--raised); border-radius: 12px; padding: 3px; gap: 4px; margin-bottom: 16px; border: 1px solid var(--line); }
-  .tab-btn { flex: 1; border: none; background: transparent; height: 32px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer; transition: all 0.2s; }
-  .tab-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  /* Desktop Container */
+  .lab-wrapper {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px 24px 40px;
+  }
 
-  /* Wi-Fi Lab cards matching rest of interface */
-  .lab-card { background: var(--raised); border-radius: 12px; padding: 12px; margin-top: 10px; border: 1px solid rgba(255,255,255,0.04); }
-  .lab-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .lab-card-header h3 { font-size: 13px; font-weight: 600; margin: 0; color: var(--text); }
-  .lab-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text2); }
-  .lab-badge.active { background: rgba(70, 211, 154, 0.15); color: var(--online); }
-  .lab-badge.alert { background: rgba(255, 122, 122, 0.15); color: var(--danger); }
-  .lab-canvas { width: 100%; height: 75px; background: #0D0F12; border-radius: 8px; display: block; border: 1px solid rgba(255,255,255,0.03); }
-  .lab-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; color: var(--text3); }
-  .lab-val { color: var(--text); font-weight: 600; }
+  /* Top Navigation Bar */
+  .lab-top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lab-nav-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .lab-nav-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text2);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 6px 12px;
+    transition: all 0.15s;
+  }
+  .lab-nav-back:hover {
+    color: var(--text);
+    border-color: var(--text3);
+    background: var(--raised);
+  }
+  .lab-nav-title-group h1 {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .lab-nav-title-group p {
+    font-size: 12px;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+  .lab-nav-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .lab-conn-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 5px 12px;
+  }
+  .lab-conn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--online);
+    box-shadow: 0 0 8px rgba(70, 211, 154, 0.4);
+    animation: labPulse 2s infinite;
+  }
+  @keyframes labPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.9); }
+  }
+  .lab-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .lab-refresh-btn:hover {
+    color: var(--text);
+    border-color: var(--text3);
+  }
 
-  @media (max-width: 600px) { .panel { left: 8px; right: 8px; width: auto !important; top: auto; bottom: 8px; max-height: 60%; } }
+  /* Grid Layout */
+  .lab-grid-container {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 820px) {
+    .lab-grid-container {
+      grid-template-columns: 1fr;
+    }
+  }
 
-  /* Embedded in-app styling */
-  body.embedded {
-    background: var(--ground) !important;
-    padding: 12px 14px 28px !important;
-    height: auto !important;
-    min-height: 100vh !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-  }
-  body.embedded #map,
-  body.embedded .tabs,
-  body.embedded #viewFind {
-    display: none !important;
-  }
-  body.embedded .panel {
-    position: static !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    max-height: none !important;
-    overflow: visible !important;
-    background: transparent !important;
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-  }
-  body.embedded #viewLab {
-    display: block !important;
-  }
-  body.embedded .lab-card {
+  /* Standard Card Design */
+  .lab-card {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 14px;
-    padding: 14px;
-    margin-top: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
-  body.embedded .lab-canvas {
-    height: 85px;
-    background: #090B0E;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-  }
-
-  /* Full screen enlarged card styling */
-  body.has-fullscreen {
-    overflow: hidden !important;
+  .lab-card:hover {
+    border-color: rgba(255, 255, 255, 0.12);
   }
   .lab-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     cursor: pointer;
     user-select: none;
-    -webkit-tap-highlight-color: transparent;
+    margin-bottom: 4px;
+  }
+  .lab-card-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lab-card-title-wrap h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
   }
   .lab-header-actions {
     display: flex;
     align-items: center;
     gap: 8px;
   }
+  .lab-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text2);
+  }
+  .lab-badge.active {
+    background: rgba(70, 211, 154, 0.14);
+    color: var(--online);
+  }
+  .lab-badge.alert {
+    background: rgba(255, 122, 122, 0.14);
+    color: var(--danger);
+  }
   .lab-expand-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--line);
     color: var(--text2);
     cursor: pointer;
     border-radius: 8px;
@@ -138,128 +203,45 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0;
     transition: all 0.15s;
   }
   .lab-expand-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.1);
     color: var(--text);
   }
   .lab-expand-btn .icon-collapse { display: none; }
   .lab-expand-btn .icon-expand { display: block; }
 
-  .lab-card.fullscreen {
-    position: fixed !important;
-    inset: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    max-width: none !important;
-    max-height: none !important;
-    margin: 0 !important;
-    border-radius: 0 !important;
-    border: none !important;
-    background: var(--ground) !important;
-    padding: 16px 16px 36px !important;
-    z-index: 99999 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    box-sizing: border-box !important;
-  }
-  .lab-card.fullscreen .lab-card-header {
-    margin-bottom: 12px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--line);
-  }
-  .lab-card.fullscreen .lab-card-header h3 {
-    font-size: 17px;
-  }
-  .lab-card.fullscreen .lab-expand-btn {
-    width: 32px;
-    height: 32px;
-    background: var(--surface);
-    border-color: var(--line);
-    color: var(--text);
-  }
-  .lab-card.fullscreen .lab-expand-btn .icon-collapse { display: block; }
-  .lab-card.fullscreen .lab-expand-btn .icon-expand { display: none; }
-
-  .lab-card.fullscreen .lab-canvas {
-    flex: 0 0 280px;
-    height: 280px !important;
-    min-height: 280px !important;
-    margin: 6px 0 12px;
-    border-radius: 12px;
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-  @media (min-height: 800px) {
-    .lab-card.fullscreen .lab-canvas {
-      flex: 0 0 320px;
-      height: 320px !important;
-      min-height: 320px !important;
-    }
-  }
-
-  .lab-details {
-    display: none;
-  }
-  .lab-card.fullscreen .lab-details {
-    display: block;
-    margin-top: 10px;
-  }
-  .lab-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .lab-metric {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
-  }
-  .lab-metric span {
-    display: block;
-    font-size: 11px;
-    color: var(--text3);
-    margin-bottom: 3px;
-  }
-  .lab-metric b {
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 600;
-  }
-  .lab-top-aps {
-    margin-top: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .lab-ap-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 12px;
-  }
-  .lab-ap-ssid {
-    font-weight: 600;
-    color: var(--text);
-    max-width: 65%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .lab-desc {
     font-size: 11px;
     color: var(--text3);
-    margin: 2px 0 8px;
+    margin: 2px 0 10px;
     line-height: 1.35;
+  }
+  .lab-canvas {
+    width: 100%;
+    height: 95px;
+    background: #090B0E;
+    border-radius: 10px;
+    display: block;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .lab-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text3);
+  }
+  .lab-val {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* Collapsible Details in Overview */
+  .lab-details {
+    display: none;
   }
   .lab-note-box {
     margin-top: 10px;
@@ -271,8 +253,62 @@
     color: var(--text2);
     line-height: 1.45;
   }
-  .lab-log-section {
+  .lab-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .lab-metric {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .lab-metric span {
+    display: block;
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 2px;
+  }
+  .lab-metric b {
+    font-size: 13px;
+    color: var(--text);
+  }
+  .lab-top-aps {
     margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .lab-ap-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .lab-ap-ssid {
+    font-weight: 600;
+    color: var(--text);
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lab-ap-meta {
+    color: var(--text2);
+    font-size: 11px;
+  }
+
+  /* Disturbance Event Log */
+  .lab-log-section {
+    margin-top: 12px;
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -304,7 +340,7 @@
   }
   .lab-log-link {
     font-size: 11px;
-    color: var(--brand);
+    color: var(--accent);
     text-decoration: none;
     padding: 2px 6px;
     border-radius: 4px;
@@ -343,9 +379,6 @@
     flex-direction: column;
     gap: 4px;
   }
-  .lab-card.expanded .lab-log-list {
-    max-height: 280px;
-  }
   .lab-log-empty {
     font-size: 11px;
     color: var(--text3);
@@ -379,53 +412,175 @@
     font-size: 10px;
     white-space: nowrap;
   }
+
+  /* Full Screen Enlarged Window */
+  body.has-fullscreen {
+    overflow: hidden !important;
+  }
+  .lab-card.fullscreen {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: var(--ground) !important;
+    padding: 16px 20px 40px !important;
+    z-index: 99999 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+    animation: labFadeIn 0.18s ease;
+  }
+  @keyframes labFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .lab-card.fullscreen .lab-card-header {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lab-card.fullscreen .lab-card-title-wrap {
+    gap: 10px;
+  }
+  .lab-card.fullscreen .lab-card-title-wrap h3 {
+    font-size: 17px;
+  }
+  .lab-card.fullscreen .lab-expand-btn {
+    width: 32px;
+    height: 32px;
+    background: var(--surface);
+    border-color: var(--line);
+    color: var(--text);
+  }
+  .lab-card.fullscreen .lab-expand-btn .icon-collapse { display: block; }
+  .lab-card.fullscreen .lab-expand-btn .icon-expand { display: none; }
+
+  .lab-card.fullscreen .lab-canvas {
+    flex: 0 0 260px;
+    height: 260px !important;
+    min-height: 260px !important;
+    margin: 6px 0 12px;
+    border-radius: 12px;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  @media (min-height: 780px) {
+    .lab-card.fullscreen .lab-canvas {
+      flex: 0 0 300px;
+      height: 300px !important;
+      min-height: 300px !important;
+    }
+  }
+  .lab-card.fullscreen .lab-details {
+    display: block;
+    margin-top: 10px;
+  }
+  .lab-card.fullscreen .lab-log-list {
+    max-height: 280px;
+  }
+
+  /* Dedicated Enlarged Back Button inside Fullscreen View */
+  .lab-fs-back-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lab-card.fullscreen .lab-fs-back-bar {
+    display: flex;
+  }
+  .lab-fs-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .lab-fs-back-btn:hover {
+    background: var(--raised);
+    border-color: var(--text3);
+  }
+
+  /* Embedded Mode inside Orbit Android App */
+  body.embedded {
+    background: var(--ground) !important;
+    padding: 10px 12px 32px !important;
+  }
+  body.embedded .lab-wrapper {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+  body.embedded .lab-top-nav {
+    display: none !important; /* Managed natively by WifiLabActivity top bar */
+  }
+  body.embedded .lab-grid-container {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  body.embedded .lab-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+  }
 </style>
 </head>
 <body>
-<div id="map"></div>
 
-<section class="panel" id="panel" aria-label="Find my phone">
-  <div class="tabs">
-    <button id="tabFind" type="button" class="tab-btn active" onclick="switchTab('find')">Find my phone</button>
-    <button id="tabLab" type="button" class="tab-btn" onclick="switchTab('lab')">Wi-Fi Lab</button>
-  </div>
-
-  <div id="viewFind">
-    <h1 id="title">Find my phone</h1>
-    <div class="sub" id="seen">Looking for its last report…</div>
-
-    <div class="stats">
-      <div class="stat"><b id="acc">–</b><span>accuracy</span></div>
-      <div class="stat"><b id="batt">–</b><span>battery</span></div>
-      <div class="stat"><b id="net">–</b><span>network</span></div>
+<div class="lab-wrapper">
+  <!-- Top Navigation Bar (desktop & browser view) -->
+  <header class="lab-top-nav" id="labTopNav">
+    <div class="lab-nav-left">
+      <a class="lab-nav-back" href="/findmy" title="Back to Find My">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Find My</span>
+      </a>
+      <div class="lab-nav-title-group">
+        <h1>Wi-Fi Laboratory</h1>
+        <p>Ambient RF telemetry &amp; spatial multipath sensing</p>
+      </div>
     </div>
-
-    <div class="actions">
-      <button id="locate" type="button">Locate now</button>
-      <button id="ring" type="button">Play sound</button>
-      <button id="nearby" type="button">Nearby</button>
+    <div class="lab-nav-right">
+      <div class="lab-conn-pill">
+        <span class="lab-conn-dot"></span>
+        <span id="labNavTarget">Connected</span>
+      </div>
+      <button class="lab-refresh-btn" type="button" aria-label="Refresh" onclick="refreshAllTelemetry()">
+        <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+      </button>
     </div>
-    <div class="note" id="note"></div>
+  </header>
 
-    <div class="meter" id="meter" role="status" aria-live="polite">
-      <div><b id="meterWord">Asking your phone for its Wi-Fi…</b></div>
-      <div class="bar"><i id="meterBar"></i></div>
-      <div class="sub" id="meterHint">Your phone sends what Wi-Fi it sees every few seconds: the more it looks like this computer's, the closer it is. No Bluetooth needed.</div>
-    </div>
-
-    <h2>Alerts</h2>
-    <div id="events"><div class="empty">Nothing unusual. All quiet in orbit.</div></div>
-  </div>
-
-  <div id="viewLab" style="display: none;">
-    <h1 style="font-size: 18px;">Wi-Fi Laboratory</h1>
-    <div class="sub">Ambient RF telemetry across visible routers</div>
+  <!-- 4-Module Card Grid -->
+  <main class="lab-grid-container">
 
     <!-- 1. Motion & Presence Disturbance -->
-    <div class="lab-card" id="cardMotion">
+    <article class="lab-card" id="cardMotion">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Presence Disturbance Full-Screen</span>
+      </div>
+
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardMotion')">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <h3 style="margin:0;">Presence Disturbance</h3>
+        <div class="lab-card-title-wrap">
+          <h3>Presence Disturbance</h3>
         </div>
         <div class="lab-header-actions">
           <span class="lab-badge" id="labMotionBadge">Quiet</span>
@@ -476,13 +631,21 @@
           </div>
         </div>
       </div>
-    </div>
+    </article>
 
     <!-- 2. Spectrum Constellation -->
-    <div class="lab-card" id="cardSpec">
+    <article class="lab-card" id="cardSpec">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Spectrum Constellation Full-Screen</span>
+      </div>
+
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardSpec')">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <h3 style="margin:0;">Spectrum Constellation</h3>
+        <div class="lab-card-title-wrap">
+          <h3>Spectrum Constellation</h3>
         </div>
         <div class="lab-header-actions">
           <span class="lab-badge" id="labSpecCount">0 APs</span>
@@ -513,13 +676,21 @@
         </div>
         <div class="lab-top-aps" id="labTopAps"></div>
       </div>
-    </div>
+    </article>
 
-    <!-- 3. Topographic Room Clusters (2D PCA) -->
-    <div class="lab-card" id="cardCluster">
+    <!-- 3. Topographic Room Clusters (2D SVD) -->
+    <article class="lab-card" id="cardCluster">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">Topographic Room Clusters Full-Screen</span>
+      </div>
+
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardCluster')">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <h3 style="margin:0;">Topographic Room Clusters</h3>
+        <div class="lab-card-title-wrap">
+          <h3>Topographic Room Clusters</h3>
         </div>
         <div class="lab-header-actions">
           <span class="lab-badge" id="labClusterCount">0 spots</span>
@@ -551,13 +722,21 @@
         </div>
         <div class="lab-note-box">Projects high-dimensional RSSI vectors of surrounding Wi-Fi routers onto a 2D topological plane to detect room boundaries without GPS or internet access.</div>
       </div>
-    </div>
+    </article>
 
     <!-- 4. P2P Direct Probe & Latency RTT -->
-    <div class="lab-card" id="cardP2p">
+    <article class="lab-card" id="cardP2p">
+      <div class="lab-fs-back-bar">
+        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>Back to Overview</span>
+        </button>
+        <span style="font-size:12px;color:var(--text3);">P2P RTT Timing Full-Screen</span>
+      </div>
+
       <div class="lab-card-header" onclick="toggleCardFullscreen('cardP2p')">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <h3 style="margin:0;">Peer-to-Peer RTT Timing</h3>
+        <div class="lab-card-title-wrap">
+          <h3>Peer-to-Peer RTT Timing</h3>
         </div>
         <div class="lab-header-actions">
           <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
@@ -588,13 +767,11 @@
         </div>
         <div class="lab-note-box">Times physical packet travel across the local wireless connection to monitor physical RF path interference and buffer delays.</div>
       </div>
-    </div>
-  </div>
-</section>
+    </article>
 
-<div id="big" role="dialog" aria-label="Photo"><img alt="Photo taken after a wrong unlock attempt"></div>
+  </main>
+</div>
 
-<script src="/leaflet/leaflet.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const isEmbedded = location.search.includes('embedded=1') || location.search.includes('app=1');
@@ -602,175 +779,26 @@ if (isEmbedded) {
   document.body.classList.add('embedded');
 }
 
-let map = null;
-if (!isEmbedded && $('map') && typeof L !== 'undefined') {
-  try {
-    map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20.6, 78.9], 4);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
-    map.zoomControl.setPosition('topright');
-  } catch (e) {}
-}
-
-let dot = null, ring = null, trail = null, centred = false, ringing = false, nearbyOn = false;
-let pc = null, pcRing = null, link = null;
-
-function ago(t) {
-  const s = Math.max(0, Date.now() / 1000 - t);
-  if (s < 60) return 'just now';
-  if (s < 3600) return Math.round(s / 60) + ' min ago';
-  if (s < 86400) return Math.round(s / 3600) + ' h ago';
-  return new Date(t * 1000).toLocaleString();
-}
-const reasons = { periodic: 'regular check-in', moved: 'it moved', requested: 'you asked',
-  low_battery: 'battery nearly flat: last report before it dies', sim_changed: 'its SIM changed', boot: 'it started up' };
-
-async function api(path, body) {
-  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
-  const r = await fetch(path, { credentials: 'same-origin', ...opt });
-  if (r.status === 401) throw new Error('This page has to be opened from Orbit on this computer.');
-  return r.json();
-}
-
-function show(v) {
-  const last = v.last;
-  if (!last) {
-    $('seen').textContent = 'No location yet. Turn on "Share location with this computer" in Orbit on the phone.';
-  } else {
-    $('seen').textContent = 'Seen ' + ago(last.t) + (reasons[last.reason] ? ' · ' + reasons[last.reason] : '');
-    $('acc').textContent = last.acc ? Math.round(last.acc) + ' m' : '–';
-    $('batt').textContent = last.battery != null ? last.battery + '%' + (last.charging ? ' +' : '') : '–';
-    $('net').textContent = last.net || '–';
-    if (map) {
-      const ll = [last.lat, last.lng];
-      if (!dot) {
-        ring = L.circle(ll, { radius: last.acc || 30, color: '#8EA8FF', weight: 1, fillColor: '#8EA8FF', fillOpacity: 0.12 }).addTo(map);
-        dot = L.circleMarker(ll, { radius: 8, color: '#0D0F12', weight: 3, fillColor: '#8EA8FF', fillOpacity: 1 }).addTo(map);
-      } else {
-        dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
-      }
-      const pts = v.trail.map(p => [p.lat, p.lng]);
-      if (trail) trail.setLatLngs(pts);
-      else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
-      dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-      const lp = v.laptop;
-      if (lp) {
-        const pl = [lp.lat, lp.lng];
-        if (!pc) {
-          pcRing = L.circle(pl, { radius: lp.acc || 30, color: '#46D39A', weight: 1, fillColor: '#46D39A', fillOpacity: 0.1 }).addTo(map);
-          pc = L.circleMarker(pl, { radius: 7, color: '#0D0F12', weight: 3, fillColor: '#46D39A', fillOpacity: 1 }).addTo(map);
-          pc.bindTooltip('This computer', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-          link = L.polyline([ll, pl], { color: '#ECEEF1', weight: 2, opacity: 0.5, dashArray: '4 6' }).addTo(map);
-          link.bindTooltip('', { permanent: true, direction: 'center', className: 'tag' });
-        }
-        pc.setLatLng(pl); pcRing.setLatLng(pl); pcRing.setRadius(lp.acc || 30); link.setLatLngs([ll, pl]);
-        const m = map.distance(ll, pl);
-        link.setTooltipContent(m < 1000 ? Math.round(m) + ' m apart' : (m / 1000).toFixed(1) + ' km apart');
-      }
-      if (!centred) {
-        if (lp) map.fitBounds([ll, [lp.lat, lp.lng]], { padding: [80, 80], maxZoom: 18 });
-        else map.setView(ll, Math.max(15, Math.min(18, 19 - Math.log2((last.acc || 30) / 10))));
-        centred = true;
-      }
-    }
-  }
-  // alerts
-  const ev = v.events;
-  if (ev && ev.length) {
-    $('events').innerHTML = '';
-    for (const e of ev) {
-      const row = document.createElement('div'); row.className = 'event';
-      const text = document.createElement('div');
-      const what = { sim_changed: 'SIM card changed' + (e.operator ? ' (' + e.operator + ')' : ''),
-        sim_removed: 'SIM card removed', wrong_unlock: 'Wrong unlock attempt',
-        low_battery: 'Battery nearly flat: last location saved' }[e.kind] || e.kind;
-      text.innerHTML = '<div' + (e.kind === 'low_battery' ? '' : ' class="alert"') + '></div><div class="when"></div>';
-      text.firstChild.textContent = what; text.lastChild.textContent = ago(e.t);
-      if (e.name) {
-        const img = document.createElement('img');
-        img.src = '/api/findmy/photo?name=' + encodeURIComponent(e.name);
-        img.alt = 'Photo from the wrong unlock attempt';
-        img.onclick = () => { $('big').firstChild.src = img.src; $('big').style.display = 'flex'; };
-        row.appendChild(img);
-      }
-      row.appendChild(text); $('events').appendChild(row);
-    }
-  }
-  // nearby
-  const n = v.nearby || {};
-  if (nearbyOn) {
-    if (!n.on) {
-      nearbyOn = false; $('nearby').classList.remove('on'); $('meter').classList.remove('show');
-    } else if (v.bluetooth && v.bluetooth.dbm != null) {
-      const dbm = v.bluetooth.dbm, m = Math.pow(10, (-59 - dbm) / 22);
-      $('meterWord').textContent = (m < 1 ? 'Within a metre' : 'About ' + Math.round(m) + ' m') + ' (Bluetooth)';
-      $('meterBar').style.width = Math.max(4, Math.min(100, (dbm + 100) * 100 / 55)) + '%';
-    } else if (n.score == null) {
-      $('meterWord').textContent = 'Asking your phone for its Wi-Fi…';
-      $('meterBar').style.width = '0';
-    } else {
-      $('meterBar').style.width = Math.max(4, Math.min(100, n.score * 100 / 0.7)) + '%';
-      $('meterWord').textContent = n.word;
-    }
-  }
-}
-
-async function refresh() {
-  try { show(await api('/api/findmy/phone')); }
-  catch (e) { $('note').textContent = e.message; }
-}
-
-$('locate').onclick = async () => {
-  const r = await api('/api/findmy/phone/locate', {});
-  $('note').textContent = r.phone_connected ? 'Asked your phone. Its answer usually lands within 30 seconds.'
-    : "Your phone isn't connected right now; it reports again when it is.";
+// Module title map for Android header synchronization
+const moduleTitles = {
+  cardMotion: 'Presence Disturbance',
+  cardSpec: 'Spectrum Constellation',
+  cardCluster: 'Topographic Room Clusters',
+  cardP2p: 'Peer-to-Peer RTT Timing'
 };
-$('ring').onclick = async () => {
-  ringing = !ringing;
-  await api('/api/findmy/phone/ring', { on: ringing });
-  $('ring').textContent = ringing ? 'Stop sound' : 'Play sound';
-  $('ring').classList.toggle('on', ringing);
-};
-$('nearby').onclick = async () => {
-  nearbyOn = !nearbyOn;
-  await api('/api/findmy/phone/nearby', { on: nearbyOn });
-  $('nearby').classList.toggle('on', nearbyOn);
-  $('meter').classList.toggle('show', nearbyOn);
-};
-$('big').onclick = () => { $('big').style.display = 'none'; };
 
-// ---- Tab Switching ----
-let currentTab = 'find';
-function switchTab(tab) {
-  currentTab = tab;
-  $('tabFind').classList.toggle('active', tab === 'find');
-  $('tabLab').classList.toggle('active', tab === 'lab');
-  $('viewFind').style.display = tab === 'find' ? 'block' : 'none';
-  $('viewLab').style.display = tab === 'lab' ? 'block' : 'none';
-  $('panel').classList.toggle('wide', tab === 'lab');
-
-  if (tab === 'lab') {
-    pollLabMotion();
-    pollLabSpectrum();
-    pollLabClusters();
-    sendLabP2p();
-  }
-}
-
-// Check URL param or path
-if (location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
-  switchTab('lab');
-}
-
-// ---- Fullscreen Card Enlarge / Collapse ----
 function isFullscreenOpen() {
-  return document.body.classList.contains('has-fullscreen');
+  return document.querySelector('.lab-card.fullscreen') !== null;
 }
 
 function closeLabFullscreen() {
   document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
   document.body.classList.remove('has-fullscreen');
+  try {
+    if (window.OrbitLab && typeof window.OrbitLab.onModuleClosed === 'function') {
+      window.OrbitLab.onModuleClosed();
+    }
+  } catch (e) {}
   setTimeout(() => {
     drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
   }, 40);
@@ -786,13 +814,26 @@ function toggleCardFullscreen(cardId) {
     document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
     card.classList.add('fullscreen');
     document.body.classList.add('has-fullscreen');
+    const title = moduleTitles[cardId] || 'Module';
+    try {
+      if (window.OrbitLab && typeof window.OrbitLab.onModuleOpened === 'function') {
+        window.OrbitLab.onModuleOpened(title);
+      }
+    } catch (e) {}
     setTimeout(() => {
       drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
     }, 40);
   }
 }
 
-// ---- Wi-Fi Lab Canvas Drawing & Polling ----
+// Keyboard navigation: Escape key closes fullscreen
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isFullscreenOpen()) {
+    closeLabFullscreen();
+  }
+});
+
+// Canvas helper
 function initCanvas(id) {
   const c = $(id);
   if (!c) return null;
@@ -806,7 +847,9 @@ function initCanvas(id) {
   return { ctx: ctx, width: rect.width, height: rect.height };
 }
 
+// ----------------------------------------------------
 // 1. Motion canvas with visual envelope & spike highlighting
+// ----------------------------------------------------
 let motionHist = [];
 let motionEnvelope = null;
 let motionThreshold = 1.8;
@@ -887,7 +930,7 @@ function drawLabMotion() {
 
   const toY = (dbm) => height - padBottom - ((dbm - minVal) / (maxVal - minVal)) * drawHeight;
 
-  // Background dBm reference lines
+  // Background reference lines
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
 
@@ -908,7 +951,7 @@ function drawLabMotion() {
   const pts = motionHist.slice(isEnlarged ? -60 : -30);
   const step = width / Math.max(pts.length - 1, 1);
 
-  // 1. Draw the Quiet Noise Envelope (shaded band)
+  // 1. Draw Quiet Noise Envelope (shaded band)
   ctx.beginPath();
   pts.forEach((pt, i) => {
     const upperDbm = pt.env_upper != null ? pt.env_upper : (motionMeanDbm + motionThreshold);
@@ -918,8 +961,7 @@ function drawLabMotion() {
     else ctx.lineTo(x, y);
   });
   for (let i = pts.length - 1; i >= 0; i--) {
-    const pt = pts[i];
-    const lowerDbm = pt.env_lower != null ? pt.env_lower : (motionMeanDbm - motionThreshold);
+    const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (motionMeanDbm - motionThreshold);
     const x = i * step;
     const y = toY(lowerDbm);
     ctx.lineTo(x, y);
@@ -928,10 +970,10 @@ function drawLabMotion() {
   ctx.fillStyle = motionDetected ? 'rgba(255, 122, 122, 0.14)' : 'rgba(70, 211, 154, 0.09)';
   ctx.fill();
 
-  // Envelope boundary dashed lines
-  ctx.strokeStyle = motionDetected ? 'rgba(255, 122, 122, 0.45)' : 'rgba(70, 211, 154, 0.35)';
-  ctx.setLineDash([3, 3]);
+  // Dashed envelope boundaries
+  ctx.strokeStyle = motionDetected ? 'rgba(255, 122, 122, 0.35)' : 'rgba(70, 211, 154, 0.28)';
   ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
 
   // Upper boundary
   ctx.beginPath();
@@ -964,7 +1006,7 @@ function drawLabMotion() {
     ctx.fillText('±' + motionThreshold + ' dB envelope', Math.max(10, width - 130), Math.max(16, lastUpperY - 6));
   }
 
-  // 2. Draw the Live Signal Line
+  // 2. Live Signal Line
   ctx.beginPath();
   ctx.strokeStyle = motionDetected ? '#FF7A7A' : '#46D39A';
   ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
@@ -978,7 +1020,7 @@ function drawLabMotion() {
   });
   ctx.stroke();
 
-  // 3. Highlight Spikes (if something happened, it spikes by this much)
+  // 3. Highlight Spikes
   pts.forEach((pt, i) => {
     const isSpike = pt.is_spike || (pt.spike && pt.spike > motionThreshold);
     if (isSpike) {
@@ -989,7 +1031,7 @@ function drawLabMotion() {
       ctx.fillStyle = '#FF7A7A';
       ctx.fill();
 
-      // Delta annotation "+X.X dB spike"
+      // Delta annotation "+X.X dB"
       if (isEnlarged || i === pts.length - 1) {
         ctx.fillStyle = '#ECEEF1';
         ctx.font = '9px system-ui';
@@ -1001,7 +1043,7 @@ function drawLabMotion() {
 }
 
 async function pollLabMotion() {
-  if (currentTab !== 'lab') return;
+  if (document.hidden) return;
   try {
     const res = await fetch('/api/findmy/wifi/motion');
     const data = await res.json();
@@ -1017,8 +1059,6 @@ async function pollLabMotion() {
 
       drawLabMotion();
 
-      // Update text in overview card
-      $('labMotionVar').textContent = data.variance + ' dB';
       if ($('labMotionEnv')) $('labMotionEnv').textContent = '±' + motionThreshold + ' dB';
       if ($('labMotionSpike')) {
         const spk = $('labMotionSpike');
@@ -1039,10 +1079,11 @@ async function pollLabMotion() {
       if (data.target && data.target.ssid) {
         const ssidStr = data.target.ssid + (data.current_dbm != null ? ' (' + data.current_dbm + ' dBm)' : '');
         $('labMotionTarget').textContent = ssidStr;
+        if ($('labNavTarget')) $('labNavTarget').textContent = data.target.ssid;
         if ($('labMotionSsidDetail')) $('labMotionSsidDetail').textContent = data.target.ssid + (data.target.freq ? ' · ' + data.target.freq + ' MHz' : '');
       }
 
-      // Update enlarged details
+      // Details
       if ($('labMotionDbm')) $('labMotionDbm').textContent = (data.current_dbm != null ? data.current_dbm + ' dBm' : '–');
       if ($('labMotionSpikeDetail')) {
         const spkDet = $('labMotionSpikeDetail');
@@ -1057,6 +1098,7 @@ async function pollLabMotion() {
           ? 'Human motion detected: RF reflections disturbed by +' + motionCurrentSpike + ' dB (exceeded the ±' + motionThreshold + ' dB quiet envelope).'
           : 'Fresnel multi-path zone is calm. Signal reflections stay within the ±' + motionThreshold + ' dB quiet noise envelope.';
       }
+
       if (data.events != null) {
         motionEvents = data.events;
         renderMotionLog(motionEvents, data.log_path);
@@ -1065,7 +1107,9 @@ async function pollLabMotion() {
   } catch (e) {}
 }
 
+// ----------------------------------------------------
 // 2. Spectrum canvas
+// ----------------------------------------------------
 let specNetworks = [];
 function drawLabSpectrum() {
   const sc = initCanvas('labSpecCanvas');
@@ -1077,59 +1121,56 @@ function drawLabSpectrum() {
   const midX = width * 0.45;
   ctx.strokeStyle = 'rgba(255,255,255,0.08)';
   ctx.setLineDash([3, 3]);
-  ctx.beginPath(); ctx.moveTo(midX, 4); ctx.lineTo(midX, height - 18); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(midX, 10); ctx.lineTo(midX, height - 20); ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.fillStyle = '#7D8593';
   ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
-  ctx.fillText('2.4 GHz', 10, 14);
-  ctx.fillText('5 GHz', midX + 10, 14);
-
-  if (isEnlarged) {
-    ctx.fillStyle = '#4A5260';
-    ctx.font = '9px system-ui';
-    [1, 6, 11].forEach(ch => {
-      const x = 14 + ((ch - 1) / 13) * (midX - 28);
-      ctx.fillText('ch ' + ch, x - 10, height - 4);
-    });
-    [36, 48, 149, 161].forEach(ch => {
-      const x = (midX + 14) + Math.max(0, Math.min(1, (ch - 36) / (165 - 36))) * (width - midX - 28);
-      ctx.fillText('ch ' + ch, x - 12, height - 4);
-    });
-  }
+  ctx.fillText('2.4 GHz Band', 10, height - 6);
+  ctx.fillText('5 GHz Band', midX + 10, height - 6);
 
   if (!specNetworks.length) return;
+
+  const minDbm = -95, maxDbm = -35;
+  const padBottom = isEnlarged ? 30 : 20;
+  const drawHeight = height - padBottom - (isEnlarged ? 24 : 10);
+
   specNetworks.forEach(ap => {
-    const is24 = ap.freq < 3000;
-    let x = is24 ? 14 + ((ap.chan - 1) / 13) * (midX - 28)
-                 : (midX + 14) + Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36))) * (width - midX - 28);
-    const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
-    const baseline = isEnlarged ? height - 20 : height - 18;
-    const y = baseline - normSig * (baseline - (isEnlarged ? 40 : 20));
+    let x = 0;
+    if (ap.freq < 3000) {
+      const chan = Math.max(1, Math.min(14, ap.chan || 6));
+      x = 10 + ((chan - 1) / 13) * (midX - 25);
+    } else {
+      const chan = ap.chan || 36;
+      x = (midX + 10) + (Math.max(0, Math.min(130, chan - 36)) / 130) * (width - midX - 25);
+    }
 
-    ctx.beginPath();
-    ctx.moveTo(x, baseline);
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = ap.shared ? 'rgba(255,255,255,0.5)' : (is24 ? 'rgba(142,168,255,0.35)' : 'rgba(70,211,154,0.35)');
-    ctx.lineWidth = ap.connected ? 3 : (isEnlarged ? 1.8 : 1.2);
-    ctx.stroke();
+    const norm = Math.max(0, Math.min(1, (ap.dbm - minDbm) / (maxDbm - minDbm)));
+    const barH = norm * drawHeight;
+    const y = height - padBottom - barH;
 
-    ctx.beginPath();
-    ctx.arc(x, y, ap.connected ? 5 : (ap.shared ? 4 : (isEnlarged ? 3.5 : 2.5)), 0, Math.PI * 2);
-    ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
-    ctx.fill();
+    const barW = isEnlarged ? 12 : 7;
+    ctx.fillStyle = ap.connected ? '#46D39A' : (ap.shared ? '#8EA8FF' : '#556070');
+    ctx.fillRect(x - barW/2, y, barW, barH);
 
-    if (isEnlarged && (ap.connected || (ap.dbm > -60 && ap.ssid))) {
+    if (ap.connected) {
+      ctx.beginPath();
+      ctx.arc(x, y - 4, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#46D39A';
+      ctx.fill();
+    }
+
+    if (isEnlarged && (ap.connected || ap.dbm > -65)) {
       ctx.fillStyle = '#ECEEF1';
       ctx.font = '9px system-ui';
-      const label = ap.ssid.length > 12 ? ap.ssid.slice(0, 10) + '…' : ap.ssid;
-      ctx.fillText(label, Math.max(4, Math.min(width - 50, x - 16)), Math.max(26, y - 6));
+      const label = (ap.ssid || 'AP').slice(0, 8);
+      ctx.fillText(label, Math.max(2, x - 12), y - 7);
     }
   });
 }
 
 async function pollLabSpectrum() {
-  if (currentTab !== 'lab') return;
+  if (document.hidden) return;
   try {
     const res = await fetch('/api/findmy/wifi/spectrum');
     const data = await res.json();
@@ -1184,7 +1225,9 @@ async function pollLabSpectrum() {
   } catch (e) {}
 }
 
-// 3. Cluster canvas (2D PCA)
+// ----------------------------------------------------
+// 3. Cluster Canvas (2D SVD Room Topography)
+// ----------------------------------------------------
 let clusterData = null;
 function drawLabClusters() {
   const sc = initCanvas('labClusterCanvas');
@@ -1192,68 +1235,89 @@ function drawLabClusters() {
   const { ctx, width, height } = sc;
   ctx.clearRect(0, 0, width, height);
 
-  const isEnlarged = height > 140;
+  const cx = width / 2;
+  const cy = height / 2;
+  const scale = Math.min(width, height) * 0.38;
 
+  // Concentric room distance rings
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  [0.35, 0.7, 1.0].forEach(r => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * scale, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  // Crosshairs
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.beginPath();
-  ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
-  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-  ctx.stroke();
-
-  if (isEnlarged) {
-    [0.35, 0.7].forEach(ratio => {
-      ctx.beginPath();
-      ctx.arc(width / 2, height / 2, (Math.min(width, height) / 2 - 20) * ratio, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-      ctx.stroke();
-    });
-  }
+  ctx.beginPath(); ctx.moveTo(cx, 10); ctx.lineTo(cx, height - 10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(10, cy); ctx.lineTo(width - 10, cy); ctx.stroke();
 
   if (!clusterData || !clusterData.clusters) return;
-  const pts = clusterData.clusters;
-  let minX = -10, maxX = 10, minY = -10, maxY = 10;
-  pts.forEach(pt => {
-    if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
-    if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
-  });
-  const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
-  const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
 
-  const toScreen = (x, y) => [width / 2 + (x / padX) * (width / 2 - 16), height / 2 - (y / padY) * (height / 2 - 16)];
+  const isEnlarged = height > 140;
 
-  pts.forEach(pt => {
-    const [sx, sy] = toScreen(pt.x, pt.y);
-    ctx.beginPath(); ctx.arc(sx, sy, isEnlarged ? 4 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; ctx.fill();
+  // Fingerprint cluster spots
+  clusterData.clusters.forEach(pt => {
+    const px = cx + pt.x * scale;
+    const py = cy + pt.y * scale;
+    ctx.beginPath();
+    ctx.arc(px, py, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fill();
   });
 
+  // Live Laptop Position
   if (clusterData.live_laptop) {
-    const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-    ctx.beginPath(); ctx.arc(lx, ly, isEnlarged ? 7 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#46D39A'; ctx.fill();
-    if (isEnlarged) {
-      ctx.fillStyle = '#46D39A'; ctx.font = '10px system-ui';
-      ctx.fillText('Laptop', lx + 9, ly + 3);
-    }
+    const lx = cx + clusterData.live_laptop.x * scale;
+    const ly = cy + clusterData.live_laptop.y * scale;
+    ctx.beginPath();
+    ctx.arc(lx, ly, isEnlarged ? 8 : 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#46D39A';
+    ctx.fill();
+    ctx.strokeStyle = '#0D0F12';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ECEEF1';
+    ctx.font = '10px system-ui';
+    ctx.fillText('Laptop', lx + (isEnlarged ? 10 : 8), ly + 3);
   }
+
+  // Live Phone Position
   if (clusterData.live_phone) {
-    const [px, py] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
-    ctx.beginPath(); ctx.arc(px, py, isEnlarged ? 7 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#8EA8FF'; ctx.fill();
-    if (isEnlarged) {
-      ctx.fillStyle = '#8EA8FF'; ctx.font = '10px system-ui';
-      ctx.fillText('Phone', px + 9, py + 3);
-    }
+    const phx = cx + clusterData.live_phone.x * scale;
+    const phy = cy + clusterData.live_phone.y * scale;
+    ctx.beginPath();
+    ctx.arc(phx, phy, isEnlarged ? 8 : 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#8EA8FF';
+    ctx.fill();
+    ctx.strokeStyle = '#0D0F12';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ECEEF1';
+    ctx.font = '10px system-ui';
+    ctx.fillText('Phone', phx + (isEnlarged ? 10 : 8), phy + 3);
+
+    // Connector link
     if (clusterData.live_laptop) {
-      const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-      ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-      ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
+      const lx = cx + clusterData.live_laptop.x * scale;
+      const ly = cy + clusterData.live_laptop.y * scale;
+      ctx.beginPath();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(142, 168, 255, 0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(lx, ly);
+      ctx.lineTo(phx, phy);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
 }
 
 async function pollLabClusters() {
-  if (currentTab !== 'lab') return;
+  if (document.hidden) return;
   try {
     const res = await fetch('/api/findmy/wifi/clusters');
     const data = await res.json();
@@ -1298,10 +1362,14 @@ async function pollLabClusters() {
   } catch (e) {}
 }
 
-// 4. P2P ping
+// ----------------------------------------------------
+// 4. Peer-to-Peer RTT Timing
+// ----------------------------------------------------
 let p2pHist = [];
-let lastP2pRtt = 0;
+let lastP2pRtt = null;
+let p2pJitter = 0.0;
 let p2pSeq = 0;
+
 function drawLabP2p() {
   const sc = initCanvas('labP2pCanvas');
   if (!sc) return;
@@ -1309,47 +1377,71 @@ function drawLabP2p() {
   ctx.clearRect(0, 0, width, height);
 
   const isEnlarged = height > 140;
-  const maxMs = 40;
+  const padBottom = isEnlarged ? 26 : 14;
+  const padTop = isEnlarged ? 20 : 10;
+  const drawHeight = height - padTop - padBottom;
 
+  const minRtt = 0, maxRtt = Math.max(60, ...(p2pHist.slice(-30).map(x => x || 0)), 30);
+  const toY = (rtt) => height - padBottom - (Math.max(0, Math.min(maxRtt, rtt)) / maxRtt) * drawHeight;
+
+  // Latency thresholds
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
-
-  if (isEnlarged) {
-    [10, 20, 30].forEach(ms => {
-      const norm = ms / maxMs;
-      const y = height - (norm * (height - 30) + 15);
+  [15, 30, 50].forEach(val => {
+    if (val < maxRtt) {
+      const y = toY(val);
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      ctx.fillStyle = '#7D8593';
-      ctx.font = '10px system-ui';
-      ctx.fillText(ms + ' ms', 8, y - 4);
-    });
-  } else {
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-    ctx.stroke();
-  }
+      if (isEnlarged) {
+        ctx.fillStyle = '#7D8593';
+        ctx.font = '10px system-ui';
+        ctx.fillText(val + ' ms', 8, y - 4);
+      }
+    }
+  });
 
   if (!p2pHist.length) return;
-  const pts = p2pHist.slice(isEnlarged ? -60 : -25);
+  const pts = p2pHist.slice(isEnlarged ? -50 : -25);
   const step = width / Math.max(pts.length - 1, 1);
 
+  // Gradient area
+  ctx.beginPath();
+  pts.forEach((rtt, i) => {
+    const x = i * step;
+    const y = toY(rtt);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo((pts.length - 1) * step, height - padBottom);
+  ctx.lineTo(0, height - padBottom);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(142, 168, 255, 0.08)';
+  ctx.fill();
+
+  // Line
   ctx.beginPath();
   ctx.strokeStyle = '#8EA8FF';
-  ctx.lineWidth = isEnlarged ? 2.4 : 1.8;
-  ctx.lineJoin = 'round';
-
-  pts.forEach((ms, i) => {
-    const norm = Math.min(1, ms / maxMs);
-    const y = height - (norm * (height - (isEnlarged ? 30 : 20)) + (isEnlarged ? 15 : 10));
+  ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
+  pts.forEach((rtt, i) => {
     const x = i * step;
+    const y = toY(rtt);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
+
+  // Highlight latest ping
+  if (pts.length) {
+    const lastX = (pts.length - 1) * step;
+    const lastY = toY(pts[pts.length - 1]);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#8EA8FF';
+    ctx.fill();
+  }
 }
 
 async function sendLabP2p() {
-  if (currentTab !== 'lab') return;
+  if (document.hidden) return;
   const t0 = performance.now();
   p2pSeq++;
   try {
@@ -1358,10 +1450,11 @@ async function sendLabP2p() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ t: Date.now() / 1000, seq: p2pSeq })
     });
-    if (res.ok) {
-      const t1 = performance.now();
-      const rtt = Math.round((t1 - t0) * 10) / 10;
-      const jitter = Math.round(Math.abs(rtt - lastP2pRtt) * 10) / 10;
+    const data = await res.json();
+    if (data.status === 'ok') {
+      const rtt = Math.round(performance.now() - t0);
+      const jitter = lastP2pRtt != null ? Math.abs(rtt - lastP2pRtt) : 0;
+      p2pJitter = jitter;
       lastP2pRtt = rtt;
       p2pHist.push(rtt);
       drawLabP2p();
@@ -1386,25 +1479,27 @@ async function sendLabP2p() {
   } catch (e) {}
 }
 
-window.addEventListener('resize', () => {
-  if (currentTab === 'lab') {
-    drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
-  }
-});
-
-if (!isEmbedded) {
-  refresh();
-  setInterval(refresh, 2000);
+function refreshAllTelemetry() {
+  pollLabMotion();
+  pollLabSpectrum();
+  pollLabClusters();
+  sendLabP2p();
 }
 
-if (isEmbedded || location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
-  switchTab('lab');
-}
-
-setInterval(pollLabMotion, 500);
-setInterval(sendLabP2p, 800);
+// Polling interval timers
+refreshAllTelemetry();
+setInterval(pollLabMotion, 800);
+setInterval(sendLabP2p, 1200);
 setInterval(pollLabSpectrum, 4000);
-setInterval(pollLabClusters, 3000);
+setInterval(pollLabClusters, 4000);
+
+// Auto-redraw on resize
+window.addEventListener('resize', () => {
+  drawLabMotion();
+  drawLabSpectrum();
+  drawLabClusters();
+  drawLabP2p();
+});
 </script>
 </body>
 </html>
