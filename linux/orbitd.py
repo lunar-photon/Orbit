@@ -172,13 +172,7 @@ def has_local_token(handler):
         auth = handler.headers.get('Authorization', '')
         if auth.startswith('Bearer '):
             supplied = auth[7:].strip()
-    if not supplied and hasattr(handler, 'path') and '?' in handler.path:
-        try:
-            q = parse_qs(urlparse(handler.path).query)
-            if 'ltok' in q:
-                supplied = q['ltok'][0]
-        except Exception:
-            pass
+    # never from the address: a key in a URL ends up in logs and browser history
     return bool(supplied) and hmac.compare_digest(supplied, LOCAL_TOKEN)
 
 def get_laptop_id():
@@ -4830,6 +4824,49 @@ _LAPTOP_SCAN_HISTORY = collections.deque(maxlen=5)
 _PHONE_SCAN_HISTORY = collections.deque(maxlen=5)
 
 
+class ScanMemory:
+    """A device's Wi-Fi as it has been lately: each network's smoothed strength, remembered for a
+    few minutes after it was last heard. One thin scan (Android throttles them) or a network that
+    blinks out of a cached list then doesn't redraw the whole picture."""
+
+    def __init__(self, keep=180, alpha=0.35):
+        self.keep, self.alpha = keep, alpha
+        self.aps = {}                 # bssid -> [smoothed dBm, last heard, times heard]
+        self.updated = 0.0
+        self.lock = threading.Lock()
+
+    def add(self, scan):
+        now = time.time()
+        with self.lock:
+            for b, d in (scan or {}).items():
+                e = self.aps.get(b)
+                if e is None:
+                    self.aps[b] = [float(d), now, 1]
+                else:
+                    e[0] += self.alpha * (d - e[0])
+                    e[1] = now
+                    e[2] += 1
+            if scan:
+                self.updated = now
+            self._prune(now)
+
+    def view(self):
+        with self.lock:
+            self._prune(time.time())
+            # heard once and weakly is more likely noise than part of the place
+            return {b: round(e[0], 1) for b, e in self.aps.items() if e[2] >= 2 or e[0] >= -75}
+
+    def _prune(self, now):
+        for b in [b for b, e in self.aps.items() if now - e[1] > self.keep]:
+            del self.aps[b]
+
+
+PHONE_WIFI = ScanMemory()
+LAPTOP_WIFI = ScanMemory(keep=120)
+_SAME_PLACE = {'score': None, 't': 0.0}
+SAME_PLACE_TAU = 60.0                 # s; the Same place score follows real change over about a minute
+
+
 def _average_scan_history(history, now=None):
     """Averages dBm per BSSID over recent scans (last 90s) and filters out transient 1-off networks."""
     if now is None:
@@ -4996,7 +5033,13 @@ def wifi_likeness(a, b, offset_dbm=0.0):
         return None
     if offset_dbm:
         a = {k: v - offset_dbm for k, v in a.items()}
-    keys = {k for k, v in a.items() if v > -88} | {k for k, v in b.items() if v > -88}
+    # Android throttles scans: a phone may report only its own access point or two. Then judge
+    # only what it reported (the laptop's other networks aren't evidence of distance), with
+    # less certainty the fewer it reported.
+    thin = len(a) < 4
+    keys = {k for k, v in a.items() if v > -88}
+    if not thin:
+        keys |= {k for k, v in b.items() if v > -88}
     if not keys:
         return None
     # Check if strong APs exist (above -75 dBm); weak fringe APs mostly add noise
@@ -5010,7 +5053,9 @@ def wifi_likeness(a, b, offset_dbm=0.0):
         den += w
         if pa is not None and pb is not None:
             num += w * max(0.0, 1 - abs(pa - pb) / 25)
-    return num / den if den else None
+    if not den:
+        return None
+    return num / den * (len(keys) / 4 if thin else 1)
 
 
 def likeness_word(s):
@@ -5056,6 +5101,10 @@ class WifiMotionMonitor:
     MOTION_HOLD = 15.0     # seconds a disturbance keeps the zone "occupied"
     EVENT_GAP = 3.0        # seconds of calm that close an active event
     DEBOUNCE = 2           # consecutive agitated samples required to open an event
+    # One connection's signal strength swings with traffic and the access point's own adjustments
+    # far more than with people moving (that needs per-subcarrier CSI, which iwlwifi doesn't
+    # give), so its "disturbances" aren't logged or announced; the signal itself is still sampled.
+    LOG_EVENTS = False
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -5277,19 +5326,6 @@ class WifiMotionMonitor:
                     if self.phone_active_event and (now - self.phone_last_disturbance_time >= self.EVENT_GAP):
                         self.phone_active_event = None
 
-    def feed_vicinity_sample(self, val, label="Vicinity Link"):
-        try:
-            val = int(val)
-        except (ValueError, TypeError):
-            return
-        if val == -127 or val == 0:
-            return
-        now = time.time()
-        with self.lock:
-            if now - self.phone_last_seen < 3.0 and self.phone_ssid != "Vicinity Link":
-                return
-        self.feed_phone_sample(val, ssid=label)
-
     def is_desk_occupied(self):
         with self.lock:
             if self.current_signal is None or self.last_desk_motion_ts == 0.0:
@@ -5462,7 +5498,7 @@ class WifiMotionMonitor:
                             else:
                                 self.desk_presence_state = "vacated"
 
-                            if rf_motion:
+                            if rf_motion and self.LOG_EVENTS:
                                 if self.active_event and (now - self.last_disturbance_time < self.EVENT_GAP):
                                     self.active_event['peak_spike'] = max(self.active_event['peak_spike'], max(spike, d_spike))
                                     self.active_event['duration'] = round(now - self.active_event['start_time'], 1)
@@ -5690,15 +5726,8 @@ def wifi_spectrum_data():
     except Exception:
         out = ""
 
-    phone_scan_data = _average_scan_history(_PHONE_SCAN_HISTORY)
-    if not phone_scan_data:
-        try:
-            with _FINDMY_LOCK, closing(_findmy_db()) as db:
-                row = db.execute("SELECT scan FROM fingerprints ORDER BY t DESC LIMIT 1").fetchone()
-                if row:
-                    phone_scan_data = json.loads(row[0])
-        except Exception:
-            pass
+    # what the phone has heard over the last few minutes (never an old fingerprint from elsewhere)
+    phone_scan_data = PHONE_WIFI.view()
 
     networks = []
     bands = {'2.4GHz': 0, '5GHz': 0}
@@ -5791,17 +5820,23 @@ def wifi_spectrum_data():
         place_label = connected_ssid
 
     offset_dbm = get_antenna_offset()
-    laptop_aps = {n['bssid']: n['dbm'] for n in networks}
+    LAPTOP_WIFI.add({n['bssid']: n['dbm'] for n in networks})
+    laptop_aps = LAPTOP_WIFI.view()
     common_aps, signal_gap, strong_count = _wifi_identity_match([], phone_scan_data or {}, laptop_aps, offset_dbm=offset_dbm)
 
-    score = NEARBY.get('score')
-    zone = NEARBY.get('zone')
-    distance = NEARBY.get('distance')
-
+    score = zone = distance = None
     if phone_scan_data and laptop_aps:
         live_score = wifi_likeness(phone_scan_data, laptop_aps, offset_dbm=offset_dbm)
         if live_score is not None:
-            score = live_score
+            # follow the comparison over about a minute, whatever the polling rate, so a reading
+            # that wobbles doesn't swing the score
+            prev, dt = _SAME_PLACE['score'], now_ts - _SAME_PLACE['t']
+            if prev is None or dt > 600:
+                score = live_score
+            else:
+                score = prev + (1 - math.exp(-max(0.0, dt) / SAME_PLACE_TAU)) * (live_score - prev)
+            _SAME_PLACE.update(score=score, t=now_ts)
+            live_score = score
             apart_val = NEARBY.get('apart')
             if apart_val is None and phone_loc and laptop_loc and 'lat' in phone_loc and 'lat' in laptop_loc:
                 apart_val = round(_metres(phone_loc['lat'], phone_loc['lng'], laptop_loc['lat'], laptop_loc['lng']))
@@ -7582,7 +7617,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                     and LOCAL_TOKEN and hmac.compare_digest(ltok, LOCAL_TOKEN)):
                 self.send_response(303)
                 self.send_header('Set-Cookie', f'pc_local={LOCAL_TOKEN}; HttpOnly; SameSite=Lax; Path=/')
-                self.send_header('Location', f'/findmy?ltok={quote(ltok)}')
+                self.send_header('Location', '/findmy')
                 self.end_headers()
             else:
                 self.send_error(403)
@@ -9069,6 +9104,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             phone_raw = b.get('wifi') or []
             mine = laptop_scan_now(8 if purpose in ('nearby', 'find_phone', 'radar') else 30)
             raw_theirs = phone_scan(phone_raw)
+            PHONE_WIFI.add(raw_theirs)
             theirs = smooth_phone_scan(raw_theirs)
 
             # Antenna calibration: when acoustic chirp confirms same room, learn dBm offset
@@ -9207,10 +9243,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             b = body if isinstance(body, dict) else {}
             client_t = _num(b.get('t'), 0, 2e9)
             seq = int(b.get('seq', 0))
-            if client_t > 0:
-                rtt_ms = round((time.time() - client_t) * 1000, 1)
-                equiv_dbm = -min(85, max(42, int(45 + rtt_ms)))
-                WIFI_MOTION.feed_vicinity_sample(equiv_dbm, label="Vicinity (P2P)")
+            # (round-trip time is not a signal strength: it no longer feeds the movement radar)
             self.send_json({
                 'status': 'ok',
                 'client_t': client_t,

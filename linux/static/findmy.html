@@ -506,28 +506,14 @@ function ago(t) {
 const reasons = { periodic: 'regular check-in', moved: 'it moved', requested: 'you asked',
   low_battery: 'battery nearly flat: last report before it dies', sim_changed: 'its SIM changed', boot: 'it started up' };
 
-const urlParams = new URLSearchParams(window.location.search);
-const ltokParam = urlParams.get('ltok');
-if (ltokParam) {
-  try { localStorage.setItem('orbit_ltok', ltokParam); } catch (e) {}
-}
-const savedToken = (() => {
-  try { return localStorage.getItem('orbit_ltok') || ''; } catch (e) { return ''; }
-})();
+// Signed in by the HttpOnly cookie Orbit set when it opened this page; the key itself never
+// sits in the address or in the page's storage.
+try { localStorage.removeItem('orbit_ltok'); } catch (e) {}
 
 async function api(path, body) {
   const headers = { 'Content-Type': 'application/json' };
-  const tok = ltokParam || savedToken;
-  if (tok) {
-    headers['X-Local-Token'] = tok;
-    headers['Authorization'] = 'Bearer ' + tok;
-  }
   const opt = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) };
-  let url = path;
-  if (tok && !url.includes('ltok=')) {
-    url += (url.includes('?') ? '&' : '?') + 'ltok=' + encodeURIComponent(tok);
-  }
-  const r = await fetch(url, { credentials: 'same-origin', ...opt });
+  const r = await fetch(path, { credentials: 'same-origin', ...opt });
   if (r.status === 401) throw new Error('This page has to be opened from Orbit on this computer.');
   return r.json();
 }

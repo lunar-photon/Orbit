@@ -6,27 +6,19 @@
 <title>Wi-Fi Lab · Orbit</title>
 <link rel="icon" href="/icon-192.png">
 <style>
-  /* Matches the Orbit app: calm single column, hairline cards, an icon tile + title + caption
-     per module, a live view, one quiet summary line, with anything technical folded away.
-     Dark only, to match the app. Element IDs and the start/stop/fullscreen globals are kept so
-     the native WifiLabActivity WebView (title sync, back button, battery polling) still drives it. */
+  /* Wi-Fi Lab, led by "Right now": where your phone is from the Wi-Fi both devices see, and a feed
+     of real changes. Every line on screen comes from a real reading; nothing is sample text, and
+     nothing claims more than the readings can tell. Dark only, to match the app. The native
+     WifiLabActivity WebView drives it through startAllPolling / stopAllPolling /
+     isFullscreenOpen / closeLabFullscreen and ?embedded=1. */
   @font-face { font-family: "Geist"; font-weight: 400; font-display: swap; src: url("/fonts/geist_regular.ttf") format("truetype"); }
   @font-face { font-family: "Geist"; font-weight: 500; font-display: swap; src: url("/fonts/geist_medium.ttf") format("truetype"); }
   @font-face { font-family: "Geist"; font-weight: 600; font-display: swap; src: url("/fonts/geist_semibold.ttf") format("truetype"); }
   :root {
-    --ground: #0D0F12;
-    --surface: #15181D;
-    --raised: #1D2128;
-    --hairline: #262B33;
-    --text: #ECEEF1;
-    --text-2: #A6AEBB;
-    --text-3: #7D8593;
-    --accent: #8EA8FF;
-    --good: #46D39A;
-    --warn: #FDBA74;
-    --danger: #FF7A7A;
-    --sky: #7DD3FC;
-    --violet: #C4B5FD;
+    --ground: #0D0F12; --surface: #15181D; --raised: #1D2128; --hairline: #262B33;
+    --text: #ECEEF1; --text-2: #A6AEBB; --text-3: #7D8593;
+    --accent: #8EA8FF; --good: #46D39A; --warn: #FDBA74; --danger: #FF7A7A;
+    --sky: #7DD3FC; --violet: #C4B5FD;
     --radius: 12px;
     --font: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, Cantarell, Ubuntu, sans-serif;
     color-scheme: dark;
@@ -34,123 +26,120 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { background: var(--ground); color: var(--text); }
   body {
-    font-family: var(--font); line-height: 1.5; -webkit-font-smoothing: antialiased;
-    -webkit-tap-highlight-color: transparent;
-    padding: 14px max(16px, env(safe-area-inset-right, 0px)) 36px max(16px, env(safe-area-inset-left, 0px));
+    font-family: var(--font); line-height: 1.45; -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent; font-variant-numeric: tabular-nums;
+    padding: 16px max(16px, env(safe-area-inset-right, 0px)) 36px max(16px, env(safe-area-inset-left, 0px));
   }
-  .wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .wrap { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+  .ellip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  [hidden] { display: none !important; }
 
-  header { display: flex; align-items: center; gap: 10px; height: 44px; margin-bottom: 2px; }
+  header { display: flex; align-items: center; gap: 10px; min-height: 44px; }
   .back { width: 40px; height: 40px; flex: none; display: grid; place-items: center; cursor: pointer;
     background: none; border: none; color: var(--text); border-radius: 10px; }
   .back:hover { background: var(--surface); }
-  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
-  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2);
-    background: var(--surface); border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
-  .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 rgba(70,211,154,.5); animation: pulse 2.4s infinite; }
+  .htxt { flex: 1; min-width: 0; }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  header p { font-size: 12.5px; color: var(--text-3); }
+  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); max-width: 45%;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 11px; flex: none; }
+  .conn .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--text-3); }
+  .conn.live .dot { background: var(--good); animation: pulse 2.4s infinite; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(70,211,154,.45);} 70%{box-shadow:0 0 0 6px rgba(70,211,154,0);} 100%{box-shadow:0 0 0 0 rgba(70,211,154,0);} }
 
-  .hero-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
-    padding: 16px 18px; display: flex; flex-direction: column; gap: 7px; }
-  .hero-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 500; }
-  .hero-ssid { color: var(--text); font-weight: 600; font-size: 14px; }
-  .hero-when { color: var(--text-3); font-size: 12px; }
-  .hero-headline { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); margin-top: 1px; }
-  .hero-sub { font-size: 13px; color: var(--text-2); }
-  .hero-timebar { margin: 6px 0 2px; }
-  .time-track { height: 4px; background: var(--raised); border-radius: 999px; overflow: hidden; }
-  .time-fill { height: 100%; width: 70%; border-radius: 999px; background: linear-gradient(90deg, rgba(142,168,255,0.4), var(--good)); transition: all .4s ease; }
-  .hero-status { font-size: 12.5px; color: var(--text-3); margin-top: 2px; line-height: 1.4; }
-  .hero-events { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
-  .hero-event-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; }
-  .hero-event-tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; flex: none; line-height: 1.4; }
-  .hero-event-tag.movement { background: rgba(255,122,122,0.14); color: var(--danger); }
-  .hero-event-tag.settled { background: rgba(70,211,154,0.14); color: var(--good); }
-  .hero-event-tag.network { background: rgba(142,168,255,0.15); color: var(--accent); }
-  .hero-event-desc { flex: 1; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .hero-event-time { font-size: 11.5px; color: var(--text-3); flex: none; font-variant-numeric: tabular-nums; }
+  /* Right now */
+  .hero { background: radial-gradient(120% 140% at 0% 0%, rgba(142,168,255,0.08), transparent 55%), var(--surface);
+    border: 1px solid var(--hairline); border-radius: 16px; padding: 18px; }
+  .hero-top { display: flex; align-items: flex-start; gap: 12px; }
+  .hero-top > div { flex: 1; min-width: 0; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+  .state { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin-top: 4px; line-height: 1.25; }
+  .state-sub { font-size: 13px; color: var(--text-2); margin-top: 4px; }
+  .state-sub b { color: var(--text); font-weight: 600; }
+  .state-sub .sep { color: var(--text-3); margin: 0 6px; }
+  .feed { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .feed-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+  .fi { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .chip { font-size: 10.5px; font-weight: 600; padding: 3px 0; border-radius: 999px; flex: none; width: 74px; text-align: center; }
+  .chip.phone { background: rgba(142,168,255,0.15); color: var(--accent); }
+  .chip.net { background: rgba(125,211,252,0.14); color: var(--sky); }
+  .chip.link { background: rgba(196,181,253,0.15); color: var(--violet); }
+  .fi-text { flex: 1; font-size: 13px; }
+  .fi-time { color: var(--text-3); font-size: 11.5px; flex: none; }
+  .muted { font-size: 12.5px; color: var(--text-3); }
 
+  /* cards */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 680px) { .grid { grid-template-columns: minmax(0, 1fr); } }
   .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
-    padding: 14px; display: flex; flex-direction: column; }
-  .row { display: flex; align-items: center; gap: 12px; }
-  .tile { width: 40px; height: 40px; flex: none; border-radius: 11px; display: grid; place-items: center;
+    padding: 14px; display: flex; flex-direction: column; min-width: 0; }
+  .card.wide { grid-column: 1 / -1; }
+  .card:not(.full) { cursor: pointer; }
+  .crow { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .tile { width: 36px; height: 36px; flex: none; border-radius: 10px; display: grid; place-items: center;
     background: var(--raised); border: 1px solid var(--hairline); }
-  .tile svg { width: 20px; height: 20px; }
-  .ttl { flex: 1; min-width: 0; }
-  .ttl h2 { font-size: 15px; font-weight: 500; }
-  .ttl p { margin-top: 3px; font-size: 12.5px; color: var(--text-3); line-height: 1.4; }
-  .badge { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; flex: none;
-    background: rgba(255,255,255,0.05); color: var(--text-2); align-self: flex-start; }
+  .tile svg { width: 19px; height: 19px; }
+  .ctitle { flex: 1; min-width: 0; }
+  .ctitle h2 { font-size: 14.5px; font-weight: 500; }
+  .ctitle p { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; flex: none; white-space: nowrap;
+    background: rgba(255,255,255,0.05); color: var(--text-2); }
   .badge.good { background: rgba(70,211,154,0.14); color: var(--good); }
   .badge.alert { background: rgba(255,122,122,0.14); color: var(--danger); }
-  .card:not(.full) { cursor: pointer; }
-  .fs-back { display: none; }
-  .card.full .fs-back { display: flex; align-items: center; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); }
-  .fs-back button { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline); color: var(--text); font: inherit; font-size: 13px; font-weight: 500; padding: 7px 13px; border-radius: 9px; cursor: pointer; }
-  .fs-back button:hover { background: var(--raised); }
-
-  canvas.viz { width: 100%; height: 104px; display: block; margin-top: 13px;
-    background: #0A0C10; border: 1px solid #1A1E25; border-radius: 10px; }
-
-  .read { margin-top: 11px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .badge.warn { background: rgba(253,186,116,0.15); color: var(--warn); }
+  canvas.viz { width: 100%; height: 96px; display: block; margin-top: 12px;
+    background: #0A0C10; border: 1px solid #1A1E25; border-radius: 9px; }
+  .read { margin-top: 10px; font-size: 12.5px; color: var(--text-2); }
   .read b { color: var(--text); font-weight: 600; }
-  .read .sep { color: var(--text-3); margin: 0 7px; }
+  .read .sep { color: var(--text-3); margin: 0 6px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; flex: none; }
+  .legend i.band { height: 9px; border-radius: 3px; }
+  .legend i.dot { width: 8px; height: 8px; border-radius: 50%; }
+  .meter { height: 7px; border-radius: 999px; background: var(--raised); overflow: hidden; margin-top: 14px; }
+  .meter > i { display: block; height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--good)); transition: width .45s ease; }
 
-  details { margin-top: 12px; border-top: 1px solid var(--hairline); padding-top: 11px; }
+  details { margin-top: 11px; border-top: 1px solid var(--hairline); padding-top: 10px; }
   summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 7px;
     font-size: 12.5px; font-weight: 500; color: var(--text-2); }
   summary::-webkit-details-marker { display: none; }
-  summary .chev { transition: transform .18s; color: var(--text-3); }
+  summary .chev { transition: transform .18s; color: var(--text-3); flex: none; }
   details[open] summary .chev { transform: rotate(90deg); }
   .body { margin-top: 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
-  dl.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; margin: 0 0 10px; }
-  dl.kv dt { color: var(--text-3); }
-  dl.kv dd { margin: 0; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
-
-  .log-tools { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-  .log-tools a, .log-tools button { font-size: 11px; color: var(--text-3); background: none; border: none; cursor: pointer; text-decoration: none; }
-  .log-tools a:hover, .log-tools button:hover { color: var(--text); }
-  .log { margin-top: 11px; display: flex; flex-direction: column; gap: 6px; }
-  .log-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 7px 10px; background: var(--raised); border-radius: 9px; font-size: 12px; }
-  .log-row .z { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-  .tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; flex: none; }
-  .tag.room { background: rgba(70,211,154,0.14); color: var(--good); }
-  .tag.vic { background: rgba(142,168,255,0.14); color: var(--accent); }
-  .log-row .when { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .log-row .amt { color: var(--danger); font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
-  .log-empty { font-size: 12.5px; color: var(--text-3); padding: 3px 0; }
-
-  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-size: 11.5px; color: var(--text-2); }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .legend i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-
-  /* Same-place meter + paired signal bars */
-  .meter { height: 8px; border-radius: 999px; background: var(--raised); overflow: hidden; margin-top: 13px; }
-  .meter > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--good)); transition: width .45s ease; width: 0; }
-  .shared-list { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 11px; }
-  .sh .name { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; margin-bottom: 5px; }
-  .sh .name span:first-child { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sh .name .d { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; margin-left: 8px; }
-  .sh .bars { display: flex; flex-direction: column; gap: 4px; }
-  .bar { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--text-3); }
-  .bar > span { width: 42px; flex: none; }
+  dl.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; margin-bottom: 10px; }
+  dl.kv dt { color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dl.kv dd { color: var(--text); text-align: right; white-space: nowrap; }
+  .sh { margin-bottom: 9px; }
+  .sh .name { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; margin-bottom: 4px; }
+  .sh .name .d { color: var(--text-3); flex: none; }
+  .bar { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
+  .bar > span { width: 58px; flex: none; }
   .bar .track { flex: 1; height: 5px; border-radius: 999px; background: var(--raised); overflow: hidden; }
   .bar .fill { height: 100%; border-radius: 999px; transition: width .45s ease; }
+  .btnrow { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .btn { font: inherit; font-size: 12px; font-weight: 500; color: var(--text); background: var(--raised);
+    border: 1px solid var(--hairline); border-radius: 9px; padding: 6px 12px; cursor: pointer; flex: none; }
+  .btn:hover { border-color: #3A414D; }
+  .btn:disabled { color: var(--text-3); cursor: default; }
 
-  footer { margin-top: 6px; font-size: 11.5px; color: var(--text-3); text-align: center; line-height: 1.6; }
+  footer { margin-top: 4px; font-size: 11.5px; color: var(--text-3); text-align: center; line-height: 1.6; }
 
-  /* Fullscreen (enlarge a module) — kept so the native back button + title sync work */
+  /* one card enlarged (tap a card); the native back button closes it */
+  .fs-back { display: none; }
+  .card.full .fs-back { display: flex; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); }
+  .fs-back button { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline);
+    color: var(--text); font: inherit; font-size: 13px; font-weight: 500; padding: 7px 13px; border-radius: 9px; cursor: pointer; }
   body.has-full { overflow: hidden; }
-  .card.full { position: fixed; inset: 0; z-index: 60; border: none; border-radius: 0;
-    background: var(--ground); padding: 14px max(16px, env(safe-area-inset-left,0px)) 36px;
-    padding-top: calc(14px + env(safe-area-inset-top, 0px)); overflow-y: auto; animation: fade .18s ease; }
+  .card.full { position: fixed; inset: 0; z-index: 60; border: none; border-radius: 0; background: var(--ground);
+    padding: calc(14px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 36px max(16px, env(safe-area-inset-left, 0px));
+    overflow-y: auto; animation: fade .18s ease; }
   @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
   .card.full canvas.viz { height: 300px; }
 
-  /* Embedded in the Orbit app's WebView — the native top bar replaces the page header */
   body.embedded { padding-top: 8px; }
-  body.embedded > .wrap > header { display: none; }
+  body.embedded header { display: none; }
 </style>
 </head>
 <body>
@@ -160,163 +149,147 @@
     <button class="back" aria-label="Back" onclick="history.length > 1 ? history.back() : (location.href='/findmy')">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
     </button>
-    <div style="flex:1;min-width:0;">
-      <h1>Wi-Fi Lab</h1>
-      <p style="font-size:12px;color:var(--text-3);margin-top:2px;">Signal insights from the air around your laptop</p>
-    </div>
-    <span class="conn"><span class="dot"></span><span id="connName">Live</span></span>
+    <div class="htxt"><h1>Wi-Fi Lab</h1><p class="ellip">What the Wi-Fi around your computer says</p></div>
+    <span class="conn" id="conn"><span class="dot"></span><span class="ellip" id="connName">Connecting…</span></span>
   </header>
 
-  <!-- Room Insight Hero Card -->
-  <div class="hero-card" id="roomHero">
+  <section class="hero">
     <div class="hero-top">
-      <span class="hero-ssid" id="heroSsid">IISERTVM</span>
-      <span class="hero-when">Right now</span>
+      <div>
+        <div class="eyebrow">Right now</div>
+        <div class="state" id="state">Waiting for your phone</div>
+        <div class="state-sub" id="stateSub">It sends the Wi-Fi it sees about once a minute</div>
+      </div>
+      <span class="badge" id="heroBadge">…</span>
     </div>
-    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:1px;">
-      <div class="hero-headline" id="heroHeadline">Room is calm · phone nearby</div>
-      <span class="badge good" id="heroBadge">calm</span>
-    </div>
-    <div class="hero-sub" id="heroSub">Steady for 1 min</div>
-    <div class="hero-timebar">
-      <div class="time-track"><div class="time-fill" id="heroTimeFill"></div></div>
-      <div class="time-labels"><span>2 min ago</span><span>now</span></div>
-    </div>
-    <div class="hero-events" id="heroEvents">
-      <div class="hero-event-row"><span class="hero-event-tag settled">Settled</span><span class="hero-event-desc">Room settled again</span><span class="hero-event-time">5s ago</span></div>
-      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">A change in the room’s reflections</span><span class="hero-event-time">6s ago</span></div>
-      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">7s ago</span></div>
-      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">9s ago</span></div>
-      <div class="hero-event-row"><span class="hero-event-tag network">Network</span><span class="hero-event-desc">A nearby network dropped</span><span class="hero-event-time">17s ago</span></div>
-      <div class="hero-event-row"><span class="hero-event-tag movement">Movement</span><span class="hero-event-desc">Someone moved right by the laptop</span><span class="hero-event-time">26s ago</span></div>
-    </div>
-  </div>
-
-  <!-- Same-place check (Wi-Fi identity) -->
-  <section class="card" id="card-same" data-title="Same-place check" onclick="cardTap(event, 'card-same')">
-    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
-    <div class="row">
-      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></div>
-      <div class="ttl"><h2>Same-place check</h2><p>How much the phone and laptop share.</p></div>
-      <span class="badge good" id="spBadge">Same place</span>
-    </div>
-    <div class="meter"><i id="spMeter" style="width:76%"></i></div>
-    <div class="read" id="spRead"><b>76% match</b><span class="sep">·</span>likely the same room</div>
+    <div class="meter" title="How alike the two devices' Wi-Fi is"><i id="spMeter"></i></div>
     <details>
-      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Shared networks</summary>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Networks both see</summary>
       <div class="body">
-        <div class="shared-list" id="spList"><div class="log-empty">No networks seen by both devices yet.</div></div>
-        <p style="margin:0">When both devices see the same routers at similar strength, they're in the same place. Big gaps mean a wall or floor between them.</p>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--hairline);">
-          <span style="font-size:11.5px;color:var(--text-3);" id="spNearbyStatus">Nearby listening</span>
-          <button type="button" class="btn-subtle" id="spPingBtn" onclick="triggerNearby(true)" style="background:var(--surface-sub);border:1px solid var(--hairline);color:var(--text-2);padding:4px 10px;border-radius:14px;font-size:11.5px;cursor:pointer;">Ping phone nearby</button>
+        <div id="spList"><div class="muted">None yet.</div></div>
+        <p>Seen by both at a similar strength: same room. A big gap usually means a wall or a floor between them.</p>
+        <div class="btnrow">
+          <button type="button" class="btn" id="spCompare" onclick="compareNow(event)">Compare now</button>
+          <span class="muted" id="spCompareNote">The phone sends its Wi-Fi every few seconds for 3 minutes</span>
         </div>
       </div>
     </details>
+    <div class="feed">
+      <div class="feed-title">Since you opened this</div>
+      <div id="feed" style="display:flex;flex-direction:column;gap:9px"><div class="muted">Nothing has changed.</div></div>
+    </div>
   </section>
 
-  <!-- Movement -->
-  <section class="card" id="card-motion" data-title="Movement" onclick="cardTap(event, 'card-motion')">
-    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
-    <div class="row">
-      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--good)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3l2.5-7 4 18 3.5-11H22"/></svg></div>
-      <div class="ttl"><h2>Movement</h2><p>Raw, with the smoothed trend.</p></div>
-      <span class="badge good" id="motionBadge">Quiet</span>
-    </div>
-    <canvas class="viz" id="motionCanvas"></canvas>
-    <div class="legend"><span><i style="background:#46D39A"></i> raw</span><span><i style="background:#8EA8FF"></i> smoothed</span><span style="margin-left:auto;color:var(--text-3);display:flex;align-items:center;gap:4px;"><i style="background:#a78bfa"></i> 2x2 MIMO</span></div>
-    <div class="read" id="motionRead">Room <b>quiet</b></div>
-    <div class="mimo-strip" id="mimoStrip" style="margin-top:9px;padding:7px 11px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.05);border-radius:8px;font-size:11.5px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <span style="display:flex;align-items:center;gap:6px;">
-        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#a78bfa;" id="mimoDot"></span>
-        <span id="mimoTitle" style="color:var(--text-3)">RF Radar</span>
-      </span>
-      <span id="mimoAnts" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-0.2px">Ant 1: -- · Ant 2: -- · Δ -- dB</span>
-      <span class="badge calm" id="deskRadarBadge" style="font-size:10px;padding:2px 7px;">Desk</span>
-    </div>
-    <details>
-      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Disturbance log <span id="logCount" style="color:var(--text-3)"></span>
-        <span class="log-tools"><a href="/api/findmy/wifi/motion/log?format=text" target="_blank" onclick="event.stopPropagation()">Raw</a><button type="button" onclick="clearMotionLog(event)">Clear</button></span>
-      </summary>
-      <div class="body">
-        <div class="log" id="logRows"><div class="log-empty">Nothing stirred in the last 30 days.</div></div>
-        <p style="margin:11px 0 0">A person moving nearby subtly changes how Wi-Fi bounces. Orbit uses the laptop's Intel 2x2 MIMO antennas as a differential RF radar: physical presence at the desk causes micro-scattering between Antenna 1 and 2, keeping the PC unlocked while seated and locking instantly when vacated.</p>
+  <div class="grid">
+
+    <section class="card" id="card-signal" data-title="Signal" onclick="cardTap(event, 'card-signal')">
+      <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+      <div class="crow">
+        <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--good)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.43a5 5 0 0 1 7 0"/></svg></div>
+        <div class="ctitle"><h2>Signal</h2><p class="ellip">This computer's connection, last 15 seconds</p></div>
+        <span class="badge" id="sigBadge">…</span>
       </div>
-    </details>
-  </section>
+      <canvas class="viz" id="signalCanvas"></canvas>
+      <div class="legend">
+        <span><i style="background:rgba(166,174,187,0.45)"></i>signal</span>
+        <span><i style="background:#46D39A"></i>trend</span>
+        <span><i class="band" style="background:rgba(70,211,154,0.16)"></i>its usual range</span>
+      </div>
+      <div class="read" id="sigRead">…</div>
+      <details>
+        <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Details</summary>
+        <div class="body">
+          <dl class="kv" id="sigKv"></dl>
+          <p>The usual range is how much this connection normally wanders. Ups and downs inside it are just Wi-Fi being Wi-Fi.</p>
+        </div>
+      </details>
+    </section>
 
-  <!-- Spectrum -->
-  <section class="card" id="card-spec" data-title="Wi-Fi spectrum" onclick="cardTap(event, 'card-spec')">
-    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
-    <div class="row">
-      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-5M9 20V9M14 20v-8M19 20V5"/></svg></div>
-      <div class="ttl"><h2>Wi-Fi spectrum</h2><p>Networks by band and strength.</p></div>
-      <span class="badge" id="specBadge">—</span>
-    </div>
-    <canvas class="viz" id="specCanvas"></canvas>
-    <div class="legend"><span><i style="background:#8EA8FF"></i> 2.4 GHz</span><span><i style="background:#46D39A"></i> 5 GHz</span><span><i style="background:#FFFFFF"></i> phone sees too</span></div>
-    <div class="read" id="specRead">Scanning…</div>
-    <details>
-      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Strongest nearby</summary>
-      <div class="body"><dl class="kv" id="specList"></dl><p style="margin:0">Networks the phone also sees are how Orbit tells whether your phone and laptop are in the same place.</p></div>
-    </details>
-  </section>
+    <section class="card" id="card-spec" data-title="Wi-Fi around" onclick="cardTap(event, 'card-spec')">
+      <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+      <div class="crow">
+        <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-5M9 20V9M14 20v-8M19 20V5"/></svg></div>
+        <div class="ctitle"><h2>Wi-Fi around</h2><p class="ellip">Networks by band and strength</p></div>
+        <span class="badge" id="specBadge">…</span>
+      </div>
+      <canvas class="viz" id="specCanvas"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#8EA8FF"></i>2.4 GHz</span>
+        <span><i class="dot" style="background:#7DD3FC"></i>5 GHz</span>
+        <span><i class="dot" style="background:#ECEEF1"></i>phone sees it too</span>
+        <span><i class="dot" style="background:#46D39A"></i>connected</span>
+      </div>
+      <div class="read" id="specRead">Scanning…</div>
+      <details>
+        <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Strongest</summary>
+        <div class="body"><dl class="kv" id="specList"></dl></div>
+      </details>
+    </section>
 
-  <!-- Room map -->
-  <section class="card" id="card-room" data-title="Room map" onclick="cardTap(event, 'card-room')">
-    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
-    <div class="row">
-      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--violet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="8" r="2.3"/><circle cx="16" cy="14" r="2.3"/><circle cx="11" cy="18" r="1.6"/><path d="M9 8h3.5M14 12l-2 4"/></svg></div>
-      <div class="ttl"><h2>Room map</h2><p>Places you've been, grouped by their Wi-Fi. No GPS.</p></div>
-      <span class="badge" id="roomBadge">—</span>
-    </div>
-    <canvas class="viz" id="roomCanvas"></canvas>
-    <div class="legend"><span><i style="background:#46D39A"></i> Laptop</span><span><i style="background:#8EA8FF"></i> Phone</span></div>
-    <div class="read" id="roomRead">Collecting Wi-Fi fingerprints…</div>
-    <details>
-      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> How this works</summary>
-      <div class="body"><p style="margin:0">Each place your phone has been leaves a Wi-Fi fingerprint — which networks it saw, and how strongly. Orbit lays those out so nearby spots sit together, then drops the laptop and phone where their current readings fit best. It fills in as you move around with location sharing on.</p></div>
-    </details>
-  </section>
+    <section class="card wide" id="card-room" data-title="Wi-Fi map" onclick="cardTap(event, 'card-room')">
+      <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+      <div class="crow">
+        <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--violet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="8" r="2.3"/><circle cx="16" cy="14" r="2.3"/><circle cx="11" cy="18" r="1.6"/><path d="M9 8h3.5M14 12l-2 4"/></svg></div>
+        <div class="ctitle"><h2>Wi-Fi map</h2><p class="ellip">Places you've been, laid out by their Wi-Fi</p></div>
+        <span class="badge" id="roomBadge">…</span>
+      </div>
+      <canvas class="viz" id="roomCanvas"></canvas>
+      <div class="legend"><span><i class="dot" style="background:rgba(160,174,187,0.5)"></i>saved spot</span><span><i class="dot" style="background:#46D39A"></i>computer</span><span><i class="dot" style="background:#8EA8FF"></i>phone</span></div>
+      <div class="read" id="roomRead">…</div>
+      <details>
+        <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> How this works</summary>
+        <div class="body"><p>Each place the phone reports from leaves a Wi-Fi fingerprint: which networks it saw and how strongly. Spots with similar fingerprints sit together here, and the computer and phone go where their current Wi-Fi fits best. No GPS.</p></div>
+      </details>
+    </section>
 
-  <!-- Link latency -->
-  <section class="card" id="card-link" data-title="Link latency" onclick="cardTap(event, 'card-link')">
-    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
-    <div class="row">
-      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
-      <div class="ttl"><h2>Link latency</h2><p>Raw, with the smoothed trend.</p></div>
-      <span class="badge good" id="linkBadge">Steady</span>
-    </div>
-    <canvas class="viz" id="linkCanvas"></canvas>
-    <div class="read" id="linkRead">Measuring…</div>
-    <details>
-      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Details</summary>
-      <div class="body"><dl class="kv"><dt>Range seen</dt><dd id="lRange">—</dd><dt>Probes sent</dt><dd id="lSeq">0</dd></dl><p style="margin:0">A rising, jumpy line usually means the connection is congested or the phone has moved further away.</p></div>
-    </details>
-  </section>
+    <section class="card" id="card-link" data-title="Phone link" onclick="cardTap(event, 'card-link')" hidden>
+      <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+      <div class="crow">
+        <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <div class="ctitle"><h2>Phone link</h2><p class="ellip">Round trip from this phone to the computer</p></div>
+        <span class="badge" id="linkBadge">…</span>
+      </div>
+      <canvas class="viz" id="linkCanvas"></canvas>
+      <div class="legend"><span><i style="background:rgba(166,174,187,0.45)"></i>each ping</span><span><i style="background:#FDBA74"></i>trend</span></div>
+      <div class="read" id="linkRead">Measuring…</div>
+    </section>
 
-  <footer>Everything is computed on your own two devices. The insights come from smoothing the readings and flagging what stands out — no data leaves your devices.</footer>
+  </div>
+
+  <footer>Everything here is measured by your own computer and phone. Nothing leaves them.</footer>
 </div>
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const GOOD = '#46D39A', ACCENT = '#8EA8FF', WARN = '#FDBA74', DANGER = '#FF7A7A';
-  const isEmbedded = location.search.indexOf('embedded=1') >= 0 || location.search.indexOf('app=1') >= 0;
-  if (isEmbedded) document.body.classList.add('embedded');
+  const C = { good: '#46D39A', accent: '#8EA8FF', warn: '#FDBA74', danger: '#FF7A7A', sky: '#7DD3FC', violet: '#C4B5FD', faint: '#5c646f' };
+  const params = new URLSearchParams(location.search);
+  const embedded = params.has('embedded') || params.has('app');
+  if (embedded) document.body.classList.add('embedded');
+  // Round trips only mean something from the phone; on the computer itself they're loopback.
+  const showLink = embedded || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(location.hostname);
+  if (showLink) { $('card-link').hidden = false; $('card-room').classList.remove('wide'); }
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fontOf = () => getComputedStyle(document.body).fontFamily;
 
-  // ---------- canvas helper ----------
-  function initCanvas(id) {
+  function fit(id) {
     const c = $(id); if (!c) return null;
-    const r = c.getBoundingClientRect();
-    if (!r.width || !r.height) return null;
+    const r = c.getBoundingClientRect(); if (!r.width || !r.height) return null;
     const dpr = window.devicePixelRatio || 1;
     c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
     const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { ctx, width: r.width, height: r.height };
+    return { ctx, w: r.width, h: r.height, big: r.height > 160 };
   }
-  const fontOf = () => getComputedStyle(document.body).fontFamily;
+  function emptyNote(ctx, w, h, text) {
+    ctx.fillStyle = C.faint; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center';
+    ctx.fillText(text, w / 2, h / 2 + 4); ctx.textAlign = 'start';
+  }
+  function ago(t) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+    return s < 10 ? 'just now' : s < 60 ? s + 's ago' : s < 3600 ? Math.floor(s / 60) + 'm ago' : Math.floor(s / 3600) + 'h ago';
+  }
+  function ewma(arr, a) { const out = []; let s = null; arr.forEach(v => { s = s == null ? v : a * v + (1 - a) * s; out.push(s); }); return out; }
 
-  // ---------- fullscreen (one module at a time) ----------
+  // ---------- enlarge one card ----------
   function isFullscreenOpen() { return !!document.querySelector('.card.full'); }
   function closeLabFullscreen() {
     document.querySelectorAll('.card.full').forEach(c => c.classList.remove('full'));
@@ -324,428 +297,255 @@
     try { if (window.OrbitLab && OrbitLab.onModuleClosed) OrbitLab.onModuleClosed(); } catch (e) {}
     requestAnimationFrame(redrawAll);
   }
-  function toggleFull(id) {
-    const card = $(id); if (!card) return;
-    if (card.classList.contains('full')) { closeLabFullscreen(); return; }
+  function cardTap(e, id) {
+    const card = $(id); if (!card || card.classList.contains('full')) return;
+    if (e.target.closest('summary, details, a, button, input')) return;
     document.querySelectorAll('.card.full').forEach(c => c.classList.remove('full'));
-    card.classList.add('full'); document.body.classList.add('has-full');
-    card.scrollTop = 0;
-    try { if (window.OrbitLab && OrbitLab.onModuleOpened) OrbitLab.onModuleOpened(card.getAttribute('data-title') || 'Module'); } catch (e) {}
+    card.classList.add('full'); document.body.classList.add('has-full'); card.scrollTop = 0;
+    try { if (window.OrbitLab && OrbitLab.onModuleOpened) OrbitLab.onModuleOpened(card.getAttribute('data-title') || 'Wi-Fi Lab'); } catch (e2) {}
     requestAnimationFrame(redrawAll);
   }
   window.isFullscreenOpen = isFullscreenOpen;
   window.closeLabFullscreen = closeLabFullscreen;
-  window.toggleFull = toggleFull;
-  function cardTap(e, id) {
-    const card = $(id); if (!card || card.classList.contains('full')) return;
-    if (e.target.closest('summary, details, a, button, input')) return;   // let controls work
-    toggleFull(id);
-  }
   window.cardTap = cardTap;
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isFullscreenOpen()) closeLabFullscreen(); });
+  function redrawAll() { drawSignal(); drawSpectrum(); drawRoom(); drawLink(); }
 
-  function redrawAll() { drawMotion(); drawSpectrum(); drawRoom(); drawLink(); }
-
-  // ---------- relative time ----------
-  function timeAgo(ev) {
-    let s = ev.timestamp;
-    if (!s && ev.date && ev.time) { const d = new Date(ev.date + 'T' + ev.time); if (!isNaN(d)) s = d.getTime() / 1000; }
-    if (!s) return ev.time || '';
-    const diff = Math.max(0, Math.floor(Date.now() / 1000 - s));
-    if (diff < 60) return diff + 's ago';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
+  // ---------- the feed: real changes noticed while this is open ----------
+  const noticed = [];
+  function notice(kind, text) { noticed.unshift({ kind, text, t: Date.now() / 1000 }); if (noticed.length > 30) noticed.pop(); renderFeed(); }
+  const CHIP = { phone: 'Phone', net: 'Network', link: 'Link' };
+  function renderFeed() {
+    $('feed').innerHTML = noticed.length ? noticed.slice(0, 6).map(f =>
+      '<div class="fi"><span class="chip ' + f.kind + '">' + CHIP[f.kind] + '</span>' +
+      '<span class="fi-text ellip">' + esc(f.text) + '</span><span class="fi-time">' + ago(f.t) + '</span></div>').join('')
+      : '<div class="muted">Nothing has changed.</div>';
   }
 
-  // ====================================================
-  // 1. Movement  (/api/findmy/wifi/motion)
-  // ====================================================
-  let roomHist = [], vicHist = [], phoneActive = false, motionEvents = [];
-  let roomMean = -65, vicMean = -65, roomThr = 1.8, vicThr = 1.8;
-
-  function drawMotion() {
-    const sc = initCanvas('motionCanvas'); if (!sc) return;
-    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
-    const big = height > 160, lo = -95, hi = -40, padB = big ? 22 : 10, padT = big ? 16 : 8, dh = height - padB - padT;
-    const toY = (d) => height - padB - ((d - lo) / (hi - lo)) * dh;
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
-    (big ? [-50, -65, -80, -90] : [-55, -72, -88]).forEach(v => {
-      const y = toY(v); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      if (big) { ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf(); ctx.fillText(v + ' dBm', 6, y - 4); }
-    });
-    const line = (hist, mean, thr, color, fill, active) => {
-      if (!active || !hist.length) return;
-      const pts = hist.slice(big ? -60 : -34), step = width / Math.max(pts.length - 1, 1);
-      ctx.beginPath();
-      pts.forEach((p, i) => { const u = p.env_upper != null ? p.env_upper : mean + thr; const x = i * step, y = toY(u); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      for (let i = pts.length - 1; i >= 0; i--) { const l = pts[i].env_lower != null ? pts[i].env_lower : mean - thr; ctx.lineTo(i * step, toY(l)); }
-      ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
-      ctx.beginPath();
-      pts.forEach((p, i) => { const x = i * step, y = toY(p.dbm != null ? p.dbm : -70); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.strokeStyle = color; ctx.lineWidth = big ? 2.2 : 1.8; ctx.lineJoin = 'round'; ctx.stroke();
-      pts.forEach((p, i) => { if (p.is_spike) { ctx.beginPath(); ctx.arc(i * step, toY(p.dbm != null ? p.dbm : -70), big ? 4 : 3, 0, 7); ctx.fillStyle = DANGER; ctx.fill(); } });
-    };
-    line(vicHist, vicMean, vicThr, 'rgba(142,168,255,0.85)', 'rgba(142,168,255,0.06)', phoneActive);
-    line(roomHist, roomMean, roomThr, GOOD, 'rgba(70,211,154,0.07)', true);
-    if (!roomHist.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Listening to the room…', width / 2, height / 2); ctx.textAlign = 'start'; }
-  }
-
-  function renderLog() {
-    const box = $('logRows'); if (!box) return;
-    $('logCount').textContent = motionEvents.length ? '· ' + motionEvents.length : '';
-    if (!motionEvents.length) { box.innerHTML = '<div class="log-empty">Nothing stirred in the last 30 days.</div>'; return; }
-    const list = [...motionEvents].reverse().slice(0, isFullscreenOpen() ? 40 : 6);
-    box.innerHTML = list.map(e => {
-      const vic = (e.zone || (e.source === 'phone' ? 'Vicinity' : 'Room')).toLowerCase().indexOf('vic') >= 0;
-      return '<div class="log-row"><span class="z"><span class="tag ' + (vic ? 'vic' : 'room') + '">' + (vic ? 'Nearby' : 'Room') + '</span><span class="when">' + timeAgo(e) + '</span></span><span class="amt">+' + (e.peak_spike != null ? e.peak_spike : 0) + ' dB</span></div>';
-    }).join('');
-  }
-
-  async function clearMotionLog(e) {
-    if (e) e.stopPropagation();
-    try { const r = await fetch('/api/findmy/wifi/motion/log/clear', { method: 'POST' }); const d = await r.json(); if (d.status === 'ok') { motionEvents = []; renderLog(); } } catch (err) {}
-  }
-  window.clearMotionLog = clearMotionLog;
-
-  async function pollMotion() {
-    if (document.hidden) return;
-    try {
-      let payload = null;
-      if (window.OrbitLab && typeof OrbitLab.getPhoneWifiInfo === 'function') {
-        try { const raw = OrbitLab.getPhoneWifiInfo(); const p = raw && JSON.parse(raw); if (p && p.available && p.rssi) payload = p; } catch (err) {}
-      }
-      const res = await fetch('/api/findmy/wifi/motion', payload
-        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        : { method: 'GET' });
-      const data = await res.json();
-      if (data.status !== 'ok') return;
-      const lap = data.laptop || data;
-      roomHist = lap.history || []; roomThr = lap.threshold || 1.8; roomMean = lap.mean_dbm != null ? lap.mean_dbm : -65;
-      const roomMoving = !!lap.motion_detected, roomSpike = lap.spike || 0;
-      const ph = data.phone || null;
-      phoneActive = !!(ph && ph.active);
-      if (ph) { vicHist = ph.history || []; vicThr = ph.threshold || 1.8; vicMean = ph.mean_dbm != null ? ph.mean_dbm : -65; }
-      const vicMoving = !!(ph && ph.motion_detected), vicSpike = (ph && ph.spike) || 0;
-      motionEvents = data.events || lap.events || [];
-      drawMotion(); renderLog();
-
-      const b = $('motionBadge');
-      b.textContent = roomMoving ? 'Movement' : 'Quiet'; b.className = 'badge ' + (roomMoving ? 'alert' : 'good');
-      const roomTxt = 'Room ' + (roomMoving ? '<b style="color:' + DANGER + '">moving</b>' : '<b>quiet</b>');
-      const vicTxt = !phoneActive ? '<span class="sep">·</span>nearby <b style="color:var(--text-3)">phone off</b>'
-        : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'moving' : 'calm') + '</b>';
-      $('motionRead').innerHTML = roomTxt + vicTxt;
-
-      const mimo = (lap && lap.mimo) || data.mimo || null;
-      if (mimo && $('mimoAnts')) {
-        const a1 = mimo.ant1 != null ? (mimo.ant1 + ' dBm') : '--';
-        const a2 = mimo.ant2 != null ? (mimo.ant2 + ' dBm') : '--';
-        const d = mimo.delta != null ? ((mimo.delta > 0 ? '+' : '') + mimo.delta + ' dB') : '--';
-        $('mimoAnts').textContent = 'Ant 1: ' + a1 + ' · Ant 2: ' + a2 + ' · Δ ' + d;
-        if ($('deskRadarBadge')) {
-          const occ = !!mimo.occupied;
-          $('deskRadarBadge').textContent = occ ? 'Desk occupied' : 'Desk empty';
-          $('deskRadarBadge').className = 'badge ' + (occ ? 'good' : 'calm');
-        }
-      }
-
-      if ($('heroSsid') && lap.ssid) $('heroSsid').textContent = lap.ssid;
-      if ($('heroHeadline')) {
-        if (roomMoving) {
-          $('heroHeadline').textContent = 'Movement in the room' + (phoneActive ? ' · phone nearby' : '');
-          $('heroSub').textContent = 'Signal ripple of +' + roomSpike + ' dB detected';
-          if ($('heroBadge')) { $('heroBadge').textContent = 'active'; $('heroBadge').className = 'badge alert'; }
-          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, var(--good), var(--danger))';
-        } else {
-          $('heroHeadline').textContent = 'Room is calm' + (phoneActive ? ' · phone nearby' : '');
-          $('heroSub').textContent = 'Steady for 1 min';
-          if ($('heroBadge')) { $('heroBadge').textContent = 'calm'; $('heroBadge').className = 'badge good'; }
-          if ($('heroTimeFill')) $('heroTimeFill').style.background = 'linear-gradient(90deg, rgba(142,168,255,0.4), var(--good))';
-        }
-      }
-      renderHeroEvents(motionEvents, roomMoving);
-    } catch (e) {}
-  }
-
-  function renderHeroEvents(events, isRoomMoving) {
-    const container = $('heroEvents');
-    if (!container) return;
-    if (!events || events.length === 0) return;
-    const now = Date.now() / 1000;
-    const sorted = [...events].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 6);
-    container.innerHTML = sorted.map((ev, i) => {
-      const t = ev.timestamp || now;
-      const sec = Math.max(1, Math.round(now - t));
-      const timeStr = sec < 60 ? (sec + 's ago') : (Math.round(sec / 60) + 'm ago');
-      let tag = 'Movement', tagClass = 'movement', desc = 'A change in the room’s reflections';
-      if (ev.source === 'phone') {
-        tag = 'Movement'; tagClass = 'movement';
-        desc = 'Someone moved right by the laptop';
-      } else if (ev.type === 'network' || ev.kind === 'network') {
-        tag = 'Network'; tagClass = 'network';
-        desc = 'A nearby network dropped';
-      } else if (ev.settled || (i === 0 && !isRoomMoving)) {
-        tag = 'Settled'; tagClass = 'settled';
-        desc = 'Room settled again';
-      } else {
-        tag = 'Movement'; tagClass = 'movement';
-        desc = 'A change in the room’s reflections';
-      }
-      return '<div class="hero-event-row">' +
-        '<span class="hero-event-tag ' + tagClass + '">' + tag + '</span>' +
-        '<span class="hero-event-desc">' + desc + '</span>' +
-        '<span class="hero-event-time">' + timeStr + '</span>' +
-        '</div>';
-    }).join('');
-  }
-
-  // ====================================================
-  // 2. Spectrum  (/api/findmy/wifi/spectrum) — also drives Same-place
-  // ====================================================
-  let specNetworks = [];
-  function drawSpectrum() {
-    const sc = initCanvas('specCanvas'); if (!sc) return;
-    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
-    const big = height > 160, mid = width * 0.46, padB = 16, top = big ? 14 : 8, dh = height - padB - top;
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(mid, 6); ctx.lineTo(mid, height - 6); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf();
-    ctx.fillText('2.4 GHz', 6, height - 4); ctx.fillText('5 GHz', mid + 8, height - 4);
-    if (!specNetworks.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Scanning the air…', width / 2, height / 2); ctx.textAlign = 'start'; return; }
-    const toY = (d) => height - padB - ((Math.max(-95, Math.min(-30, d)) + 95) / 65) * dh;
-    specNetworks.forEach(ap => {
-      const b24 = (ap.freq || 0) < 3000 || ap.band === '2.4GHz';
-      let x = b24 ? 16 + ((Math.max(1, Math.min(14, ap.chan || 6)) - 1) / 13) * (mid - 34)
-                  : mid + 14 + ((Math.max(0, Math.min(129, (ap.chan || 36) - 36)) / 129)) * (width - mid - 28);
-      const y = toY(ap.dbm);
-      ctx.beginPath(); ctx.moveTo(x, height - padB); ctx.lineTo(x, y);
-      ctx.strokeStyle = ap.connected ? GOOD : (ap.shared ? 'rgba(255,255,255,0.3)' : (b24 ? 'rgba(142,168,255,0.22)' : 'rgba(70,211,154,0.22)'));
-      ctx.lineWidth = ap.connected ? 2.4 : 1.4; ctx.stroke();
-      ctx.beginPath(); ctx.arc(x, y, ap.connected ? 5 : (ap.shared ? 4.2 : 3), 0, 7);
-      ctx.fillStyle = ap.connected ? GOOD : (ap.shared ? '#fff' : (b24 ? ACCENT : GOOD)); ctx.fill();
-      if (big && (ap.connected || ap.dbm > -62)) { ctx.fillStyle = '#ECEEF1'; ctx.font = '10px ' + fontOf(); ctx.fillText((ap.ssid || 'AP').slice(0, 10), Math.max(2, x - 14), y - 8); }
-    });
-  }
-
-  let lastNearbyPing = 0;
-  async function triggerNearby(force) {
-    const now = Date.now();
-    if (!force && (now - lastNearbyPing < 50000)) return;
-    lastNearbyPing = now;
-    if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Pinging phone…';
-    try {
-      await fetch('/api/findmy/phone/nearby', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ on: true })
-      });
-      if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Nearby active (listening 3 min)';
-    } catch (e) {
-      if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Nearby idle';
-    }
-  }
-
+  // ---------- Right now: where the phone is, from the Wi-Fi both see ----------
+  let nets = [], phoneZone = null;
+  const ZONE = {
+    'Same room': ['Your phone is in this room', 'good'],
+    'Next room or two': ['Your phone is close by', 'good'],
+    'Same building': ['Your phone is in the building', ''],
+    'Elsewhere': ['Your phone is somewhere else', 'alert'],
+  };
   function renderSamePlace(sp) {
     sp = sp || {};
-    const shared = specNetworks.filter(n => n.shared && n.phone_dbm != null);
-    const meter = $('spMeter'), read = $('spRead'), badge = $('spBadge'), list = $('spList');
-    const nearbyStatus = $('spNearbyStatus');
-
-    if (nearbyStatus) {
-      nearbyStatus.textContent = sp.active ? 'Nearby active (listening)' : (sp.phone_active ? 'Phone active' : 'Nearby listening');
+    const has = sp.match_percent != null && sp.score != null;
+    const zone = has ? sp.zone : null;
+    if (phoneZone && zone && zone !== phoneZone) {
+      if (zone === 'Same room') notice('phone', 'Your phone came into this room');
+      else if (phoneZone === 'Same room') notice('phone', 'Your phone left this room');
     }
-
-    const matchPct = sp.match_percent != null ? sp.match_percent : (shared.length ? Math.min(100, Math.round(shared.length / Math.max(specNetworks.length, 1) * 100)) : 76);
-    meter.style.width = matchPct + '%';
-
-    const zoneDesc = (matchPct >= 70 || sp.zone === 'Same room')
-      ? 'likely the same room'
-      : (matchPct >= 35 ? 'likely the same building' : 'different location');
-
-    const bleDist = (sp.bluetooth_distance != null) ? (sp.bluetooth_distance + 'm') : null;
-    const bleDbm = (sp.bluetooth_dbm != null) ? (sp.bluetooth_dbm + ' dBm') : null;
-    let bleExtra = '';
-    if (bleDist) {
-      bleExtra = '<span class="sep">·</span>Bluetooth <b>' + bleDist + '</b>' + (bleDbm ? ' (' + bleDbm + ')' : '');
+    phoneZone = zone;
+    $('spMeter').style.width = (has ? sp.match_percent : 0) + '%';
+    const z = ZONE[zone];
+    if (!has || !z) {
+      $('state').textContent = 'Waiting for your phone';
+      $('stateSub').textContent = 'It sends the Wi-Fi it sees about once a minute';
+      $('heroBadge').textContent = 'No reading'; $('heroBadge').className = 'badge';
+    } else {
+      $('state').textContent = z[0];
+      const bits = ['<b>' + sp.match_percent + '%</b> alike', (sp.shared_count || 0) + ' networks in common'];
+      if (sp.bluetooth_distance != null) bits.push('Bluetooth about <b>' + sp.bluetooth_distance + ' m</b>');
+      $('stateSub').innerHTML = bits.join('<span class="sep">·</span>');
+      $('heroBadge').textContent = zone; $('heroBadge').className = 'badge ' + z[1];
     }
-    if (sp.desk_presence && sp.desk_presence.occupied) {
-      bleExtra += '<span class="sep">·</span>Desk <b>occupied</b>';
-    }
+    const shared = nets.filter(n => n.shared && n.phone_dbm != null).sort((a, b) => b.dbm - a.dbm).slice(0, 6);
+    const pctOf = (d) => Math.max(3, Math.min(100, ((d + 90) / 60) * 100));
+    $('spList').innerHTML = shared.length ? shared.map(n =>
+      '<div class="sh"><div class="name"><span class="ellip">' + esc(n.ssid || 'hidden') + '</span><span class="d">' + Math.round(Math.abs(n.dbm - n.phone_dbm)) + ' dB apart</span></div>' +
+      '<div class="bar"><span>Phone</span><div class="track"><div class="fill" style="width:' + pctOf(n.phone_dbm) + '%;background:#8EA8FF"></div></div></div>' +
+      '<div class="bar"><span>Computer</span><div class="track"><div class="fill" style="width:' + pctOf(n.dbm) + '%;background:#46D39A"></div></div></div></div>').join('')
+      : '<div class="muted">None yet.</div>';
+  }
+  async function compareNow(e) {
+    if (e) e.stopPropagation();
+    const b = $('spCompare'); b.disabled = true; b.textContent = 'Comparing…';
+    try {
+      const d = await (await fetch('/api/findmy/phone/nearby', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true }) })).json();
+      $('spCompareNote').textContent = d.phone_connected === false ? "The phone isn't connected right now" : 'Comparing for 3 minutes';
+    } catch (err) { $('spCompareNote').textContent = "Couldn't reach the computer"; }
+    setTimeout(() => { b.disabled = false; b.textContent = 'Compare now'; }, 180000);
+  }
+  window.compareNow = compareNow;
 
-    const vBadge = (sp.bluetooth_distance != null && sp.bluetooth_distance <= 2.5) ? 'Desk proximity' : (matchPct >= 50 ? 'Same place' : (matchPct >= 25 ? 'Same building' : 'Apart'));
-    badge.textContent = vBadge;
-    badge.className = 'badge ' + ((sp.bluetooth_distance != null && sp.bluetooth_distance <= 2.5) || matchPct >= 50 ? 'good' : (matchPct >= 25 ? '' : 'alert'));
-
-    read.innerHTML = '<b>' + matchPct + '% match</b><span class="sep">·</span>' + zoneDesc + bleExtra;
-
-    if (list) {
-      let bleHtml = '';
-      if (sp.desk_presence && sp.desk_presence.occupied) {
-        bleHtml += '<div class="sh" style="border-left: 2px solid #a78bfa; padding-left: 8px; margin-bottom: 8px;">' +
-          '<div class="name"><span style="color:#a78bfa">● Laptop RF MIMO Radar</span><span class="d">Occupied · Δ ' + (sp.desk_presence.delta_db > 0 ? '+' : '') + sp.desk_presence.delta_db + ' dB</span></div>' +
-          '<div style="font-size:11px;color:var(--text-3);margin-top:2px;">Dual-antenna physical body scattering active</div></div>';
-      }
-      if (sp.bluetooth_distance != null) {
-        bleHtml += '<div class="sh" style="border-left: 2px solid var(--sky); padding-left: 8px; margin-bottom: 8px;">' +
-          '<div class="name"><span style="color:var(--sky)">● Bluetooth LE Beacon</span><span class="d">' + sp.bluetooth_distance + ' m' + (sp.bluetooth_dbm ? (' · ' + sp.bluetooth_dbm + ' dBm') : '') + '</span></div>' +
-          '<div style="font-size:11px;color:var(--text-3);margin-top:2px;">Direct point-to-point radio link</div></div>';
-      }
-      if (!shared.length && !bleHtml) {
-        list.innerHTML = '<div class="log-empty">No networks seen by both devices yet. Click Ping phone nearby to sync.</div>';
-      } else {
-        const dbmPct = (d) => Math.max(3, Math.min(100, ((d + 90) / 60) * 100));
-        const sharedHtml = shared.sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
-          '<div class="sh"><div class="name"><span>' + (n.ssid || 'Hidden') + '</span><span class="d">Δ ' + Math.round(Math.abs(n.dbm - n.phone_dbm)) + ' dB</span></div>' +
-          '<div class="bars"><div class="bar"><span>Phone</span><div class="track"><div class="fill" style="width:' + dbmPct(n.phone_dbm) + '%;background:#8EA8FF"></div></div></div>' +
-          '<div class="bar"><span>Laptop</span><div class="track"><div class="fill" style="width:' + dbmPct(n.dbm) + '%;background:#46D39A"></div></div></div></div></div>').join('');
-        list.innerHTML = bleHtml + sharedHtml;
-      }
-    }
+  // ---------- Signal (this computer's connection) ----------
+  let sig = null;
+  function drawSignal() {
+    const c = fit('signalCanvas'); if (!c) return; const { ctx, w, h, big } = c; ctx.clearRect(0, 0, w, h);
+    const hist = sig && sig.history || [];
+    if (hist.length < 2) { emptyNote(ctx, w, h, 'Reading the signal…'); return; }
+    const pts = hist.slice(-60), vals = pts.map(p => p.dbm), trend = ewma(vals, 0.25);
+    const lo = Math.min(...vals, ...pts.map(p => p.env_lower)) - 1.5, hi = Math.max(...vals, ...pts.map(p => p.env_upper)) + 1.5;
+    const padT = big ? 16 : 8, padB = big ? 20 : 8, toY = (v) => h - padB - ((v - lo) / (hi - lo)) * (h - padT - padB);
+    const step = w / (pts.length - 1);
+    ctx.beginPath(); pts.forEach((p, i) => { const y = toY(p.env_upper); i ? ctx.lineTo(i * step, y) : ctx.moveTo(0, y); });
+    for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(i * step, toY(pts[i].env_lower));
+    ctx.closePath(); ctx.fillStyle = 'rgba(70,211,154,0.10)'; ctx.fill();
+    if (big) { ctx.fillStyle = C.faint; ctx.font = '10px ' + fontOf(); ctx.fillText(Math.round(hi) + ' dBm', 6, padT + 2); ctx.fillText(Math.round(lo) + ' dBm', 6, h - 6); }
+    ctx.beginPath(); vals.forEach((v, i) => { const y = toY(v); i ? ctx.lineTo(i * step, y) : ctx.moveTo(0, y); });
+    ctx.strokeStyle = 'rgba(166,174,187,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); trend.forEach((v, i) => { const y = toY(v); i ? ctx.lineTo(i * step, y) : ctx.moveTo(0, y); });
+    ctx.strokeStyle = C.good; ctx.lineWidth = big ? 2.4 : 2; ctx.lineJoin = 'round'; ctx.stroke();
+  }
+  async function pollSignal() {
+    if (document.hidden) return;
+    try {
+      const data = await (await fetch('/api/findmy/wifi/motion')).json();
+      if (data.status !== 'ok') return;
+      const lap = data.laptop || data; sig = lap;
+      const dbm = lap.current_dbm, thr = +lap.threshold || 1.5;
+      const word = dbm == null ? ['No signal', 'alert'] : dbm >= -60 ? ['Strong', 'good'] : dbm >= -70 ? ['Good', 'good'] : dbm >= -80 ? ['Fair', 'warn'] : ['Weak', 'alert'];
+      $('sigBadge').textContent = word[0]; $('sigBadge').className = 'badge ' + word[1];
+      $('sigRead').innerHTML = dbm == null ? 'Not connected to Wi-Fi'
+        : '<b>' + dbm + ' dBm</b><span class="sep">·</span>usually within <b>±' + thr.toFixed(1) + ' dB</b>';
+      const m = lap.mimo || {}, t = lap.target || {};
+      const kv = [];
+      if (t.ssid) kv.push(['Network', esc(t.ssid) + (t.freq ? ' · ' + (t.freq / 1000).toFixed(1) + ' GHz' : '')]);
+      if (lap.mean_dbm != null) kv.push(['Average', lap.mean_dbm + ' dBm']);
+      if (m.streams === 2 && m.ant1 != null) kv.push(['Each antenna', m.ant1 + ' / ' + m.ant2 + ' dBm']);
+      $('sigKv').innerHTML = kv.map(([k, v]) => '<dt>' + k + '</dt><dd>' + v + '</dd>').join('');
+      drawSignal();
+      $('conn').classList.add('live');
+    } catch (e) { $('conn').classList.remove('live'); }
   }
 
+  // ---------- Wi-Fi around (/api/findmy/wifi/spectrum, which also carries Same place) ----------
+  let seenBefore = null, missing = {};
+  function drawSpectrum() {
+    const c = fit('specCanvas'); if (!c) return; const { ctx, w, h, big } = c; ctx.clearRect(0, 0, w, h);
+    const mid = w * 0.42, padB = 16, top = big ? 16 : 8, dh = h - padB - top;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(mid, 6); ctx.lineTo(mid, h - 6); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = C.faint; ctx.font = '10px ' + fontOf(); ctx.fillText('2.4 GHz', 6, h - 4); ctx.fillText('5 GHz', mid + 8, h - 4);
+    if (!nets.length) { emptyNote(ctx, w, h, 'Scanning…'); return; }
+    const toY = (d) => h - padB - ((Math.max(-95, Math.min(-30, d)) + 95) / 65) * dh;
+    const labelled = [];
+    [...nets].sort((a, b) => a.dbm - b.dbm).forEach(ap => {
+      const b24 = (ap.freq || 0) < 3000;
+      const x = b24 ? 16 + ((Math.max(1, Math.min(14, ap.chan || 6)) - 1) / 13) * (mid - 32)
+                    : mid + 14 + (Math.max(0, Math.min(129, (ap.chan || 36) - 36)) / 129) * (w - mid - 28);
+      const y = toY(ap.dbm), col = ap.connected ? C.good : ap.shared ? '#ECEEF1' : b24 ? C.accent : C.sky;
+      ctx.beginPath(); ctx.moveTo(x, h - padB); ctx.lineTo(x, y); ctx.strokeStyle = col; ctx.globalAlpha = ap.connected ? 0.9 : 0.3;
+      ctx.lineWidth = ap.connected ? 2.2 : 1.3; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(x, y, ap.connected ? 4.6 : 3.2, 0, 7); ctx.fillStyle = col; ctx.fill();
+      if (big && ap.dbm > -70 && !labelled.some(p => Math.abs(p[0] - x) < 60 && Math.abs(p[1] - y) < 14)) {
+        labelled.push([x, y]); ctx.fillStyle = '#ECEEF1'; ctx.font = '10px ' + fontOf();
+        ctx.fillText((ap.ssid || 'hidden').slice(0, 12), Math.min(w - 70, Math.max(2, x - 20)), y - 8);
+      }
+    });
+  }
   async function pollSpectrum() {
     if (document.hidden) return;
     try {
-      const res = await fetch('/api/findmy/wifi/spectrum'); const data = await res.json();
+      const data = await (await fetch('/api/findmy/wifi/spectrum')).json();
       if (data.status !== 'ok') return;
-      specNetworks = data.networks || [];
-      drawSpectrum();
-      const totalNets = data.total || specNetworks.length;
-      $('specBadge').textContent = totalNets;
-
-      let maxDbm = -99;
-      specNetworks.forEach(n => { if (n.dbm > maxDbm) maxDbm = n.dbm; });
-      if (maxDbm <= -99) maxDbm = -38;
-      $('specRead').innerHTML = '<b>' + totalNets + ' networks</b><span class="sep">·</span>strongest <b>' + maxDbm + ' dBm</b>';
-
-      $('specList').innerHTML = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
-        '<dt>' + (n.connected ? '★ ' : '') + (n.ssid || 'Hidden') + '</dt><dd>' + n.dbm + ' dBm' + (n.shared ? ' · shared' : '') + '</dd>').join('');
+      nets = data.networks || [];
+      // A strong network that wasn't there before, or one gone from two scans in a row, is worth
+      // a line (a weak one hovering at the edge of range isn't).
+      const seen = {}; nets.forEach(n => { if (n.bssid) seen[n.bssid] = n; });
+      if (seenBefore) {
+        nets.forEach(n => { if (n.bssid && n.dbm > -70 && !seenBefore[n.bssid]) notice('net', (n.ssid || 'A hidden network') + ' appeared (' + n.dbm + ' dBm)'); });
+        Object.values(seenBefore).forEach(n => {
+          if (seen[n.bssid]) { delete missing[n.bssid]; return; }
+          missing[n.bssid] = (missing[n.bssid] || 0) + 1;
+          if (missing[n.bssid] === 2 && n.dbm > -70) notice('net', (n.ssid || 'A hidden network') + ' dropped out');
+        });
+        Object.keys(missing).forEach(b => { if (missing[b] >= 2) delete missing[b]; else if (!seen[b]) seen[b] = seenBefore[b]; });
+      }
+      seenBefore = seen;
+      const total = data.total || nets.length, strongest = nets.length ? Math.max(...nets.map(n => n.dbm)) : null;
+      $('specBadge').textContent = total + (total === 1 ? ' network' : ' networks');
+      $('specRead').innerHTML = (strongest != null ? 'strongest <b>' + strongest + ' dBm</b><span class="sep">·</span>' : '') +
+        '<b>' + (data.shared_count || 0) + '</b> the phone sees too';
+      $('specList').innerHTML = [...nets].sort((a, b) => b.dbm - a.dbm).slice(0, 8).map(n =>
+        '<dt>' + (n.connected ? 'Connected · ' : '') + esc(n.ssid || 'hidden') + '</dt><dd>' + n.dbm + ' dBm · ' + ((n.freq || 0) < 3000 ? '2.4' : '5') + ' GHz</dd>').join('');
       if (data.connected_ssid) $('connName').textContent = data.connected_ssid;
-
-      if ($('heroSsid')) {
-        $('heroSsid').textContent = data.connected_ssid || 'IISERTVM';
-      }
-
-      renderSamePlace(data.same_place);
-
-      if (!data.same_place || (!data.same_place.active && !data.same_place.phone_active)) {
-        triggerNearby(false);
-      }
+      drawSpectrum(); renderSamePlace(data.same_place);
     } catch (e) {}
   }
 
-  // ====================================================
-  // 3. Room map  (/api/findmy/wifi/clusters)
-  // ====================================================
+  // ---------- Wi-Fi map (/api/findmy/wifi/clusters) ----------
   let clusters = null;
   function drawRoom() {
-    const sc = initCanvas('roomCanvas'); if (!sc) return;
-    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
-    const big = height > 160, cx = width / 2, cy = height / 2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(cx, 8); ctx.lineTo(cx, height - 8); ctx.moveTo(8, cy); ctx.lineTo(width - 8, cy); ctx.stroke();
-    const enough = clusters && clusters.total_fingerprints >= 3 && clusters.clusters && clusters.clusters.length;
-    if (!enough) {
-      ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center';
-      ctx.fillText('Collecting Wi-Fi fingerprints…', cx, cy + 4); ctx.textAlign = 'start'; return;
-    }
-    const pts = clusters.clusters, lap = clusters.live_laptop, ph = clusters.live_phone;
-    let span = 10;
-    pts.forEach(p => { span = Math.max(span, Math.abs(p.x), Math.abs(p.y)); });
-    if (lap) span = Math.max(span, Math.abs(lap.x), Math.abs(lap.y));
-    if (ph) span = Math.max(span, Math.abs(ph.x), Math.abs(ph.y));
-    span *= 1.3;
-    const pad = big ? 30 : 16;
-    const sx = (x) => cx + (x / span) * (width / 2 - pad), sy = (y) => cy - (y / span) * (height / 2 - pad);
-    pts.forEach(p => { ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), big ? 4 : 3, 0, 7); ctx.fillStyle = 'rgba(160,174,187,0.28)'; ctx.fill(); });
+    const c = fit('roomCanvas'); if (!c) return; const { ctx, w, h, big } = c; ctx.clearRect(0, 0, w, h);
+    const ok = clusters && clusters.total_fingerprints >= 3 && clusters.clusters && clusters.clusters.length;
+    if (!ok) { emptyNote(ctx, w, h, 'Not enough saved spots yet'); return; }
+    const pts = clusters.clusters, lap = clusters.live_laptop, ph = clusters.live_phone, cx = w / 2, cy = h / 2;
+    let span = 10; pts.concat([lap, ph].filter(Boolean)).forEach(p => { span = Math.max(span, Math.abs(p.x), Math.abs(p.y)); });
+    span *= 1.25;
+    const pad = big ? 28 : 14, sx = (x) => cx + (x / span) * (w / 2 - pad), sy = (y) => cy - (y / span) * (h / 2 - pad);
+    pts.forEach(p => { ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), big ? 4 : 3, 0, 7); ctx.fillStyle = 'rgba(160,174,187,0.3)'; ctx.fill(); });
     if (lap && ph) { ctx.beginPath(); ctx.moveTo(sx(lap.x), sy(lap.y)); ctx.lineTo(sx(ph.x), sy(ph.y)); ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]); }
-    const dot = (p, col, r, label) => {
-      if (!p) return; const x = sx(p.x), y = sy(p.y);
+    const dot = (p, col, label) => {
+      if (!p) return; const x = sx(p.x), y = sy(p.y), r = big ? 7 : 5;
       ctx.beginPath(); ctx.arc(x, y, r + 5, 0, 7); ctx.fillStyle = col + '22'; ctx.fill();
       ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = col; ctx.strokeStyle = '#0A0C10'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
-      if (big) { ctx.fillStyle = '#ECEEF1'; ctx.font = '11px ' + fontOf(); ctx.fillText(label, x + 10, y + 3); }
+      if (big) { ctx.fillStyle = '#ECEEF1'; ctx.font = '11px ' + fontOf(); ctx.fillText(label, x + 11, y + 4); }
     };
-    dot(lap, GOOD, big ? 7 : 5, 'Laptop'); dot(ph, ACCENT, big ? 7 : 4, 'Phone');
+    dot(lap, C.good, 'Computer'); dot(ph, C.accent, 'Phone');
   }
-
   async function pollClusters() {
     if (document.hidden) return;
     try {
-      const res = await fetch('/api/findmy/wifi/clusters'); const data = await res.json();
+      const data = await (await fetch('/api/findmy/wifi/clusters')).json();
       if (data.status !== 'ok') return;
       clusters = data; drawRoom();
       const spots = data.total_fingerprints || 0;
       $('roomBadge').textContent = spots + (spots === 1 ? ' spot' : ' spots');
-      if (spots < 3) { $('roomRead').textContent = 'Not enough saved spots yet — move around with location sharing on.'; return; }
-      if (data.live_laptop && data.live_phone) {
-        const d = Math.hypot(data.live_laptop.x - data.live_phone.x, data.live_laptop.y - data.live_phone.y);
-        const same = d < 18;
-        $('roomRead').innerHTML = (same ? '<b style="color:var(--good)">Same area</b>' : '<b>Different area</b>') + '<span class="sep">·</span>' + spots + ' spots mapped';
-      } else {
-        $('roomRead').textContent = spots + ' spots mapped · waiting for a phone reading';
-      }
+      $('roomRead').textContent = spots < 3 ? 'It fills in as the phone reports from different places.'
+        : data.live_phone ? 'Showing where the computer and phone fit now' : 'Showing where the computer fits now';
     } catch (e) {}
   }
 
-  // ====================================================
-  // 4. Link latency  (/api/findmy/p2p/ping)
-  // ====================================================
-  let linkHist = [], lastRtt = null, seq = 0, sent = 0, ok = 0;
+  // ---------- Phone link (only from the phone) ----------
+  const rtts = []; let linkSlow = false;
   function drawLink() {
-    const sc = initCanvas('linkCanvas'); if (!sc) return;
-    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
-    const big = height > 160, padB = big ? 22 : 9, top = 10, dh = height - padB - top;
-    if (!linkHist.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Pinging…', width / 2, height / 2); ctx.textAlign = 'start'; return; }
-    const pts = linkHist.slice(big ? -50 : -40), hi = Math.max(10, Math.max.apply(null, pts) * 1.2), step = width / Math.max(pts.length - 1, 1);
-    const toY = (v) => height - padB - (v / hi) * dh;
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
-    (big ? [10, 25, 50] : [hi / 2]).forEach(v => { if (v < hi) { const y = toY(v); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); if (big) { ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf(); ctx.fillText(v + ' ms', 6, y - 4); } } });
-    ctx.beginPath(); pts.forEach((v, i) => { const x = i * step, y = toY(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fillStyle = 'rgba(253,186,116,0.08)'; ctx.fill();
-    ctx.beginPath(); pts.forEach((v, i) => { const x = i * step, y = toY(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.strokeStyle = WARN; ctx.lineWidth = big ? 2.2 : 1.8; ctx.lineJoin = 'round'; ctx.stroke();
-    const lx = (pts.length - 1) * step, ly = toY(pts[pts.length - 1]); ctx.beginPath(); ctx.arc(lx, ly, big ? 4 : 3.2, 0, 7); ctx.fillStyle = WARN; ctx.fill();
+    if (!showLink) return;
+    const c = fit('linkCanvas'); if (!c) return; const { ctx, w, h, big } = c; ctx.clearRect(0, 0, w, h);
+    if (rtts.length < 2) { emptyNote(ctx, w, h, 'Measuring…'); return; }
+    const pts = rtts.slice(-60), tr = ewma(pts, 0.25), hi = Math.max(10, ...pts) * 1.15, step = w / (pts.length - 1);
+    const toY = (v) => h - 8 - (v / hi) * (h - 16);
+    if (big) { ctx.fillStyle = C.faint; ctx.font = '10px ' + fontOf(); ctx.fillText(Math.round(hi) + ' ms', 6, 14); }
+    ctx.beginPath(); pts.forEach((v, i) => { const y = toY(v); i ? ctx.lineTo(i * step, y) : ctx.moveTo(0, y); });
+    ctx.strokeStyle = 'rgba(166,174,187,0.45)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); tr.forEach((v, i) => { const y = toY(v); i ? ctx.lineTo(i * step, y) : ctx.moveTo(0, y); });
+    ctx.strokeStyle = C.warn; ctx.lineWidth = big ? 2.4 : 2; ctx.lineJoin = 'round'; ctx.stroke();
   }
-
   async function pingLink() {
-    if (document.hidden) return;
-    const t0 = performance.now(); seq++; sent++;
+    if (document.hidden || !showLink) return;
+    const t0 = performance.now();
     try {
-      const res = await fetch('/api/findmy/p2p/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: Date.now() / 1000, seq }) });
-      const data = await res.json();
-      if (data.status !== 'ok') return;
-      ok++;
-      const rtt = Math.max(0.1, +(performance.now() - t0).toFixed(1));
-      const jit = lastRtt != null ? Math.abs(rtt - lastRtt) : 0; lastRtt = rtt;
-      linkHist.push(rtt); if (linkHist.length > 120) linkHist.shift();
+      const d = await (await fetch('/api/findmy/p2p/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: Date.now() / 1000 }) })).json();
+      if (d.status !== 'ok') return;
+      rtts.push(+(performance.now() - t0).toFixed(1)); if (rtts.length > 120) rtts.shift();
+      const tr = ewma(rtts, 0.25), now = tr[tr.length - 1], base = Math.min(...tr.slice(-40));
+      const slow = tr.length > 20 && now > base * 2 + 15;
+      if (slow !== linkSlow) notice('link', slow ? 'The connection to the computer is slowing down' : 'The connection is back to normal');
+      linkSlow = slow;
+      $('linkBadge').textContent = slow ? 'Slow' : 'Steady'; $('linkBadge').className = 'badge ' + (slow ? 'warn' : 'good');
+      $('linkRead').innerHTML = '<b>' + now.toFixed(0) + ' ms</b> round trip<span class="sep">·</span>range ' +
+        Math.min(...rtts.slice(-30)).toFixed(0) + '–' + Math.max(...rtts.slice(-30)).toFixed(0) + ' ms';
       drawLink();
-      const steady = jit < 8;
-      $('linkBadge').textContent = steady ? 'Steady' : 'Jumpy'; $('linkBadge').className = 'badge ' + (steady ? 'good' : 'alert');
-      $('linkRead').innerHTML = '<b>' + rtt.toFixed(1) + ' ms round trip</b><span class="sep">·</span>' + (steady ? 'steady' : 'jumpy');
-      const recent = linkHist.slice(-30);
-      $('lRange').textContent = Math.min.apply(null, recent).toFixed(1) + ' – ' + Math.max.apply(null, recent).toFixed(1) + ' ms';
-      $('lSeq').textContent = seq;
     } catch (e) {}
   }
 
-  // ====================================================
-  // lifecycle — native WifiLabActivity calls start/stop
-  // ====================================================
+  // ---------- lifecycle (the native WifiLabActivity calls start/stop) ----------
   let timers = [], active = false;
-  function refreshAll() { triggerNearby(false); pollMotion(); pollSpectrum(); pollClusters(); pingLink(); }
   function startAllPolling() {
-    if (active) return; active = true; triggerNearby(true); refreshAll();
-    timers = [ setInterval(pollMotion, 800), setInterval(pingLink, 1200), setInterval(pollSpectrum, 4000), setInterval(pollClusters, 4000) ];
+    if (active) return; active = true;
+    pollSignal(); pollSpectrum(); pollClusters(); pingLink();
+    timers = [setInterval(pollSignal, 1000), setInterval(pollSpectrum, 5000), setInterval(pollClusters, 10000),
+              setInterval(pingLink, 1500), setInterval(renderFeed, 10000)];
   }
   function stopAllPolling() { active = false; timers.forEach(clearInterval); timers = []; }
   window.startAllPolling = startAllPolling;
   window.stopAllPolling = stopAllPolling;
-
   document.addEventListener('visibilitychange', () => { document.hidden ? stopAllPolling() : startAllPolling(); });
   window.addEventListener('pagehide', stopAllPolling);
   window.addEventListener('pageshow', startAllPolling);
   window.addEventListener('resize', redrawAll);
-
   redrawAll();
   startAllPolling();
 </script>

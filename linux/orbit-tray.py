@@ -1815,7 +1815,7 @@ class OverviewPage(QWidget):
 
 
 # ==========================================
-# Find my page: who tried to get in, the phone's Find my buttons, this computer's settings
+# Locator page: who tried to get in, the phone's Locate buttons, this computer's settings
 # ==========================================
 
 def fetch_bytes(endpoint, timeout=8):
@@ -1998,7 +1998,7 @@ class PhotoDialog(QDialog):
         self.accept()
 
 
-class FindMyPage(QWidget):
+class LocatorPage(QWidget):
     TILE_STEP = 214              # a photo card and the gap after it
 
     def __init__(self, ctl, win, parent=None):
@@ -2010,7 +2010,6 @@ class FindMyPage(QWidget):
         self._tiles = {}
         self._cols_now = 0
         self._busy = False
-        self._nearby_until = 0.0
         self._build()
         ctl.state.changed.connect(self._on_state)
         self.timer = QTimer(self)
@@ -2048,7 +2047,7 @@ class FindMyPage(QWidget):
         row.setSpacing(12)
         row.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Your phone: the phone app's Find my buttons
+        # Your phone: the phone app's Locate buttons
         ph = Card()
         ph.lay.addWidget(label("Your phone", "title"))
         g = QGridLayout()
@@ -2057,12 +2056,10 @@ class FindMyPage(QWidget):
         self.t_map.clicked.connect(self.ctl.open_find_my)
         self.t_ring = ActionTile('bell', C.RING, "Play sound", "Even on silent")
         self.t_ring.clicked.connect(self.win.toggle_ring)
-        self.t_near = ActionTile('radio', C.ONLINE, "Nearby", "Same place as you?")
-        self.t_near.clicked.connect(self.toggle_nearby)
         self.t_lab = ActionTile('activity', C.CLIP, "Wi-Fi Lab", "Signals, movement")
         self.t_lab.clicked.connect(self.open_wifilab)
-        for i, t in enumerate((self.t_map, self.t_ring, self.t_near, self.t_lab)):
-            g.addWidget(t, i // 2, i % 2)
+        for i, t in enumerate((self.t_map, self.t_ring, self.t_lab)):
+            g.addWidget(t, i, 0)
         ph.lay.addLayout(g)
         ph.lay.addStretch()
         row.addWidget(ph, 1)
@@ -2100,9 +2097,6 @@ class FindMyPage(QWidget):
         self.lost_tile = r.itemAt(0).widget()
         cc.lay.addLayout(r)
         cc.lay.addStretch()
-        lb = button("Lock now", 'lock')
-        lb.clicked.connect(self.lock_now)
-        cc.lay.addWidget(lb, 0, Qt.AlignmentFlag.AlignLeft)
         row.addWidget(cc, 1)
         lay.addLayout(row)
 
@@ -2158,9 +2152,6 @@ class FindMyPage(QWidget):
             self.lost_desc.setText("If it goes missing, mark it lost from your phone")
             self.lost_tile.set_icon('alert', C.T3)
         phone = res.get('phone') or {}
-        near = phone.get('nearby') or {}
-        if time.time() < self._nearby_until:
-            self.t_near.set_text("Nearby: " + (near.get('word') or "comparing Wi-Fi…"), "Click to stop")
         events = [e for e in (phone.get('events') or [])]
         events += [dict(a, kind='laptop_wrong_password') for a in (lap.get('alerts') or [])
                    if a.get('kind') == 'wrong_password']
@@ -2256,27 +2247,9 @@ class FindMyPage(QWidget):
                                     str((res or {}).get('message') or (res or {}).get('error') or "No answer"))
         run_async(lambda: post_json("/api/findmy/settings", {key: on}), done)
 
-    def toggle_nearby(self):
-        on = time.time() >= self._nearby_until
-        self._nearby_until = time.time() + 180 if on else 0.0
-        self.t_near.set_text("Nearby: comparing Wi-Fi…" if on else "Nearby",
-                             "Click to stop" if on else "Same place as you?")
-        run_async(lambda: post_json("/api/findmy/phone/nearby", {"on": on}))
-        if on:
-            for s in (4, 9, 15, 25, 40, 60):
-                QTimer.singleShot(s * 1000, self.refresh)
-            QTimer.singleShot(181000, self._nearby_done)
-
-    def _nearby_done(self):
-        if time.time() >= self._nearby_until:
-            self.t_near.set_text("Nearby", "Same place as you?")
-
     def open_wifilab(self):
         subprocess.Popen(["xdg-open", f"{DAEMON_URL}/wifilab"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def lock_now(self):
-        subprocess.Popen(["loginctl", "lock-session"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def set_ringing(self, on):
         self.t_ring.set_text("Stop sound" if on else "Play sound",
@@ -2284,11 +2257,7 @@ class FindMyPage(QWidget):
 
     def _on_state(self, s):
         conn = bool(s.get('connected'))
-        for t in (self.t_ring, self.t_near):
-            t.setEnabled(conn)
-        if not conn and time.time() < self._nearby_until:
-            self._nearby_until = 0.0
-            self._nearby_done()
+        self.t_ring.setEnabled(conn)
 
 
 # ==========================================
@@ -2337,7 +2306,7 @@ class OrbitWindow(QMainWindow):
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         for i, (text, icon) in enumerate((("Overview", 'grid'), ("Files", 'folder'), ("Send", 'send'),
-                                          ("Find my", 'shield'))):
+                                          ("Locator", 'shield'))):
             b = QPushButton(f"  {text}")
             b.setObjectName("Nav")
             b.setCheckable(True)
@@ -2394,8 +2363,8 @@ class OrbitWindow(QMainWindow):
         self.overview = OverviewPage(self.ctl, self)
         self.files = FilesPage(self.ctl)
         self.send = SendPage(self.ctl)
-        self.findmy = FindMyPage(self.ctl, self)
-        for p in (self.overview, self.files, self.send, self.findmy):
+        self.locator = LocatorPage(self.ctl, self)
+        for p in (self.overview, self.files, self.send, self.locator):
             self.stack.addWidget(p)
         cl.addWidget(self.stack, 1)
         h.addWidget(content, 1)
@@ -2410,7 +2379,7 @@ class OrbitWindow(QMainWindow):
             self._files_loaded = True
             self.files.load_directory(self.files.current_path, record_history=False)
         if idx == 3:
-            self.findmy.refresh()
+            self.locator.refresh()
 
     def present(self, page=None):
         if page is not None:
@@ -2431,7 +2400,7 @@ class OrbitWindow(QMainWindow):
         self.h_ring.setIcon(line_icon('bell-off' if on else 'bell', C.DANGER if on else C.RING, 18))
         self.h_ring.setProperty("kind", "danger" if on else None)
         repolish(self.h_ring)
-        self.findmy.set_ringing(on)
+        self.locator.set_ringing(on)
 
     def update_header(self, s):
         if not s['service']:
@@ -2735,8 +2704,8 @@ class OrbitApp:
             self.open_explorer()
         elif c == 'show':
             self.show_phone_info()
-        elif c == 'findmy':
-            self.open_find_my_page()
+        elif c == 'locator':
+            self.open_locator()
         elif c == 'send':
             self.ensure_window().present(2)
             self.window.send.send_paths(cmd.get('files') or [])
@@ -2762,15 +2731,15 @@ class OrbitApp:
     def open_explorer(self):
         self.ensure_window().present(1)
 
-    def open_find_my_page(self):
+    def open_locator(self):
         self.ensure_window().present(3)
 
     def open_find_my(self):
-        """The Find my phone map, in the browser (the key becomes a local-only cookie there)."""
+        """The phone's map, in the browser (the key becomes a local-only cookie there)."""
         from urllib.parse import quote
         tok = local_token()
         if not tok:
-            notify("Find my phone", "The Orbit service isn't running.")
+            notify("Locator", "The Orbit service isn't running.")
             return
         subprocess.Popen(["xdg-open", f"{DAEMON_URL}/findmy?ltok={quote(tok)}"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2797,8 +2766,8 @@ class OrbitApp:
         self.act_browse = self.menu.addAction("Browse phone files", self.open_explorer)
         self.act_clip = self.menu.addAction("Send clipboard to phone", self.sync_clipboard)
         self.act_ring = self.menu.addAction("Ring phone", self._toggle_ring)
-        self.menu.addAction("Find my phone", self.open_find_my)
-        self.menu.addAction("Who tried to get in", self.open_find_my_page)
+        self.menu.addAction("Locate phone", self.open_find_my)
+        self.menu.addAction("Who tried to get in", self.open_locator)
         # Orbit Cam's format, one at a time: Sharp suits current apps; Raw and Compatible are for
         # an app that doesn't see the camera or shows a broken picture
         self.cam_menu = self.menu.addMenu("Orbit Cam")
@@ -2953,8 +2922,8 @@ class OrbitApp:
             self.open_explorer()
         elif self.args.show:
             self.show_phone_info()
-        elif self.args.findmy:
-            self.open_find_my_page()
+        elif self.args.locator:
+            self.open_locator()
         if self.args.send:
             self.handle_command({'cmd': 'send', 'files': [os.path.abspath(p) for p in self.args.send]})
         return self.app.exec()
@@ -3008,12 +2977,12 @@ def selftest(args):
     if args.screenshot:
         base, ext = os.path.splitext(args.screenshot)
         ext = ext or ".png"
-        for i, name in enumerate(("overview", "files", "send", "findmy")):
+        for i, name in enumerate(("overview", "files", "send", "locator")):
             win.show_page(i)
-            deadline = time.time() + (3.0 if name == "findmy" else 0)
+            deadline = time.time() + (3.0 if name == "locator" else 0)
             for _ in range(5):
                 app.processEvents()
-            while time.time() < deadline:          # Find my loads its photos in the background
+            while time.time() < deadline:          # Locator loads its photos in the background
                 app.processEvents()
                 time.sleep(0.02)
             win.grab().save(f"{base}-{name}{ext}")
@@ -3036,7 +3005,7 @@ def parse_args():
                                 description="Orbit: tray app and dashboard for your phone.")
     p.add_argument("--browse", action="store_true", help="open the phone file browser")
     p.add_argument("--show", action="store_true", help="open the overview window")
-    p.add_argument("--findmy", action="store_true", help="open Find my: who tried to get in, and its settings")
+    p.add_argument("--locator", action="store_true", help="open Locator: who tried to get in, and its settings")
     p.add_argument("--send", nargs="+", metavar="FILE", help="send files to the phone")
     p.add_argument("--selftest", action="store_true",
                    help="build all windows offscreen, load live status once, print a report and exit")
@@ -3058,8 +3027,8 @@ def main():
             cmd = {'cmd': 'browse'}
         elif args.show:
             cmd = {'cmd': 'show'}
-        elif args.findmy:
-            cmd = {'cmd': 'findmy'}
+        elif args.locator:
+            cmd = {'cmd': 'locator'}
         if cmd and forward_to_running(cmd):
             print("[INFO] Orbit is already running; passed the request to it.")
         else:

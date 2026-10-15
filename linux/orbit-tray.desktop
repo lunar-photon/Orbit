@@ -11,12 +11,12 @@ Keywords=phone;android;files;send;ring;clipboard;
 StartupWMClass=orbit-tray
 X-KDE-autostart-after=panel
 X-GNOME-Autostart-enabled=true
-Actions=browse;findmy;
+Actions=browse;locator;
 
 [Desktop Action browse]
 Name=Browse phone files
 Exec=orbit-tray --browse
 
-[Desktop Action findmy]
+[Desktop Action locator]
 Name=Who tried to get in
-Exec=orbit-tray --findmy
+Exec=orbit-tray --locator
