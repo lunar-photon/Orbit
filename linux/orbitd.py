@@ -5035,8 +5035,18 @@ class WifiMotionMonitor:
     """Monitors line-of-sight Fresnel-zone signal variance to detect human motion tripwire."""
     def __init__(self):
         self.lock = threading.Lock()
-        self.history = collections.deque(maxlen=30)  # last 15 seconds (sampled every 500ms)
+        self.history = collections.deque(maxlen=60)  # last 15 seconds (sampled every 250ms)
+        self.mimo_history = collections.deque(maxlen=60)
         self.current_signal = None
+        self.mimo_ant1 = None
+        self.mimo_ant2 = None
+        self.mimo_delta = 0
+        self.mimo_delta_variance = 0.0
+        self.desk_presence_state = "quiet"
+        self.last_desk_motion_ts = 0.0
+        self.last_link_cache_ts = 0.0
+        self.inactive_ms = 0
+        self.tx_retries = 0
         self.connected_ssid = ""
         self.connected_bssid = ""
         self.connected_freq = 0.0
@@ -5250,40 +5260,138 @@ class WifiMotionMonitor:
                 return
         self.feed_phone_sample(val, ssid=label)
 
+    def is_desk_occupied(self):
+        with self.lock:
+            if self.current_signal is None or self.last_desk_motion_ts == 0.0:
+                return False
+            return (time.time() - self.last_desk_motion_ts) < 30.0
+
+    def desk_presence(self):
+        with self.lock:
+            now = time.time()
+            occupied = (now - self.last_desk_motion_ts) < 30.0 if self.last_desk_motion_ts > 0 else False
+            return {
+                'occupied': occupied,
+                'state': self.desk_presence_state,
+                'ant1_dbm': self.mimo_ant1,
+                'ant2_dbm': self.mimo_ant2,
+                'delta_db': self.mimo_delta,
+                'delta_variance': self.mimo_delta_variance,
+                'inactive_ms': self.inactive_ms,
+                'tx_retries': self.tx_retries,
+                'age': round(now - self.last_desk_motion_ts, 1) if self.last_desk_motion_ts > 0 else 999.0
+            }
+
     def _loop(self):
         while True:
             try:
                 iface = _wifi_interface()
-                out = subprocess.run(['iw', 'dev', iface, 'link'], capture_output=True, text=True, timeout=2).stdout
-                m_sig = re.search(r'signal:\s*(-?\d+)\s*dBm', out)
-                m_ssid = re.search(r'SSID:\s*([^\n]+)', out)
-                m_freq = re.search(r'freq:\s*([0-9.]+)', out)
-                m_bssid = re.search(r'Connected to\s*([0-9a-f:]{17})', out, re.I)
                 now = time.time()
-                with self.lock:
-                    if m_sig:
-                        sig = int(m_sig.group(1))
+
+                # Refresh SSID and frequency periodically or on initial run
+                if (now - self.last_link_cache_ts > 5.0) or not self.connected_ssid:
+                    try:
+                        link_out = subprocess.run(['iw', 'dev', iface, 'link'], capture_output=True, text=True, timeout=2).stdout
+                        m_ssid = re.search(r'SSID:\s*([^\n]+)', link_out)
+                        m_freq = re.search(r'freq:\s*([0-9.]+)', link_out)
+                        m_bssid = re.search(r'Connected to\s*([0-9a-f:]{17})', link_out, re.I)
+                        with self.lock:
+                            if m_ssid: self.connected_ssid = m_ssid.group(1).strip()
+                            if m_freq: self.connected_freq = float(m_freq.group(1))
+                            if m_bssid: self.connected_bssid = m_bssid.group(1).lower()
+                            self.last_link_cache_ts = now
+                    except Exception:
+                        pass
+
+                # High-speed kernel nl80211 station dump for MIMO dual-antenna metrics (~2ms)
+                out = subprocess.run(['iw', 'dev', iface, 'station', 'dump'], capture_output=True, text=True, timeout=2).stdout
+                m_sig = re.search(r'signal:\s*(-?\d+)(?:\s*\[(-?\d+),\s*(-?\d+)\])?\s*dBm', out)
+                m_inact = re.search(r'inactive time:\s*(\d+)\s*ms', out)
+                m_retries = re.search(r'tx retries:\s*(\d+)', out)
+                m_bssid_dump = re.search(r'Station\s+([0-9a-f:]{17})', out, re.I)
+
+                # Fallback to link if station dump is empty (e.g. non-station interface)
+                if not m_sig:
+                    fallback_out = subprocess.run(['iw', 'dev', iface, 'link'], capture_output=True, text=True, timeout=2).stdout
+                    m_sig = re.search(r'signal:\s*(-?\d+)\s*dBm', fallback_out)
+                    m_inact = None
+                    m_retries = None
+
+                if m_sig:
+                    sig = int(m_sig.group(1))
+                    if m_sig.lastindex and m_sig.lastindex >= 3 and m_sig.group(2) and m_sig.group(3):
+                        ant1 = int(m_sig.group(2))
+                        ant2 = int(m_sig.group(3))
+                    else:
+                        ant1 = sig
+                        ant2 = sig
+                    delta = ant1 - ant2
+                    inact = int(m_inact.group(1)) if m_inact else 0
+                    retries = int(m_retries.group(1)) if m_retries else 0
+
+                    with self.lock:
                         self.current_signal = sig
-                        self.connected_ssid = m_ssid.group(1).strip() if m_ssid else ""
-                        self.connected_freq = float(m_freq.group(1)) if m_freq else 0.0
-                        self.connected_bssid = m_bssid.group(1).lower() if m_bssid else ""
+                        self.mimo_ant1 = ant1
+                        self.mimo_ant2 = ant2
+                        self.mimo_delta = delta
+                        self.inactive_ms = inact
+                        self.tx_retries = retries
+                        if m_bssid_dump:
+                            self.connected_bssid = m_bssid_dump.group(1).lower()
+
                         self.history.append((now, sig))
+                        self.mimo_history.append((now, sig, ant1, ant2, delta))
 
                         vals = [s for _, s in self.history]
+                        deltas = [d for _, _, _, _, d in self.mimo_history]
+
+                        if len(deltas) >= 4:
+                            d_recent = deltas[-15:]
+                            d_mean = sum(d_recent) / len(d_recent)
+                            d_var = round(math.sqrt(sum((x - d_mean) ** 2 for x in d_recent) / len(d_recent)), 2)
+                            d_spike = round(abs(delta - d_mean), 2)
+                            self.mimo_delta_variance = d_var
+                        else:
+                            d_var = 0.0
+                            d_spike = 0.0
+                            self.mimo_delta_variance = 0.0
+
                         if len(vals) >= 4:
                             base_mean = sum(vals) / len(vals)
                             threshold = 1.8
                             spike = round(abs(sig - base_mean), 2)
-                            recent = vals[-10:]
+                            recent = vals[-15:]
                             rec_mean = sum(recent) / len(recent)
                             variance = round(math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent)), 2)
 
-                            is_disturbed = (spike > threshold) or (variance > threshold)
-                            if is_disturbed:
+                            # Physical RF dielectric scattering trigger (spatial delta ripple or main path ripple)
+                            rf_motion = (spike > threshold) or (variance > threshold) or (d_spike > 1.2) or (d_var > 0.45)
+
+                            # Session activity check
+                            user_active = False
+                            try:
+                                sess = graphical_session()
+                                if sess:
+                                    out_idle = subprocess.run(['loginctl', 'show-session', sess, '-p', 'IdleHint'],
+                                                              capture_output=True, text=True, timeout=1).stdout
+                                    if 'IdleHint=no' in out_idle:
+                                        user_active = True
+                            except Exception:
+                                pass
+
+                            if rf_motion or user_active:
+                                self.last_desk_motion_ts = now
+                                self.desk_presence_state = "occupied"
+                            elif (now - self.last_desk_motion_ts) < 30.0:
+                                self.desk_presence_state = "occupied"
+                            else:
+                                self.desk_presence_state = "vacated"
+
+                            if rf_motion:
                                 if self.active_event and (now - self.last_disturbance_time < 3.0):
-                                    self.active_event['peak_spike'] = max(self.active_event['peak_spike'], spike)
+                                    self.active_event['peak_spike'] = max(self.active_event['peak_spike'], max(spike, d_spike))
                                     self.active_event['duration'] = round(now - self.active_event['start_time'], 1)
-                                    self.active_event['variance'] = max(self.active_event['variance'], variance)
+                                    self.active_event['variance'] = max(self.active_event['variance'], max(variance, d_var))
                                     self.active_event['end_time'] = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
                                 else:
                                     self.event_counter += 1
@@ -5292,19 +5400,22 @@ class WifiMotionMonitor:
                                     ev = {
                                         'id': self.event_counter,
                                         'source': 'laptop',
-                                        'zone': 'Room',
+                                        'zone': 'Desk Radar' if (d_spike > 1.0 or d_var > 0.35) else 'Room',
                                         'timestamp': now,
                                         'start_time': now,
                                         'time': t_str,
                                         'date': d_str,
-                                        'spike': spike,
-                                        'peak_spike': spike,
+                                        'spike': round(max(spike, d_spike), 2),
+                                        'peak_spike': round(max(spike, d_spike), 2),
                                         'dbm': sig,
+                                        'ant1': ant1,
+                                        'ant2': ant2,
+                                        'delta': delta,
                                         'baseline': round(base_mean, 1),
                                         'threshold': threshold,
-                                        'variance': variance,
+                                        'variance': round(max(variance, d_var), 2),
                                         'ssid': self.connected_ssid or 'Wi-Fi (Laptop)',
-                                        'duration': 0.5
+                                        'duration': 0.25
                                     }
                                     self.active_event = ev
                                     self.events.append(ev)
@@ -5316,7 +5427,7 @@ class WifiMotionMonitor:
                                     self.active_event = None
             except Exception:
                 pass
-            time.sleep(0.5)
+            time.sleep(0.25)
 
     def status(self):
         with self.lock:
@@ -5337,12 +5448,12 @@ class WifiMotionMonitor:
                 max_spike = 0.0
                 hist = [{'t': t, 'dbm': s, 'env_upper': cur_sig + threshold, 'env_lower': cur_sig - threshold, 'spike': 0.0, 'is_spike': False} for t, s in self.history]
             else:
-                recent = vals[-10:]
+                recent = vals[-15:]
                 mean = sum(recent) / len(recent)
                 variance = math.sqrt(sum((x - mean) ** 2 for x in recent) / len(recent))
                 base_mean = sum(vals) / len(vals)
                 baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
-                motion = bool((abs(cur_sig - base_mean) > threshold) or (variance > threshold))
+                motion = bool((abs(cur_sig - base_mean) > threshold) or (variance > threshold) or (self.mimo_delta_variance > 0.45))
                 spike = round(abs(cur_sig - base_mean), 2)
                 max_spike = round(max(abs(x - base_mean) for x in vals), 2)
                 hist = []
@@ -5356,6 +5467,18 @@ class WifiMotionMonitor:
                         'spike': pt_spike,
                         'is_spike': pt_spike > threshold
                     })
+
+            mimo_summary = {
+                'ant1': self.mimo_ant1,
+                'ant2': self.mimo_ant2,
+                'delta': self.mimo_delta,
+                'delta_variance': self.mimo_delta_variance,
+                'inactive_ms': self.inactive_ms,
+                'retries': self.tx_retries,
+                'occupied': (now - self.last_desk_motion_ts) < 30.0 if self.last_desk_motion_ts > 0 else False,
+                'state': self.desk_presence_state,
+                'streams': 2 if (self.mimo_ant1 is not None and self.mimo_ant2 is not None) else 1
+            }
 
             laptop_status = {
                 'source': 'laptop',
@@ -5377,7 +5500,8 @@ class WifiMotionMonitor:
                 'events': laptop_events,
                 'last_event': last_ev,
                 'total_events': len(laptop_events),
-                'log_path': self.log_file
+                'log_path': self.log_file,
+                'mimo': mimo_summary
             }
 
             # Phone telemetry evaluation (active only while phone has lab open in foreground)
@@ -5487,7 +5611,8 @@ class WifiMotionMonitor:
                 'target': laptop_status['target'],
                 'last_event': last_ev,
                 'total_events': len(laptop_events),
-                'log_path': self.log_file
+                'log_path': self.log_file,
+                'mimo': mimo_summary
             }
 
 
@@ -5653,6 +5778,7 @@ def wifi_spectrum_data():
         'bluetooth_distance': ble_m,
         'bluetooth_dbm': ble_reading.get('dbm') if ble_reading else None,
         'bluetooth_age': ble_reading.get('age') if ble_reading else None,
+        'desk_presence': WIFI_MOTION.desk_presence(),
         'signal_gap': round(signal_gap, 1) if signal_gap is not None else None,
         'shared_count': len(common_aps),
         'strong_count': strong_count,
@@ -6155,6 +6281,11 @@ class WalkAway:
             self.far = 0
             return False
 
+        # Laptop Wi-Fi MIMO desk radar: if user is physically seated at desk, do not consider away
+        if WIFI_MOTION.is_desk_occupied():
+            self.far = 0
+            return False
+
         # If confirmed far away by coordinates/fingerprint (> 50m) and Bluetooth is silent:
         apart = NEARBY.get('apart')
         if apart is not None and apart > 50:
@@ -6194,9 +6325,13 @@ class WalkAway:
                 if not self.away():
                     continue
 
-                # Extra proximity safeguard: if Bluetooth is heard, do not lock
+                # Extra proximity safeguard: if Bluetooth is heard or desk is occupied, do not lock
                 ble = ORBIT_BLE.phone_reading()
                 if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+                    self.far = 0
+                    continue
+
+                if WIFI_MOTION.is_desk_occupied():
                     self.far = 0
                     continue
 

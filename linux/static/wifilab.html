@@ -224,15 +224,23 @@
       <span class="badge good" id="motionBadge">Quiet</span>
     </div>
     <canvas class="viz" id="motionCanvas"></canvas>
-    <div class="legend"><span><i style="background:#46D39A"></i> raw</span><span><i style="background:#8EA8FF"></i> smoothed</span></div>
+    <div class="legend"><span><i style="background:#46D39A"></i> raw</span><span><i style="background:#8EA8FF"></i> smoothed</span><span style="margin-left:auto;color:var(--text-3);display:flex;align-items:center;gap:4px;"><i style="background:#a78bfa"></i> 2x2 MIMO</span></div>
     <div class="read" id="motionRead">Room <b>quiet</b></div>
+    <div class="mimo-strip" id="mimoStrip" style="margin-top:9px;padding:7px 11px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.05);border-radius:8px;font-size:11.5px;color:var(--text-2);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span style="display:flex;align-items:center;gap:6px;">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#a78bfa;" id="mimoDot"></span>
+        <span id="mimoTitle" style="color:var(--text-3)">RF Radar</span>
+      </span>
+      <span id="mimoAnts" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-0.2px">Ant 1: -- · Ant 2: -- · Δ -- dB</span>
+      <span class="badge calm" id="deskRadarBadge" style="font-size:10px;padding:2px 7px;">Desk</span>
+    </div>
     <details>
       <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Disturbance log <span id="logCount" style="color:var(--text-3)"></span>
         <span class="log-tools"><a href="/api/findmy/wifi/motion/log?format=text" target="_blank" onclick="event.stopPropagation()">Raw</a><button type="button" onclick="clearMotionLog(event)">Clear</button></span>
       </summary>
       <div class="body">
         <div class="log" id="logRows"><div class="log-empty">Nothing stirred in the last 30 days.</div></div>
-        <p style="margin:11px 0 0">A person moving nearby subtly changes how Wi-Fi bounces. Orbit watches the connected router for the room, and the phone's own reading for the few metres around it.</p>
+        <p style="margin:11px 0 0">A person moving nearby subtly changes how Wi-Fi bounces. Orbit uses the laptop's Intel 2x2 MIMO antennas as a differential RF radar: physical presence at the desk causes micro-scattering between Antenna 1 and 2, keeping the PC unlocked while seated and locking instantly when vacated.</p>
       </div>
     </details>
   </section>
@@ -429,6 +437,19 @@
         : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'moving' : 'calm') + '</b>';
       $('motionRead').innerHTML = roomTxt + vicTxt;
 
+      const mimo = (lap && lap.mimo) || data.mimo || null;
+      if (mimo && $('mimoAnts')) {
+        const a1 = mimo.ant1 != null ? (mimo.ant1 + ' dBm') : '--';
+        const a2 = mimo.ant2 != null ? (mimo.ant2 + ' dBm') : '--';
+        const d = mimo.delta != null ? ((mimo.delta > 0 ? '+' : '') + mimo.delta + ' dB') : '--';
+        $('mimoAnts').textContent = 'Ant 1: ' + a1 + ' · Ant 2: ' + a2 + ' · Δ ' + d;
+        if ($('deskRadarBadge')) {
+          const occ = !!mimo.occupied;
+          $('deskRadarBadge').textContent = occ ? 'Desk occupied' : 'Desk empty';
+          $('deskRadarBadge').className = 'badge ' + (occ ? 'good' : 'calm');
+        }
+      }
+
       if ($('heroSsid') && lap.ssid) $('heroSsid').textContent = lap.ssid;
       if ($('heroHeadline')) {
         if (roomMoving) {
@@ -547,6 +568,9 @@
     if (bleDist) {
       bleExtra = '<span class="sep">·</span>Bluetooth <b>' + bleDist + '</b>' + (bleDbm ? ' (' + bleDbm + ')' : '');
     }
+    if (sp.desk_presence && sp.desk_presence.occupied) {
+      bleExtra += '<span class="sep">·</span>Desk <b>occupied</b>';
+    }
 
     const vBadge = (sp.bluetooth_distance != null && sp.bluetooth_distance <= 2.5) ? 'Desk proximity' : (matchPct >= 50 ? 'Same place' : (matchPct >= 25 ? 'Same building' : 'Apart'));
     badge.textContent = vBadge;
@@ -556,8 +580,13 @@
 
     if (list) {
       let bleHtml = '';
+      if (sp.desk_presence && sp.desk_presence.occupied) {
+        bleHtml += '<div class="sh" style="border-left: 2px solid #a78bfa; padding-left: 8px; margin-bottom: 8px;">' +
+          '<div class="name"><span style="color:#a78bfa">● Laptop RF MIMO Radar</span><span class="d">Occupied · Δ ' + (sp.desk_presence.delta_db > 0 ? '+' : '') + sp.desk_presence.delta_db + ' dB</span></div>' +
+          '<div style="font-size:11px;color:var(--text-3);margin-top:2px;">Dual-antenna physical body scattering active</div></div>';
+      }
       if (sp.bluetooth_distance != null) {
-        bleHtml = '<div class="sh" style="border-left: 2px solid var(--sky); padding-left: 8px; margin-bottom: 8px;">' +
+        bleHtml += '<div class="sh" style="border-left: 2px solid var(--sky); padding-left: 8px; margin-bottom: 8px;">' +
           '<div class="name"><span style="color:var(--sky)">● Bluetooth LE Beacon</span><span class="d">' + sp.bluetooth_distance + ' m' + (sp.bluetooth_dbm ? (' · ' + sp.bluetooth_dbm + ' dBm') : '') + '</span></div>' +
           '<div style="font-size:11px;color:var(--text-3);margin-top:2px;">Direct point-to-point radio link</div></div>';
       }
