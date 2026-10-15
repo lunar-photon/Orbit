@@ -541,11 +541,18 @@
       ? 'likely the same room'
       : (matchPct >= 35 ? 'likely the same building' : 'different location');
 
-    const vBadge = matchPct >= 50 ? 'Same place' : (matchPct >= 25 ? 'Same building' : 'Apart');
-    badge.textContent = vBadge;
-    badge.className = 'badge ' + (matchPct >= 50 ? 'good' : (matchPct >= 25 ? '' : 'alert'));
+    const bleDist = (sp.bluetooth_distance != null) ? (sp.bluetooth_distance + 'm') : null;
+    const bleDbm = (sp.bluetooth_dbm != null) ? (sp.bluetooth_dbm + ' dBm') : null;
+    let bleExtra = '';
+    if (bleDist) {
+      bleExtra = '<span class="sep">·</span>Bluetooth <b>' + bleDist + '</b>' + (bleDbm ? ' (' + bleDbm + ')' : '');
+    }
 
-    read.innerHTML = '<b>' + matchPct + '% match</b><span class="sep">·</span>' + zoneDesc;
+    const vBadge = (sp.bluetooth_distance != null && sp.bluetooth_distance <= 2.5) ? 'Desk proximity' : (matchPct >= 50 ? 'Same place' : (matchPct >= 25 ? 'Same building' : 'Apart'));
+    badge.textContent = vBadge;
+    badge.className = 'badge ' + ((sp.bluetooth_distance != null && sp.bluetooth_distance <= 2.5) || matchPct >= 50 ? 'good' : (matchPct >= 25 ? '' : 'alert'));
+
+    read.innerHTML = '<b>' + matchPct + '% match</b><span class="sep">·</span>' + zoneDesc + bleExtra;
 
     if (list) {
       if (!shared.length) {

@@ -286,6 +286,9 @@ def authenticate_client(handler, cfg):
         # the phone's public mobile address, and the computer would then send it the token in clear.
         client_info['ip'] = client_ip
         active_phone_state['ip'] = client_ip
+        if findmy_settings().get('walk_away_lock') and time.time() - getattr(WALK_AWAY, '_last_ble_trigger', 0) > 60:
+            WALK_AWAY._last_ble_trigger = time.time()
+            auth_mgr.broadcast_ndjson(json.dumps({"event": "ble_beacon", "on": True, "uuid": ORBIT_BLE_UUID}) + "\n")
     active_phone_state['client_name'] = client_info.get('client_name', 'Android Phone')
     active_phone_state['last_seen'] = time.time()
     active_phone_state['auth_token'] = token
@@ -5633,6 +5636,8 @@ def wifi_spectrum_data():
         'distance': distance,
         'bluetooth': ble_reading,
         'bluetooth_distance': ble_m,
+        'bluetooth_dbm': ble_reading.get('dbm') if ble_reading else None,
+        'bluetooth_age': ble_reading.get('age') if ble_reading else None,
         'signal_gap': round(signal_gap, 1) if signal_gap is not None else None,
         'shared_count': len(common_aps),
         'strong_count': strong_count,
@@ -5816,11 +5821,11 @@ class OrbitBluetooth:
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    def advertise(self, on):
+    def advertise(self, on, continuous=False):
         """So the phone can find this computer nearby."""
         with self.lock:
             if on:
-                self.adv_until = time.time() + self.SESSION
+                self.adv_until = (time.time() + 86400 * 365) if continuous else (time.time() + self.SESSION)
                 if self.adv and self.adv.poll() is None:
                     return True
                 self._power_on()
@@ -5842,11 +5847,11 @@ class OrbitBluetooth:
                 self.adv.kill()
             self.adv = None
 
-    def listen(self, on):
+    def listen(self, on, continuous=False):
         """Measure how near the phone is (it advertises Orbit's mark meanwhile)."""
         with self.lock:
             if on:
-                self.scan_until = time.time() + self.SESSION
+                self.scan_until = (time.time() + 86400 * 365) if continuous else (time.time() + self.SESSION)
                 if self.scan and self.scan.poll() is None:
                     return True
                 self._power_on()
@@ -5896,14 +5901,30 @@ class OrbitBluetooth:
                     self.expiring = False
                     return
 
+    def ensure_active(self):
+        """Ensures bluetooth advertising and scanning are actively running for walk-away presence."""
+        with self.lock:
+            if not self.scan or self.scan.poll() is not None:
+                self.listen(True, continuous=True)
+            if not self.adv or self.adv.poll() is not None:
+                self.advertise(True, continuous=True)
+
     def phone_reading(self):
-        """The phone's signal, smoothed over the last few seconds (None if not heard)."""
-        recent = [(t, v) for t, v in list(self.readings) if time.time() - t < 6]
+        """The phone's signal, smoothed over recent seconds (None if not heard)."""
+        now = time.time()
+        recent = [(t, v) for t, v in list(self.readings) if now - t < 120]
         on = bool(self.scan and self.scan.poll() is None)
         if not recent:
-            return {'listening': on, 'dbm': None}
-        vals = sorted(v for _, v in recent)
-        return {'listening': on, 'dbm': vals[len(vals) // 2], 'age': round(time.time() - recent[-1][0], 1)}
+            return {'listening': on, 'dbm': None, 'distance': None}
+        fresh = [v for t, v in recent if now - t < 12]
+        if fresh:
+            fresh.sort()
+            median_dbm = fresh[len(fresh) // 2]
+        else:
+            median_dbm = recent[-1][1]
+        age = round(now - recent[-1][0], 1)
+        dist_m = round(math.pow(10, (-59 - median_dbm) / 22.0), 1)
+        return {'listening': on, 'dbm': median_dbm, 'age': age, 'distance': dist_m}
 
 
 ORBIT_BLE = OrbitBluetooth()
@@ -6065,46 +6086,88 @@ SOUND_RANGER = SoundRanger()
 # ---- the walk-away lock ----
 class WalkAway:
     """Locks this computer when the phone walks away: when the phone, after being on this
-    computer's network, is now only reachable through the internet; or when two Wi-Fi scans
-    from it in a row look nothing like what this computer sees (a big network like a campus,
-    where the phone stays on the same network far away). It never unlocks."""
+    computer's network, is now only reachable through the internet; or when multiple Wi-Fi
+    scans from it in a row look nothing like what this computer sees and Bluetooth is not heard.
+    It never unlocks."""
     GRACE = 90            # seconds off the local network before it counts (a brief detour isn't leaving)
 
     def __init__(self):
         self.lan_at = self.tunnel_at = 0.0
         self.far = 0
         self.locked_episode = False
+        self._last_ble_trigger = 0.0
 
     def contact(self, tunnel):
+        now = time.time()
         if tunnel:
-            self.tunnel_at = time.time()
+            self.tunnel_at = now
         else:
-            self.lan_at = time.time()
-            if self.far == 0:
+            self.lan_at = now
+            if self.far <= 1:
+                self.far = 0
                 self.locked_episode = False
 
-    def scan(self, likeness):
+    def scan(self, likeness, phone_ap_count=0, common_count=0, strong_count=0):
+        # Direct Bluetooth presence immediately resets distance counter
+        ble = ORBIT_BLE.phone_reading()
+        if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+            self.far = 0
+            self.locked_episode = False
+            return
+
         if likeness is None:
             return
-        if likeness < 0.08:
-            self.far += 1
-        elif likeness > 0.2:
+
+        # Android background scan throttling safeguard:
+        # If the phone only had 1-2 APs cached and at least one is shared with laptop,
+        # it is not an indicator of walking away.
+        if phone_ap_count <= 2 and common_count >= 1:
+            if likeness > 0.03:
+                return
+
+        if likeness > 0.18 or (common_count >= 2 and strong_count >= 1):
             self.far = 0
             if self.lan_at > self.tunnel_at:
                 self.locked_episode = False
+        elif likeness < 0.08 and common_count == 0:
+            self.far += 1
+        elif likeness < 0.08 and common_count <= 1 and phone_ap_count >= 4:
+            self.far += 1
 
     def away(self):
+        now = time.time()
+        # Direct Bluetooth proximity overrides any Wi-Fi scan discrepancy
+        ble = ORBIT_BLE.phone_reading()
+        if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+            self.far = 0
+            return False
+
+        # Active direct LAN communication within the last 75 seconds means phone is right on this network
+        if self.lan_at > 0 and now - self.lan_at < 75:
+            return False
+
         left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
-        return left_network or self.far >= 2
+        return left_network or self.far >= 4
 
     def loop(self):
         while True:
             time.sleep(15)
             try:
-                if not findmy_settings().get('walk_away_lock') or self.locked_episode or not self.away():
+                if not findmy_settings().get('walk_away_lock'):
+                    continue
+                # Keep Bluetooth actively advertising and scanning for walk-away presence
+                ORBIT_BLE.ensure_active()
+                if self.locked_episode or not self.away():
                     continue
                 if is_pc_locked() is not False:          # locked already, or nobody logged in
                     self.locked_episode = True
+                    continue
+                # Extra proximity safeguard before issuing session lock
+                ble = ORBIT_BLE.phone_reading()
+                if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+                    self.far = 0
+                    continue
+                if self.lan_at > 0 and time.time() - self.lan_at < 75:
                     continue
                 session = graphical_session()
                 subprocess.run(['loginctl', 'lock-session', session], timeout=5)
@@ -8727,7 +8790,7 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             }
 
             if purpose == 'presence':
-                WALK_AWAY.scan(score)
+                WALK_AWAY.scan(score, phone_ap_count=len(theirs), common_count=len(common_aps), strong_count=strong_count)
             NEARBY.update(
                 t=time.time(),
                 score=score,
