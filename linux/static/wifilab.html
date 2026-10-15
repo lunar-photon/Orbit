@@ -691,16 +691,23 @@
         <div>Disturbance: <span class="lab-val" id="labMotionPhoneSpike">–</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
-        <div>Laptop Log: <span class="lab-val" id="labMotionTotalLogs">Continuous (~/.config/orbit)</span></div>
+        <div>Retention: <span class="lab-val">Last 30 days</span></div>
         <div>Phone Mode: <span class="lab-val" id="labMotionPhoneMode" style="color:var(--online);">Zero background battery</span></div>
       </div>
       <div class="lab-recent-movements">
         <div class="lab-recent-header">
-          <span>Recent Movements</span>
-          <span class="lab-recent-hint">Laptop &amp; Phone disturbances</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span>Disturbance Log</span>
+            <span class="lab-recent-hint">Last 30 days</span>
+            <span class="lab-log-badge" id="labMotionLogCount">0 events</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <a class="lab-log-link" href="/api/findmy/wifi/motion/log?format=text" target="_blank" title="View raw text log on laptop" onclick="event.stopPropagation();">Raw</a>
+            <button class="lab-log-btn" type="button" onclick="clearMotionLog(event)">Clear</button>
+          </div>
         </div>
         <div class="lab-recent-list" id="labRecentMovements">
-          <div class="lab-recent-empty">No movements detected yet. Multi-path reflections calm.</div>
+          <div class="lab-recent-empty">No disturbances recorded in the last 30 days. Reflections calm.</div>
         </div>
       </div>
       <div class="lab-details">
@@ -710,25 +717,9 @@
           <div class="lab-metric"><span>Phone Signal</span><b id="labMotionPhoneDbmDetail">Standby</b></div>
           <div class="lab-metric"><span>Phone Disturbance</span><b id="labMotionPhoneSpikeDetail">Standby</b></div>
           <div class="lab-metric"><span>Quiet Noise Envelope</span><b>±1.8 dB threshold</b></div>
-          <div class="lab-metric"><span>Phone Logging Policy</span><b style="color:var(--online);">Zero background drain</b></div>
+          <div class="lab-metric"><span>Retention Window</span><b>Last 30 days</b></div>
         </div>
         <div class="lab-note-box" id="labMotionStatusNote">Laptop continuously monitors ambient reflections and logs events. Phone presence detector operates in foreground without background battery consumption.</div>
-        <div class="lab-log-section">
-          <div class="lab-log-header">
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span class="lab-log-title">Continuous Disturbance Log (Laptop)</span>
-              <span class="lab-log-badge" id="labMotionLogCount">0 logged</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <a class="lab-log-link" href="/api/findmy/wifi/motion/log?format=text" target="_blank" title="View raw text log on laptop">Raw Log</a>
-              <button class="lab-log-btn" type="button" onclick="clearMotionLog(event)">Clear</button>
-            </div>
-          </div>
-          <div class="lab-log-path">File: <code id="labMotionLogPath">~/.config/orbit/wifi_disturbance.log</code></div>
-          <div class="lab-log-list" id="labMotionLogList">
-            <div class="lab-log-empty">Fresnel quiet baseline maintained. No disturbances recorded yet.</div>
-          </div>
-        </div>
       </div>
     </article>
 
@@ -900,6 +891,7 @@ function closeLabFullscreen() {
   } catch (e) {}
   setTimeout(() => {
     drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+    renderDisturbanceLog(motionEvents);
   }, 40);
 }
 
@@ -921,6 +913,7 @@ function toggleCardFullscreen(cardId) {
     } catch (e) {}
     setTimeout(() => {
       drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+      renderDisturbanceLog(motionEvents);
     }, 40);
   }
 }
@@ -981,16 +974,28 @@ function formatTimeAgo(ev) {
   return `${days}d ago`;
 }
 
-// Render the last 5 human-readable movements on phone overview
-function renderRecentMovements(events) {
+// Render unified disturbance log (tracks last 30 days)
+function renderDisturbanceLog(events) {
   const container = $('labRecentMovements');
+  const countEl = $('labMotionLogCount');
   if (!container) return;
+
+  const total = events ? events.length : 0;
+  if (countEl) {
+    countEl.textContent = total + (total === 1 ? ' event' : ' events');
+    countEl.className = 'lab-log-badge' + (total > 0 ? ' has-events' : '');
+  }
+
   if (!events || events.length === 0) {
-    container.innerHTML = '<div class="lab-recent-empty">No movements detected yet. Multi-path reflections calm.</div>';
+    container.innerHTML = '<div class="lab-recent-empty">No disturbances recorded in the last 30 days. Reflections calm.</div>';
     return;
   }
-  const sorted = [...events].reverse().slice(0, 5);
-  container.innerHTML = sorted.map(ev => {
+
+  const isEnlarged = isFullscreenOpen();
+  const sorted = [...events].reverse();
+  const displayList = isEnlarged ? sorted : sorted.slice(0, 5);
+
+  container.innerHTML = displayList.map(ev => {
     const ago = formatTimeAgo(ev);
     const isPhone = ev.source === 'phone';
     const tagClass = isPhone ? 'phone' : 'laptop';
@@ -1033,40 +1038,6 @@ let phoneMotionStatus = "Standby (Zero background battery)";
 
 let motionEvents = [];
 
-function renderMotionLog(events, logPath) {
-  if (logPath && $('labMotionLogPath')) $('labMotionLogPath').textContent = logPath;
-  const list = $('labMotionLogList');
-  if (!list) return;
-
-  const total = events ? events.length : 0;
-  if ($('labMotionLogCount')) {
-    const el = $('labMotionLogCount');
-    el.textContent = total + (total === 1 ? ' event' : ' events');
-    el.className = 'lab-log-badge' + (total > 0 ? ' has-events' : '');
-  }
-  if ($('labMotionTotalLogs')) {
-    $('labMotionTotalLogs').textContent = total + (total === 1 ? ' event' : ' events');
-  }
-
-  if (!events || events.length === 0) {
-    list.innerHTML = '<div class="lab-log-empty">Fresnel quiet baseline maintained. No disturbances recorded yet.</div>';
-    return;
-  }
-
-  const sorted = [...events].reverse();
-  list.innerHTML = sorted.slice(0, 40).map(ev => `
-    <div class="lab-log-item">
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span class="lab-log-time">${ev.time}</span>
-        <span class="lab-log-spike">+${ev.peak_spike} dB spike</span>
-      </div>
-      <div class="lab-log-meta">
-        ${ev.dbm} dBm · base ${ev.baseline} dBm${ev.duration && ev.duration > 0.5 ? ' · ' + ev.duration + 's' : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
 async function clearMotionLog(e) {
   if (e) e.stopPropagation();
   try {
@@ -1074,8 +1045,7 @@ async function clearMotionLog(e) {
     const data = await res.json();
     if (data.status === 'ok') {
       motionEvents = [];
-      renderMotionLog([], null);
-      renderRecentMovements([]);
+      renderDisturbanceLog([]);
     }
   } catch (err) {}
 }
@@ -1355,8 +1325,7 @@ async function pollLabMotion() {
         $('labMotionStatusNote').textContent = parts.join(' ');
       }
 
-      renderMotionLog(lap.events || [], lap.log_path);
-      renderRecentMovements(motionEvents);
+      renderDisturbanceLog(motionEvents);
     }
   } catch (e) {}
 }

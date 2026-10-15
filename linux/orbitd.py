@@ -5026,14 +5026,14 @@ class WifiMotionMonitor:
         self.connected_ssid = ""
         self.connected_bssid = ""
         self.connected_freq = 0.0
-        self.events = collections.deque(maxlen=100)
+        self.events = collections.deque(maxlen=500)
         self.active_event = None
         self.last_disturbance_time = 0.0
         self.event_counter = 0
 
         # Phone motion tracking (foreground active only; zero background battery drain)
         self.phone_history = collections.deque(maxlen=30)
-        self.phone_events = collections.deque(maxlen=40)
+        self.phone_events = collections.deque(maxlen=500)
         self.phone_last_seen = 0.0
         self.phone_signal = None
         self.phone_ssid = ""
@@ -5057,28 +5057,63 @@ class WifiMotionMonitor:
         except Exception:
             pass
 
+        self._prune_old_log_file()
         self._load_existing_log()
         self.thread = threading.Thread(target=self._loop, daemon=True, name="wifi-motion-monitor")
         self.thread.start()
+
+    def _prune_old_log_file(self):
+        """Keep only entries from the last 30 days in the disturbance log file."""
+        if not os.path.isfile(self.log_file):
+            return
+        try:
+            cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+            pattern = re.compile(r'\[(\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}:\d{2}\]')
+            valid_lines = []
+            with open(self.log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    m = pattern.search(line)
+                    if m and m.group(1) < cutoff_date:
+                        continue
+                    valid_lines.append(line)
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                f.writelines(valid_lines)
+        except Exception:
+            pass
 
     def _load_existing_log(self):
         if not os.path.isfile(self.log_file):
             return
         try:
+            now = time.time()
+            cutoff_ts = now - (30 * 86400)
+            cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
             with open(self.log_file, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
             pattern = re.compile(
                 r'\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s+DISTURBANCE\s+\|\s+Peak:\s+\+?([0-9.]+)\s+dB\s+\|\s+Signal:\s+(-?\d+)\s+dBm\s+\|\s+Baseline:\s+(-?[0-9.]+)\s+dBm\s+\|\s+Variance:\s+([0-9.]+)\s+dB\s+\|\s+SSID:\s+"([^"]*)"'
             )
-            for line in lines[-100:]:
+            for line in lines[-500:]:
                 m = pattern.search(line)
                 if m:
+                    date_str = m.group(1)
+                    time_str = m.group(2)
+                    if date_str < cutoff_date:
+                        continue
+                    try:
+                        dt = datetime.datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+                        ev_ts = dt.timestamp()
+                    except Exception:
+                        ev_ts = now
+                    if ev_ts < cutoff_ts:
+                        continue
                     self.event_counter += 1
                     self.events.append({
                         'id': self.event_counter,
                         'source': 'laptop',
-                        'date': m.group(1),
-                        'time': m.group(2),
+                        'timestamp': ev_ts,
+                        'date': date_str,
+                        'time': time_str,
                         'peak_spike': float(m.group(3)),
                         'spike': float(m.group(3)),
                         'dbm': int(m.group(4)),
@@ -5256,9 +5291,10 @@ class WifiMotionMonitor:
     def status(self):
         with self.lock:
             now = time.time()
+            cutoff_ts = now - (30 * 86400)
             vals = [sig for _, sig in self.history]
             cur_sig = self.current_signal if self.current_signal is not None else -60
-            laptop_events = list(self.events)
+            laptop_events = [ev for ev in self.events if (ev.get('timestamp') or 0.0) >= cutoff_ts]
             last_ev = laptop_events[-1] if laptop_events else None
             threshold = 1.8
 
@@ -5317,7 +5353,7 @@ class WifiMotionMonitor:
             # Phone telemetry evaluation (active only while phone has lab open in foreground)
             phone_vals = [sig for _, sig in self.phone_history]
             phone_is_active = (now - self.phone_last_seen < 4.5) and (len(phone_vals) > 0)
-            phone_events_list = list(self.phone_events)
+            phone_events_list = [ev for ev in self.phone_events if (ev.get('timestamp') or 0.0) >= cutoff_ts]
 
             if phone_is_active:
                 p_cur_sig = self.phone_signal if self.phone_signal is not None else (phone_vals[-1] if phone_vals else -65)
