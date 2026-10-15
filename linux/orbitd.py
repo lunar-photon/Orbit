@@ -6155,6 +6155,11 @@ class WalkAway:
             self.far = 0
             return False
 
+        # If confirmed far away by coordinates/fingerprint (> 50m) and Bluetooth is silent:
+        apart = NEARBY.get('apart')
+        if apart is not None and apart > 50:
+            return True
+
         left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
         return left_network or self.far >= 2
 
