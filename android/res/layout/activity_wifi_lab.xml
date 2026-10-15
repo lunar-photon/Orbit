@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/o_ground"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="16dp">
+
+        <Button
+            android:id="@+id/btn_wifilab_back"
+            style="@style/Btn.Icon"
+            android:contentDescription="Back"
+            android:drawableTop="@drawable/ic_o_chevron_left"
+            android:drawableTint="@color/o_text"
+            android:paddingTop="10dp"
+            android:text="" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_wifilab_title"
+                style="@style/Text.Heading"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wi-Fi Lab" />
+
+            <TextView
+                android:id="@+id/tv_wifilab_sub"
+                style="@style/Text.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Live RF telemetry &amp; spectrum"
+                android:textColor="@color/o_text_2"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_wifilab_refresh"
+            style="@style/Btn.Icon"
+            android:contentDescription="Refresh"
+            android:drawableTop="@drawable/ic_o_refresh"
+            android:drawableTint="@color/o_text"
+            android:paddingTop="10dp"
+            android:text="" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/pb_wifilab_loading"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:indeterminate="true"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <WebView
+            android:id="@+id/wv_wifilab"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/o_ground" />
+
+        <LinearLayout
+            android:id="@+id/ll_wifilab_error"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="32dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_o_wifi"
+                android:tint="@color/o_text_3" />
+
+            <TextView
+                style="@style/Text.Heading"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Computer Unreachable" />
+
+            <TextView
+                android:id="@+id/tv_wifilab_error_msg"
+                style="@style/Text.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="Make sure your computer is online and on the same Wi-Fi network."
+                android:textColor="@color/o_text_2" />
+
+            <Button
+                android:id="@+id/btn_wifilab_retry"
+                style="@style/Btn"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginTop="20dp"
+                android:text="Retry" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

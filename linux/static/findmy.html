@@ -69,6 +69,49 @@
   .lab-val { color: var(--text); font-weight: 600; }
 
   @media (max-width: 600px) { .panel { left: 8px; right: 8px; width: auto !important; top: auto; bottom: 8px; max-height: 60%; } }
+
+  /* Embedded in-app styling */
+  body.embedded {
+    background: var(--ground) !important;
+    padding: 12px 14px 28px !important;
+    height: auto !important;
+    min-height: 100vh !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+  body.embedded #map,
+  body.embedded .tabs,
+  body.embedded #viewFind {
+    display: none !important;
+  }
+  body.embedded .panel {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  body.embedded #viewLab {
+    display: block !important;
+  }
+  body.embedded .lab-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    margin-top: 12px;
+  }
+  body.embedded .lab-canvas {
+    height: 85px;
+    background: #090B0E;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
 </style>
 </head>
 <body>
@@ -171,11 +214,21 @@
 <script src="/leaflet/leaflet.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20.6, 78.9], 4);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
-map.zoomControl.setPosition('topright');
+const isEmbedded = location.search.includes('embedded=1') || location.search.includes('app=1');
+if (isEmbedded) {
+  document.body.classList.add('embedded');
+}
+
+let map = null;
+if (!isEmbedded && $('map') && typeof L !== 'undefined') {
+  try {
+    map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20.6, 78.9], 4);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    map.zoomControl.setPosition('topright');
+  } catch (e) {}
+}
 
 let dot = null, ring = null, trail = null, centred = false, ringing = false, nearbyOn = false;
 let pc = null, pcRing = null, link = null;
@@ -206,35 +259,37 @@ function show(v) {
     $('acc').textContent = last.acc ? Math.round(last.acc) + ' m' : '–';
     $('batt').textContent = last.battery != null ? last.battery + '%' + (last.charging ? ' +' : '') : '–';
     $('net').textContent = last.net || '–';
-    const ll = [last.lat, last.lng];
-    if (!dot) {
-      ring = L.circle(ll, { radius: last.acc || 30, color: '#8EA8FF', weight: 1, fillColor: '#8EA8FF', fillOpacity: 0.12 }).addTo(map);
-      dot = L.circleMarker(ll, { radius: 8, color: '#0D0F12', weight: 3, fillColor: '#8EA8FF', fillOpacity: 1 }).addTo(map);
-    } else {
-      dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
-    }
-    const pts = v.trail.map(p => [p.lat, p.lng]);
-    if (trail) trail.setLatLngs(pts);
-    else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
-    dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-    const lp = v.laptop;
-    if (lp) {
-      const pl = [lp.lat, lp.lng];
-      if (!pc) {
-        pcRing = L.circle(pl, { radius: lp.acc || 30, color: '#46D39A', weight: 1, fillColor: '#46D39A', fillOpacity: 0.1 }).addTo(map);
-        pc = L.circleMarker(pl, { radius: 7, color: '#0D0F12', weight: 3, fillColor: '#46D39A', fillOpacity: 1 }).addTo(map);
-        pc.bindTooltip('This computer', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-        link = L.polyline([ll, pl], { color: '#ECEEF1', weight: 2, opacity: 0.5, dashArray: '4 6' }).addTo(map);
-        link.bindTooltip('', { permanent: true, direction: 'center', className: 'tag' });
+    if (map) {
+      const ll = [last.lat, last.lng];
+      if (!dot) {
+        ring = L.circle(ll, { radius: last.acc || 30, color: '#8EA8FF', weight: 1, fillColor: '#8EA8FF', fillOpacity: 0.12 }).addTo(map);
+        dot = L.circleMarker(ll, { radius: 8, color: '#0D0F12', weight: 3, fillColor: '#8EA8FF', fillOpacity: 1 }).addTo(map);
+      } else {
+        dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
       }
-      pc.setLatLng(pl); pcRing.setLatLng(pl); pcRing.setRadius(lp.acc || 30); link.setLatLngs([ll, pl]);
-      const m = map.distance(ll, pl);
-      link.setTooltipContent(m < 1000 ? Math.round(m) + ' m apart' : (m / 1000).toFixed(1) + ' km apart');
-    }
-    if (!centred) {
-      if (lp) map.fitBounds([ll, [lp.lat, lp.lng]], { padding: [80, 80], maxZoom: 18 });
-      else map.setView(ll, Math.max(15, Math.min(18, 19 - Math.log2((last.acc || 30) / 10))));
-      centred = true;
+      const pts = v.trail.map(p => [p.lat, p.lng]);
+      if (trail) trail.setLatLngs(pts);
+      else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
+      dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
+      const lp = v.laptop;
+      if (lp) {
+        const pl = [lp.lat, lp.lng];
+        if (!pc) {
+          pcRing = L.circle(pl, { radius: lp.acc || 30, color: '#46D39A', weight: 1, fillColor: '#46D39A', fillOpacity: 0.1 }).addTo(map);
+          pc = L.circleMarker(pl, { radius: 7, color: '#0D0F12', weight: 3, fillColor: '#46D39A', fillOpacity: 1 }).addTo(map);
+          pc.bindTooltip('This computer', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
+          link = L.polyline([ll, pl], { color: '#ECEEF1', weight: 2, opacity: 0.5, dashArray: '4 6' }).addTo(map);
+          link.bindTooltip('', { permanent: true, direction: 'center', className: 'tag' });
+        }
+        pc.setLatLng(pl); pcRing.setLatLng(pl); pcRing.setRadius(lp.acc || 30); link.setLatLngs([ll, pl]);
+        const m = map.distance(ll, pl);
+        link.setTooltipContent(m < 1000 ? Math.round(m) + ' m apart' : (m / 1000).toFixed(1) + ' km apart');
+      }
+      if (!centred) {
+        if (lp) map.fitBounds([ll, [lp.lat, lp.lng]], { padding: [80, 80], maxZoom: 18 });
+        else map.setView(ll, Math.max(15, Math.min(18, 19 - Math.log2((last.acc || 30) / 10))));
+        centred = true;
+      }
     }
   }
   // alerts
@@ -577,11 +632,18 @@ window.addEventListener('resize', () => {
   }
 });
 
-refresh();
-setInterval(refresh, 2000);
+if (!isEmbedded) {
+  refresh();
+  setInterval(refresh, 2000);
+}
+
+if (isEmbedded || location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
+  switchTab('lab');
+}
+
 setInterval(pollLabMotion, 500);
 setInterval(sendLabP2p, 800);
-setInterval(pollLabSpectrum, 5000);
+setInterval(pollLabSpectrum, 4000);
 setInterval(pollLabClusters, 3000);
 </script>
 </body>

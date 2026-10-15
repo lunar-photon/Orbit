@@ -134,6 +134,12 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".WifiLabActivity"
+            android:label="Wi-Fi Lab"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <!-- after a wrong unlock: one front-camera photo, over the lock screen, nothing drawn -->
         <activity
             android:name=".UnlockPhotoActivity"

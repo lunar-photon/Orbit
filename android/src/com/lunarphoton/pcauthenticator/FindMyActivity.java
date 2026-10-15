@@ -103,12 +103,13 @@ public class FindMyActivity extends Activity {
         if (btnLab != null) {
             btnLab.setOnClickListener(v -> {
                 PairedDevice d = DeviceManager.getActiveDevice(this);
-                if (d != null && d.getBaseUrl() != null) {
-                    try {
-                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(d.getBaseUrl() + "/wifilab")));
-                    } catch (Exception e) {
-                        Toast.makeText(this, "Can't open Wi-Fi Lab: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
+                if (d != null) {
+                    String base = d.getBaseUrl();
+                    if (base == null || base.isEmpty()) base = d.getInternetUrl();
+                    Intent intent = new Intent(this, WifiLabActivity.class);
+                    if (base != null) intent.putExtra("base_url", base);
+                    if (d.hostname != null) intent.putExtra("device_name", d.hostname);
+                    startActivity(intent);
                 } else {
                     Toast.makeText(this, "Computer not paired or offline", Toast.LENGTH_SHORT).show();
                 }
