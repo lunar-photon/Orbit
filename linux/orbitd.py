@@ -7141,6 +7141,10 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             self.serve_file(os.path.join(STATIC_DIR, path.lstrip('/')),
                             'application/javascript' if path.endswith('.js') else 'text/css')
             return
+        elif re.fullmatch(r'/fonts/[A-Za-z0-9_-]+\.ttf', path):
+            # the app's Geist fonts, so the web pages (Wi-Fi Lab) match the native screens
+            self.serve_file(os.path.join(STATIC_DIR, 'fonts', os.path.basename(path)), 'font/ttf')
+            return
         elif path == '/api/findmy/phone':
             # Find my phone, on this computer only
             client_info, token = authenticate_client(self, load_config())

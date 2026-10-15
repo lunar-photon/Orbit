@@ -2,1804 +2,566 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Wi-Fi Lab · Orbit</title>
 <link rel="icon" href="/icon-192.png">
 <style>
+  /* Matches the Orbit app: calm single column, hairline cards, an icon tile + title + caption
+     per module, a live view, one quiet summary line, with anything technical folded away.
+     Dark only, to match the app. Element IDs and the start/stop/fullscreen globals are kept so
+     the native WifiLabActivity WebView (title sync, back button, battery polling) still drives it. */
+  @font-face { font-family: "Geist"; font-weight: 400; font-display: swap; src: url("/fonts/geist_regular.ttf") format("truetype"); }
+  @font-face { font-family: "Geist"; font-weight: 500; font-display: swap; src: url("/fonts/geist_medium.ttf") format("truetype"); }
+  @font-face { font-family: "Geist"; font-weight: 600; font-display: swap; src: url("/fonts/geist_semibold.ttf") format("truetype"); }
   :root {
     --ground: #0D0F12;
     --surface: #15181D;
     --raised: #1D2128;
-    --line: #262B33;
+    --hairline: #262B33;
     --text: #ECEEF1;
-    --text2: #A6AEBB;
-    --text3: #7D8593;
+    --text-2: #A6AEBB;
+    --text-3: #7D8593;
     --accent: #8EA8FF;
-    --online: #46D39A;
+    --good: #46D39A;
+    --warn: #FDBA74;
     --danger: #FF7A7A;
-    --warning: #FFB347;
+    --sky: #7DD3FC;
+    --violet: #C4B5FD;
+    --radius: 12px;
+    --font: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, Cantarell, Ubuntu, sans-serif;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    margin: 0;
-    min-height: 100%;
-    background: var(--ground);
-    color: var(--text);
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+  html, body { background: var(--ground); color: var(--text); }
+  body {
+    font-family: var(--font); line-height: 1.5; -webkit-font-smoothing: antialiased;
     -webkit-tap-highlight-color: transparent;
+    padding: 14px max(16px, env(safe-area-inset-right, 0px)) 36px max(16px, env(safe-area-inset-left, 0px));
   }
+  .wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 
-  /* Desktop Container */
-  .lab-wrapper {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px 24px 40px;
-  }
+  header { display: flex; align-items: center; gap: 10px; height: 44px; margin-bottom: 2px; }
+  .back { width: 40px; height: 40px; flex: none; display: grid; place-items: center; cursor: pointer;
+    background: none; border: none; color: var(--text); border-radius: 10px; }
+  .back:hover { background: var(--surface); }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
+  .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2);
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 11px; white-space: nowrap; }
+  .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 rgba(70,211,154,.5); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(70,211,154,.45);} 70%{box-shadow:0 0 0 6px rgba(70,211,154,0);} 100%{box-shadow:0 0 0 0 rgba(70,211,154,0);} }
 
-  /* Top Navigation Bar */
-  .lab-top-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .lab-nav-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .lab-nav-back {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text2);
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 500;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    padding: 6px 12px;
-    transition: all 0.15s;
-  }
-  .lab-nav-back:hover {
-    color: var(--text);
-    border-color: var(--text3);
-    background: var(--raised);
-  }
-  .lab-nav-title-group h1 {
-    font-size: 19px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-  .lab-nav-title-group p {
-    font-size: 12px;
-    color: var(--text2);
-    margin-top: 2px;
-  }
-  .lab-nav-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .lab-conn-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 20px;
-    padding: 5px 12px;
-  }
-  .lab-conn-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--online);
-    box-shadow: 0 0 8px rgba(70, 211, 154, 0.4);
-    animation: labPulse 2s infinite;
-  }
-  @keyframes labPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.9); }
-  }
-  .lab-refresh-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    color: var(--text2);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .lab-refresh-btn:hover {
-    color: var(--text);
-    border-color: var(--text3);
-  }
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius);
+    padding: 14px; display: flex; flex-direction: column; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .tile { width: 40px; height: 40px; flex: none; border-radius: 11px; display: grid; place-items: center;
+    background: var(--raised); border: 1px solid var(--hairline); }
+  .tile svg { width: 20px; height: 20px; }
+  .ttl { flex: 1; min-width: 0; }
+  .ttl h2 { font-size: 15px; font-weight: 500; }
+  .ttl p { margin-top: 3px; font-size: 12.5px; color: var(--text-3); line-height: 1.4; }
+  .badge { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; flex: none;
+    background: rgba(255,255,255,0.05); color: var(--text-2); align-self: flex-start; }
+  .badge.good { background: rgba(70,211,154,0.14); color: var(--good); }
+  .badge.alert { background: rgba(255,122,122,0.14); color: var(--danger); }
+  .card:not(.full) { cursor: pointer; }
+  .fs-back { display: none; }
+  .card.full .fs-back { display: flex; align-items: center; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); }
+  .fs-back button { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--hairline); color: var(--text); font: inherit; font-size: 13px; font-weight: 500; padding: 7px 13px; border-radius: 9px; cursor: pointer; }
+  .fs-back button:hover { background: var(--raised); }
 
-  /* Grid Layout */
-  .lab-grid-container {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
-  }
-  @media (max-width: 820px) {
-    .lab-grid-container {
-      grid-template-columns: 1fr;
-    }
-  }
+  canvas.viz { width: 100%; height: 104px; display: block; margin-top: 13px;
+    background: #0A0C10; border: 1px solid #1A1E25; border-radius: 10px; }
 
-  /* Standard Card Design */
-  .lab-card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    cursor: pointer;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .lab-card:hover {
-    border-color: rgba(255, 255, 255, 0.16);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  }
-  .lab-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    user-select: none;
-    margin-bottom: 4px;
-  }
-  .lab-card-title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .lab-card-title-wrap h3 {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .lab-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .lab-badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text2);
-  }
-  .lab-badge.active {
-    background: rgba(70, 211, 154, 0.14);
-    color: var(--online);
-  }
-  .lab-badge.alert {
-    background: rgba(255, 122, 122, 0.14);
-    color: var(--danger);
-  }
-  .lab-expand-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--line);
-    color: var(--text2);
-    cursor: pointer;
-    border-radius: 8px;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-  }
-  .lab-expand-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text);
-  }
-  .lab-expand-btn .icon-collapse { display: none; }
-  .lab-expand-btn .icon-expand { display: block; }
+  .read { margin-top: 11px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .read b { color: var(--text); font-weight: 600; }
+  .read .sep { color: var(--text-3); margin: 0 7px; }
 
-  .lab-desc {
-    font-size: 11px;
-    color: var(--text3);
-    margin: 2px 0 10px;
-    line-height: 1.35;
-  }
-  .lab-canvas {
-    width: 100%;
-    height: 95px;
-    background: #090B0E;
-    border-radius: 10px;
-    display: block;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-  }
-  .lab-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 8px;
-    font-size: 11px;
-    color: var(--text3);
-  }
-  .lab-val {
-    color: var(--text);
-    font-weight: 600;
-  }
+  details { margin-top: 12px; border-top: 1px solid var(--hairline); padding-top: 11px; }
+  summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 7px;
+    font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+  summary::-webkit-details-marker { display: none; }
+  summary .chev { transition: transform .18s; color: var(--text-3); }
+  details[open] summary .chev { transform: rotate(90deg); }
+  .body { margin-top: 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
+  dl.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; margin: 0 0 10px; }
+  dl.kv dt { color: var(--text-3); }
+  dl.kv dd { margin: 0; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
 
-  /* Collapsible Details in Overview */
-  .lab-details {
-    display: none;
-  }
-  .lab-note-box {
-    margin-top: 10px;
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 12px;
-    color: var(--text2);
-    line-height: 1.45;
-  }
-  .lab-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    margin-top: 8px;
-  }
-  .lab-metric {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    padding: 8px 10px;
-  }
-  .lab-metric span {
-    display: block;
-    font-size: 10px;
-    color: var(--text3);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    margin-bottom: 2px;
-  }
-  .lab-metric b {
-    font-size: 13px;
-    color: var(--text);
-  }
-  .lab-top-aps {
-    margin-top: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .lab-ap-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 6px;
-    font-size: 11px;
-  }
-  .lab-ap-ssid {
-    font-weight: 600;
-    color: var(--text);
-    max-width: 60%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .lab-ap-meta {
-    color: var(--text2);
-    font-size: 11px;
-  }
+  .log-tools { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .log-tools a, .log-tools button { font-size: 11px; color: var(--text-3); background: none; border: none; cursor: pointer; text-decoration: none; }
+  .log-tools a:hover, .log-tools button:hover { color: var(--text); }
+  .log { margin-top: 11px; display: flex; flex-direction: column; gap: 6px; }
+  .log-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px; background: var(--raised); border-radius: 9px; font-size: 12px; }
+  .log-row .z { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+  .tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; flex: none; }
+  .tag.room { background: rgba(70,211,154,0.14); color: var(--good); }
+  .tag.vic { background: rgba(142,168,255,0.14); color: var(--accent); }
+  .log-row .when { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-row .amt { color: var(--danger); font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
+  .log-empty { font-size: 12.5px; color: var(--text-3); padding: 3px 0; }
 
-  .lab-recent-movements {
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  .lab-recent-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text2);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-  .lab-recent-hint {
-    font-size: 10px;
-    color: var(--text3);
-    text-transform: none;
-    font-weight: normal;
-  }
-  .lab-recent-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .lab-recent-empty {
-    font-size: 11px;
-    color: var(--text3);
-    padding: 6px 0;
-    font-style: italic;
-  }
-  .lab-recent-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 8px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    border-radius: 6px;
-    font-size: 11px;
-  }
-  .lab-recent-time-badge {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .lab-recent-rel {
-    font-weight: 600;
-    color: var(--text);
-  }
-  .lab-recent-clock {
-    font-family: monospace;
-    font-size: 10px;
-    color: var(--text3);
-  }
-  .lab-recent-spike {
-    font-weight: 600;
-    color: var(--danger);
-  }
-  .lab-recent-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--danger);
-    display: inline-block;
-  }
-  .lab-sensor-tag {
-    font-size: 9px;
-    font-weight: 600;
-    padding: 1px 5px;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-  .lab-sensor-tag.laptop {
-    background: rgba(70, 211, 154, 0.15);
-    color: var(--online);
-    border: 1px solid rgba(70, 211, 154, 0.25);
-  }
-  .lab-sensor-tag.phone {
-    background: rgba(142, 168, 255, 0.15);
-    color: var(--accent);
-    border: 1px solid rgba(142, 168, 255, 0.25);
-  }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-size: 11.5px; color: var(--text-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
-  /* Disturbance Event Log */
-  .lab-log-section {
-    margin-top: 12px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 10px 12px;
-  }
-  .lab-log-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-  }
-  .lab-log-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-  }
-  .lab-log-badge {
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.07);
-    color: var(--text2);
-  }
-  .lab-log-badge.has-events {
-    background: rgba(255, 122, 122, 0.15);
-    color: var(--danger);
-  }
-  .lab-log-link {
-    font-size: 11px;
-    color: var(--accent);
-    text-decoration: none;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(142, 168, 255, 0.08);
-  }
-  .lab-log-link:hover {
-    text-decoration: underline;
-  }
-  .lab-log-btn {
-    font-size: 11px;
-    color: var(--text3);
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 2px 7px;
-    cursor: pointer;
-  }
-  .lab-log-btn:hover {
-    color: var(--text);
-    border-color: var(--text3);
-  }
-  .lab-log-path {
-    font-size: 10px;
-    color: var(--text3);
-    margin-bottom: 8px;
-    word-break: break-all;
-  }
-  .lab-log-path code {
-    color: var(--text2);
-    font-family: monospace;
-  }
-  .lab-log-list {
-    max-height: 160px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .lab-log-empty {
-    font-size: 11px;
-    color: var(--text3);
-    text-align: center;
-    padding: 10px 4px;
-    font-style: italic;
-  }
-  .lab-log-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 5px 8px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    font-size: 11px;
-  }
-  .lab-log-time {
-    font-family: monospace;
-    font-weight: 600;
-    color: var(--text);
-    margin-right: 6px;
-  }
-  .lab-log-spike {
-    font-weight: 600;
-    color: var(--danger);
-    margin-right: 8px;
-  }
-  .lab-log-meta {
-    color: var(--text3);
-    font-size: 10px;
-    white-space: nowrap;
-  }
+  /* Same-place meter + paired signal bars */
+  .meter { height: 8px; border-radius: 999px; background: var(--raised); overflow: hidden; margin-top: 13px; }
+  .meter > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--good)); transition: width .45s ease; width: 0; }
+  .shared-list { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 11px; }
+  .sh .name { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; margin-bottom: 5px; }
+  .sh .name span:first-child { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sh .name .d { color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; margin-left: 8px; }
+  .sh .bars { display: flex; flex-direction: column; gap: 4px; }
+  .bar { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--text-3); }
+  .bar > span { width: 42px; flex: none; }
+  .bar .track { flex: 1; height: 5px; border-radius: 999px; background: var(--raised); overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 999px; transition: width .45s ease; }
 
-  /* Full Screen Enlarged Window */
-  body.has-fullscreen {
-    overflow: hidden !important;
-  }
-  .lab-card.fullscreen {
-    position: fixed !important;
-    inset: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    max-width: none !important;
-    max-height: none !important;
-    margin: 0 !important;
-    border-radius: 0 !important;
-    border: none !important;
-    background: var(--ground) !important;
-    padding: 16px 20px 40px !important;
-    z-index: 99999 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    box-sizing: border-box !important;
-    animation: labFadeIn 0.18s ease;
-  }
-  @keyframes labFadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .lab-card.fullscreen .lab-card-header {
-    margin-bottom: 12px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--line);
-  }
-  .lab-card.fullscreen .lab-card-title-wrap {
-    gap: 10px;
-  }
-  .lab-card.fullscreen .lab-card-title-wrap h3 {
-    font-size: 17px;
-  }
-  .lab-card.fullscreen .lab-expand-btn {
-    width: 32px;
-    height: 32px;
-    background: var(--surface);
-    border-color: var(--line);
-    color: var(--text);
-  }
-  .lab-card.fullscreen .lab-expand-btn .icon-collapse { display: block; }
-  .lab-card.fullscreen .lab-expand-btn .icon-expand { display: none; }
+  footer { margin-top: 6px; font-size: 11.5px; color: var(--text-3); text-align: center; line-height: 1.6; }
 
-  .lab-card.fullscreen .lab-canvas {
-    flex: 0 0 260px;
-    height: 260px !important;
-    min-height: 260px !important;
-    margin: 6px 0 12px;
-    border-radius: 12px;
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-  @media (min-height: 780px) {
-    .lab-card.fullscreen .lab-canvas {
-      flex: 0 0 300px;
-      height: 300px !important;
-      min-height: 300px !important;
-    }
-  }
-  .lab-card.fullscreen .lab-details {
-    display: block;
-    margin-top: 10px;
-  }
-  .lab-card.fullscreen .lab-log-list {
-    max-height: 280px;
-  }
+  /* Fullscreen (enlarge a module) — kept so the native back button + title sync work */
+  body.has-full { overflow: hidden; }
+  .card.full { position: fixed; inset: 0; z-index: 60; border: none; border-radius: 0;
+    background: var(--ground); padding: 14px max(16px, env(safe-area-inset-left,0px)) 36px;
+    padding-top: calc(14px + env(safe-area-inset-top, 0px)); overflow-y: auto; animation: fade .18s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .card.full canvas.viz { height: 300px; }
 
-  /* Dedicated Enlarged Back Button inside Fullscreen View */
-  .lab-fs-back-bar {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--line);
-  }
-  .lab-card.fullscreen .lab-fs-back-bar {
-    display: flex;
-  }
-  .lab-fs-back-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 500;
-    padding: 6px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .lab-fs-back-btn:hover {
-    background: var(--raised);
-    border-color: var(--text3);
-  }
-
-  /* Embedded Mode inside Orbit Android App */
-  body.embedded {
-    background: var(--ground) !important;
-    padding: 10px 12px 32px !important;
-  }
-  body.embedded .lab-wrapper {
-    max-width: 100% !important;
-    padding: 0 !important;
-  }
-  body.embedded .lab-top-nav {
-    display: none !important; /* Managed natively by WifiLabActivity top bar */
-  }
-  body.embedded .lab-grid-container {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
-  }
-  body.embedded .lab-card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 14px;
-  }
+  /* Embedded in the Orbit app's WebView — the native top bar replaces the page header */
+  body.embedded { padding-top: 8px; }
+  body.embedded > .wrap > header { display: none; }
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<div class="lab-wrapper">
-  <!-- Top Navigation Bar (desktop & browser view) -->
-  <header class="lab-top-nav" id="labTopNav">
-    <div class="lab-nav-left">
-      <a class="lab-nav-back" href="/findmy" title="Back to Find My">
-        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
-        <span>Find My</span>
-      </a>
-      <div class="lab-nav-title-group">
-        <h1>Wi-Fi Laboratory</h1>
-        <p>Ambient RF telemetry &amp; spatial multipath sensing</p>
-      </div>
-    </div>
-    <div class="lab-nav-right">
-      <div class="lab-conn-pill">
-        <span class="lab-conn-dot"></span>
-        <span id="labNavTarget">Connected</span>
-      </div>
-      <button class="lab-refresh-btn" type="button" aria-label="Refresh" onclick="refreshAllTelemetry()">
-        <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-      </button>
-    </div>
+  <header>
+    <button class="back" aria-label="Back" onclick="history.length > 1 ? history.back() : (location.href='/findmy')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <h1>Wi-Fi Lab</h1>
+    <span class="conn"><span class="dot"></span><span id="connName">Live</span></span>
   </header>
 
-  <!-- 4-Module Card Grid -->
-  <main class="lab-grid-container">
+  <!-- Same-place check (Wi-Fi identity) -->
+  <section class="card" id="card-same" data-title="Same-place check" onclick="cardTap(event, 'card-same')">
+    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+    <div class="row">
+      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg></div>
+      <div class="ttl"><h2>Same-place check</h2><p>How much your phone and laptop see the same Wi-Fi.</p></div>
+      <span class="badge" id="spBadge">—</span>
+    </div>
+    <div class="meter"><i id="spMeter"></i></div>
+    <div class="read" id="spRead">Waiting for the phone to share what it sees…</div>
+    <details>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Shared networks</summary>
+      <div class="body">
+        <div class="shared-list" id="spList"><div class="log-empty">No networks seen by both devices yet.</div></div>
+        <p style="margin:0">When both devices see the same routers at similar strength, they're in the same place. Big gaps mean a wall or floor between them.</p>
+      </div>
+    </details>
+  </section>
 
-    <!-- 1. Motion & Presence Disturbance -->
-    <article class="lab-card" id="cardMotion" onclick="onCardClicked(event, 'cardMotion')">
-      <div class="lab-fs-back-bar">
-        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
-          <span>Back to Overview</span>
-        </button>
-        <span style="font-size:12px;color:var(--text3);">Presence Disturbance Full-Screen</span>
+  <!-- Movement -->
+  <section class="card" id="card-motion" data-title="Movement" onclick="cardTap(event, 'card-motion')">
+    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+    <div class="row">
+      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--good)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3l2.5-7 4 18 3.5-11H22"/></svg></div>
+      <div class="ttl"><h2>Movement</h2><p>Signal ripples give away movement near the laptop.</p></div>
+      <span class="badge good" id="motionBadge">Quiet</span>
+    </div>
+    <canvas class="viz" id="motionCanvas"></canvas>
+    <div class="legend"><span><i style="background:#46D39A"></i> Room</span><span><i style="background:#8EA8FF"></i> Nearby (phone)</span></div>
+    <div class="read" id="motionRead">Room <b>quiet</b></div>
+    <details>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Disturbance log <span id="logCount" style="color:var(--text-3)"></span>
+        <span class="log-tools"><a href="/api/findmy/wifi/motion/log?format=text" target="_blank" onclick="event.stopPropagation()">Raw</a><button type="button" onclick="clearMotionLog(event)">Clear</button></span>
+      </summary>
+      <div class="body">
+        <div class="log" id="logRows"><div class="log-empty">Nothing stirred in the last 30 days.</div></div>
+        <p style="margin:11px 0 0">A person moving nearby subtly changes how Wi-Fi bounces. Orbit watches the connected router for the room, and the phone's own reading for the few metres around it.</p>
       </div>
+    </details>
+  </section>
 
-      <div class="lab-card-header">
-        <div class="lab-card-title-wrap">
-          <h3>Presence Disturbance</h3>
-        </div>
-        <div class="lab-header-actions">
-          <span class="lab-badge active" id="labMotionBadge">Room: Quiet</span>
-          <span class="lab-badge" id="labMotionPhoneBadge">Vicinity: Calm</span>
-          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardMotion')">
-            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="lab-desc">Dual-zone multipath radar combining immediate laptop vicinity and connected Wi-Fi room reflections</div>
-      <canvas id="labMotionCanvas" class="lab-canvas"></canvas>
-      <div class="lab-footer">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Room: <span class="lab-val" id="labMotionTarget">–</span></div>
-        <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Vicinity: <span class="lab-val" id="labMotionPhoneTarget">Local Vicinity (Active)</span></div>
-        <div>Disturbance: <span class="lab-val" id="labMotionPhoneSpike">–</span></div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
-        <div>Coverage: <span class="lab-val" id="labMotionCoverage">Dual-zone (Vicinity + Room)</span></div>
-        <div>Disturbance Log: <span class="lab-val" id="labMotionTotalLogs">0 events</span></div>
-      </div>
-      <div class="lab-recent-movements">
-        <div class="lab-recent-header">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span>Disturbance Log</span>
-            <span class="lab-recent-hint">Last 30 days</span>
-            <span class="lab-log-badge" id="labMotionLogCount">0 events</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <a class="lab-log-link" href="/api/findmy/wifi/motion/log?format=text" target="_blank" title="View raw text log on laptop" onclick="event.stopPropagation();">Raw</a>
-            <button class="lab-log-btn" type="button" onclick="clearMotionLog(event)">Clear</button>
-          </div>
-        </div>
-        <div class="lab-recent-list" id="labRecentMovements">
-          <div class="lab-recent-empty">No disturbances recorded in the last 30 days. Reflections calm.</div>
-        </div>
-      </div>
-      <div class="lab-details">
-        <div class="lab-grid">
-          <div class="lab-metric"><span>Room Wi-Fi Signal</span><b id="labMotionLapDbm">– dBm</b></div>
-          <div class="lab-metric"><span>Room Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
-          <div class="lab-metric"><span>Vicinity Telemetry</span><b id="labMotionPhoneDbmDetail">–</b></div>
-          <div class="lab-metric"><span>Vicinity Disturbance</span><b id="labMotionPhoneSpikeDetail">–</b></div>
-          <div class="lab-metric"><span>Quiet Noise Envelope</span><b>±1.8 dB threshold</b></div>
-          <div class="lab-metric"><span>Retention Window</span><b>Last 30 days</b></div>
-        </div>
-        <div class="lab-note-box" id="labMotionStatusNote">The laptop presence monitor fuses both its own immediate vicinity sensor and the connected Wi-Fi router to detect motion right around the desk as well as across the wider room.</div>
-      </div>
-    </article>
+  <!-- Spectrum -->
+  <section class="card" id="card-spec" data-title="Wi-Fi spectrum" onclick="cardTap(event, 'card-spec')">
+    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+    <div class="row">
+      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-5M9 20V9M14 20v-8M19 20V5"/></svg></div>
+      <div class="ttl"><h2>Wi-Fi spectrum</h2><p>Every network in range, by band and strength.</p></div>
+      <span class="badge" id="specBadge">—</span>
+    </div>
+    <canvas class="viz" id="specCanvas"></canvas>
+    <div class="legend"><span><i style="background:#8EA8FF"></i> 2.4 GHz</span><span><i style="background:#46D39A"></i> 5 GHz</span><span><i style="background:#FFFFFF"></i> phone sees too</span></div>
+    <div class="read" id="specRead">Scanning…</div>
+    <details>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Strongest nearby</summary>
+      <div class="body"><dl class="kv" id="specList"></dl><p style="margin:0">Networks the phone also sees are how Orbit tells whether your phone and laptop are in the same place.</p></div>
+    </details>
+  </section>
 
-    <!-- 2. Spectrum Constellation -->
-    <article class="lab-card" id="cardSpec" onclick="onCardClicked(event, 'cardSpec')">
-      <div class="lab-fs-back-bar">
-        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
-          <span>Back to Overview</span>
-        </button>
-        <span style="font-size:12px;color:var(--text3);">Spectrum Constellation Full-Screen</span>
-      </div>
+  <!-- Room map -->
+  <section class="card" id="card-room" data-title="Room map" onclick="cardTap(event, 'card-room')">
+    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+    <div class="row">
+      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--violet)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="8" r="2.3"/><circle cx="16" cy="14" r="2.3"/><circle cx="11" cy="18" r="1.6"/><path d="M9 8h3.5M14 12l-2 4"/></svg></div>
+      <div class="ttl"><h2>Room map</h2><p>Places you've been, grouped by their Wi-Fi. No GPS.</p></div>
+      <span class="badge" id="roomBadge">—</span>
+    </div>
+    <canvas class="viz" id="roomCanvas"></canvas>
+    <div class="legend"><span><i style="background:#46D39A"></i> Laptop</span><span><i style="background:#8EA8FF"></i> Phone</span></div>
+    <div class="read" id="roomRead">Collecting Wi-Fi fingerprints…</div>
+    <details>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> How this works</summary>
+      <div class="body"><p style="margin:0">Each place your phone has been leaves a Wi-Fi fingerprint — which networks it saw, and how strongly. Orbit lays those out so nearby spots sit together, then drops the laptop and phone where their current readings fit best. It fills in as you move around with location sharing on.</p></div>
+    </details>
+  </section>
 
-      <div class="lab-card-header">
-        <div class="lab-card-title-wrap">
-          <h3>Spectrum Constellation</h3>
-        </div>
-        <div class="lab-header-actions">
-          <span class="lab-badge" id="labSpecCount">0 APs</span>
-          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardSpec')">
-            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="lab-desc">Real-time carrier channel distribution across 2.4 GHz and 5 GHz frequency bands</div>
-      <canvas id="labSpecCanvas" class="lab-canvas"></canvas>
-      <div class="lab-footer">
-        <div>2.4 GHz: <span class="lab-val" id="labSpec24">0</span> · 5 GHz: <span class="lab-val" id="labSpec5">0</span></div>
-        <div>Shared: <span class="lab-val" id="labSpecShared">0 APs</span></div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
-        <div>Connected: <span class="lab-val" id="labSpecConnected">–</span></div>
-        <div>Congestion: <span class="lab-val" id="labSpecCongestion">–</span></div>
-      </div>
-      <div class="lab-details">
-        <div class="lab-grid">
-          <div class="lab-metric"><span>Total Visible Routers</span><b id="labSpecTotalDetail">0 APs</b></div>
-          <div class="lab-metric"><span>2.4 GHz ISM Band</span><b id="labSpec24Detail">0 networks</b></div>
-          <div class="lab-metric"><span>5 GHz ISM Band</span><b id="labSpec5Detail">0 networks</b></div>
-          <div class="lab-metric"><span>Shared with Phone</span><b id="labSpecSharedDetail">0 networks</b></div>
-          <div class="lab-metric"><span>Connected Access Point</span><b id="labSpecConnectedDetail">–</b></div>
-          <div class="lab-metric"><span>Peak Channel Congestion</span><b id="labSpecCongestionDetail">–</b></div>
-        </div>
-        <div class="lab-top-aps" id="labTopAps"></div>
-      </div>
-    </article>
+  <!-- Link latency -->
+  <section class="card" id="card-link" data-title="Link latency" onclick="cardTap(event, 'card-link')">
+    <div class="fs-back"><button onclick="event.stopPropagation(); closeLabFullscreen()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Overview</button></div>
+    <div class="row">
+      <div class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+      <div class="ttl"><h2>Link latency</h2><p>How fast the phone and laptop answer each other.</p></div>
+      <span class="badge good" id="linkBadge">—</span>
+    </div>
+    <canvas class="viz" id="linkCanvas"></canvas>
+    <div class="read" id="linkRead">Measuring…</div>
+    <details>
+      <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Details</summary>
+      <div class="body"><dl class="kv"><dt>Range seen</dt><dd id="lRange">—</dd><dt>Probes sent</dt><dd id="lSeq">0</dd></dl><p style="margin:0">A rising, jumpy line usually means the connection is congested or the phone has moved further away.</p></div>
+    </details>
+  </section>
 
-    <!-- 3. Topographic Room Clusters (2D SVD) -->
-    <article class="lab-card" id="cardCluster" onclick="onCardClicked(event, 'cardCluster')">
-      <div class="lab-fs-back-bar">
-        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
-          <span>Back to Overview</span>
-        </button>
-        <span style="font-size:12px;color:var(--text3);">Topographic Room Clusters Full-Screen</span>
-      </div>
-
-      <div class="lab-card-header">
-        <div class="lab-card-title-wrap">
-          <h3>Topographic Room Clusters</h3>
-        </div>
-        <div class="lab-header-actions">
-          <span class="lab-badge" id="labClusterCount">0 spots</span>
-          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardCluster')">
-            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="lab-desc">Unsupervised 2D SVD projection of multi-router RSSI vectors into room spaces</div>
-      <canvas id="labClusterCanvas" class="lab-canvas"></canvas>
-      <div class="lab-footer">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop: <span class="lab-val" id="labClusterLapFooter">Live</span></div>
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labClusterPhoneFooter">Live</span></div>
-        <div class="lab-val">2D PCA</div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
-        <div>Proximity: <span class="lab-val" id="labClusterVerdict">Evaluating…</span></div>
-        <div>Distance: <span class="lab-val" id="labClusterDistFooter">–</span></div>
-      </div>
-      <div class="lab-details">
-        <div class="lab-grid">
-          <div class="lab-metric"><span>Stored Fingerprints</span><b id="labClusterTotalDetail">0 spots</b></div>
-          <div class="lab-metric"><span>Latent Distance</span><b id="labClusterDist">–</b></div>
-          <div class="lab-metric"><span>Laptop Latent Vector</span><b id="labClusterLapCoord">–</b></div>
-          <div class="lab-metric"><span>Phone Latent Vector</span><b id="labClusterPhoneCoord">–</b></div>
-          <div class="lab-metric"><span>Room Classification</span><b id="labClusterConfidence">Evaluating…</b></div>
-          <div class="lab-metric"><span>Decomposition Model</span><b>Truncated SVD (k=2)</b></div>
-        </div>
-        <div class="lab-note-box">Projects high-dimensional RSSI vectors of surrounding Wi-Fi routers onto a 2D topological plane to detect room boundaries without GPS or internet access.</div>
-      </div>
-    </article>
-
-    <!-- 4. P2P Direct Probe & Latency RTT -->
-    <article class="lab-card" id="cardP2p" onclick="onCardClicked(event, 'cardP2p')">
-      <div class="lab-fs-back-bar">
-        <button class="lab-fs-back-btn" type="button" onclick="closeLabFullscreen()">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 18l-6-6 6-6"/></svg>
-          <span>Back to Overview</span>
-        </button>
-        <span style="font-size:12px;color:var(--text3);">P2P RTT Timing Full-Screen</span>
-      </div>
-
-      <div class="lab-card-header">
-        <div class="lab-card-title-wrap">
-          <h3>Peer-to-Peer RTT Timing</h3>
-        </div>
-        <div class="lab-header-actions">
-          <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
-          <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardP2p')">
-            <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-            <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="lab-desc">Continuous high-resolution packet latency and stability probe over local Wi-Fi</div>
-      <canvas id="labP2pCanvas" class="lab-canvas"></canvas>
-      <div class="lab-footer">
-        <div>Latency: <span class="lab-val" id="labP2pRtt">–</span></div>
-        <div>Jitter: <span class="lab-val" id="labP2pJitter">–</span></div>
-      </div>
-      <div class="lab-footer" style="margin-top:2px;">
-        <div>Stability: <span class="lab-val" id="labP2pQuality">Optimal (0% loss)</span></div>
-        <div>Range: <span class="lab-val" id="labP2pRange">–</span></div>
-      </div>
-      <div class="lab-details">
-        <div class="lab-grid">
-          <div class="lab-metric"><span>Current Round-Trip Time</span><b id="labP2pRttDetail">– ms</b></div>
-          <div class="lab-metric"><span>Latency Jitter (ΔRTT)</span><b id="labP2pJitterDetail">– ms</b></div>
-          <div class="lab-metric"><span>Observed Latency Range</span><b id="labP2pMinMax">–</b></div>
-          <div class="lab-metric"><span>Delivered Sequence</span><b id="labP2pSeqDetail">#0</b></div>
-          <div class="lab-metric"><span>Probe Rate</span><b>1.25 probes / sec</b></div>
-          <div class="lab-metric"><span>Transport Protocol</span><b>TCP Microsecond Telemetry</b></div>
-        </div>
-        <div class="lab-note-box">Times physical packet travel across the local wireless connection to monitor physical RF path interference and buffer delays.</div>
-      </div>
-    </article>
-
-  </main>
+  <footer>Readings come from this computer and your phone on the same Wi-Fi. Nothing here leaves your devices.</footer>
 </div>
 
 <script>
-const $ = (id) => document.getElementById(id);
-const isEmbedded = location.search.includes('embedded=1') || location.search.includes('app=1');
-if (isEmbedded) {
-  document.body.classList.add('embedded');
-}
+  const $ = (id) => document.getElementById(id);
+  const GOOD = '#46D39A', ACCENT = '#8EA8FF', WARN = '#FDBA74', DANGER = '#FF7A7A';
+  const isEmbedded = location.search.indexOf('embedded=1') >= 0 || location.search.indexOf('app=1') >= 0;
+  if (isEmbedded) document.body.classList.add('embedded');
 
-// Module title map for Android header synchronization
-const moduleTitles = {
-  cardMotion: 'Presence Disturbance',
-  cardSpec: 'Spectrum Constellation',
-  cardCluster: 'Topographic Room Clusters',
-  cardP2p: 'Peer-to-Peer RTT Timing'
-};
+  // ---------- canvas helper ----------
+  function initCanvas(id) {
+    const c = $(id); if (!c) return null;
+    const r = c.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const dpr = window.devicePixelRatio || 1;
+    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, width: r.width, height: r.height };
+  }
+  const fontOf = () => getComputedStyle(document.body).fontFamily;
 
-function isFullscreenOpen() {
-  return document.querySelector('.lab-card.fullscreen') !== null;
-}
+  // ---------- fullscreen (one module at a time) ----------
+  function isFullscreenOpen() { return !!document.querySelector('.card.full'); }
+  function closeLabFullscreen() {
+    document.querySelectorAll('.card.full').forEach(c => c.classList.remove('full'));
+    document.body.classList.remove('has-full');
+    try { if (window.OrbitLab && OrbitLab.onModuleClosed) OrbitLab.onModuleClosed(); } catch (e) {}
+    requestAnimationFrame(redrawAll);
+  }
+  function toggleFull(id) {
+    const card = $(id); if (!card) return;
+    if (card.classList.contains('full')) { closeLabFullscreen(); return; }
+    document.querySelectorAll('.card.full').forEach(c => c.classList.remove('full'));
+    card.classList.add('full'); document.body.classList.add('has-full');
+    card.scrollTop = 0;
+    try { if (window.OrbitLab && OrbitLab.onModuleOpened) OrbitLab.onModuleOpened(card.getAttribute('data-title') || 'Module'); } catch (e) {}
+    requestAnimationFrame(redrawAll);
+  }
+  window.isFullscreenOpen = isFullscreenOpen;
+  window.closeLabFullscreen = closeLabFullscreen;
+  window.toggleFull = toggleFull;
+  function cardTap(e, id) {
+    const card = $(id); if (!card || card.classList.contains('full')) return;
+    if (e.target.closest('summary, details, a, button, input')) return;   // let controls work
+    toggleFull(id);
+  }
+  window.cardTap = cardTap;
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isFullscreenOpen()) closeLabFullscreen(); });
 
-function closeLabFullscreen() {
-  document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
-  document.body.classList.remove('has-fullscreen');
-  try {
-    if (window.OrbitLab && typeof window.OrbitLab.onModuleClosed === 'function') {
-      window.OrbitLab.onModuleClosed();
-    }
-  } catch (e) {}
-  setTimeout(() => {
-    drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
-    renderDisturbanceLog(motionEvents);
-  }, 40);
-}
+  function redrawAll() { drawMotion(); drawSpectrum(); drawRoom(); drawLink(); }
 
-function toggleCardFullscreen(cardId) {
-  const card = $(cardId);
-  if (!card) return;
-  const isCurrently = card.classList.contains('fullscreen');
-  if (isCurrently) {
-    closeLabFullscreen();
-  } else {
-    document.querySelectorAll('.lab-card.fullscreen').forEach(c => c.classList.remove('fullscreen'));
-    card.classList.add('fullscreen');
-    document.body.classList.add('has-fullscreen');
-    const title = moduleTitles[cardId] || 'Module';
+  // ---------- relative time ----------
+  function timeAgo(ev) {
+    let s = ev.timestamp;
+    if (!s && ev.date && ev.time) { const d = new Date(ev.date + 'T' + ev.time); if (!isNaN(d)) s = d.getTime() / 1000; }
+    if (!s) return ev.time || '';
+    const diff = Math.max(0, Math.floor(Date.now() / 1000 - s));
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  // ====================================================
+  // 1. Movement  (/api/findmy/wifi/motion)
+  // ====================================================
+  let roomHist = [], vicHist = [], phoneActive = false, motionEvents = [];
+  let roomMean = -65, vicMean = -65, roomThr = 1.8, vicThr = 1.8;
+
+  function drawMotion() {
+    const sc = initCanvas('motionCanvas'); if (!sc) return;
+    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
+    const big = height > 160, lo = -95, hi = -40, padB = big ? 22 : 10, padT = big ? 16 : 8, dh = height - padB - padT;
+    const toY = (d) => height - padB - ((d - lo) / (hi - lo)) * dh;
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    (big ? [-50, -65, -80, -90] : [-55, -72, -88]).forEach(v => {
+      const y = toY(v); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      if (big) { ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf(); ctx.fillText(v + ' dBm', 6, y - 4); }
+    });
+    const line = (hist, mean, thr, color, fill, active) => {
+      if (!active || !hist.length) return;
+      const pts = hist.slice(big ? -60 : -34), step = width / Math.max(pts.length - 1, 1);
+      ctx.beginPath();
+      pts.forEach((p, i) => { const u = p.env_upper != null ? p.env_upper : mean + thr; const x = i * step, y = toY(u); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      for (let i = pts.length - 1; i >= 0; i--) { const l = pts[i].env_lower != null ? pts[i].env_lower : mean - thr; ctx.lineTo(i * step, toY(l)); }
+      ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+      ctx.beginPath();
+      pts.forEach((p, i) => { const x = i * step, y = toY(p.dbm != null ? p.dbm : -70); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.strokeStyle = color; ctx.lineWidth = big ? 2.2 : 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+      pts.forEach((p, i) => { if (p.is_spike) { ctx.beginPath(); ctx.arc(i * step, toY(p.dbm != null ? p.dbm : -70), big ? 4 : 3, 0, 7); ctx.fillStyle = DANGER; ctx.fill(); } });
+    };
+    line(vicHist, vicMean, vicThr, 'rgba(142,168,255,0.85)', 'rgba(142,168,255,0.06)', phoneActive);
+    line(roomHist, roomMean, roomThr, GOOD, 'rgba(70,211,154,0.07)', true);
+    if (!roomHist.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Listening to the room…', width / 2, height / 2); ctx.textAlign = 'start'; }
+  }
+
+  function renderLog() {
+    const box = $('logRows'); if (!box) return;
+    $('logCount').textContent = motionEvents.length ? '· ' + motionEvents.length : '';
+    if (!motionEvents.length) { box.innerHTML = '<div class="log-empty">Nothing stirred in the last 30 days.</div>'; return; }
+    const list = [...motionEvents].reverse().slice(0, isFullscreenOpen() ? 40 : 6);
+    box.innerHTML = list.map(e => {
+      const vic = (e.zone || (e.source === 'phone' ? 'Vicinity' : 'Room')).toLowerCase().indexOf('vic') >= 0;
+      return '<div class="log-row"><span class="z"><span class="tag ' + (vic ? 'vic' : 'room') + '">' + (vic ? 'Nearby' : 'Room') + '</span><span class="when">' + timeAgo(e) + '</span></span><span class="amt">+' + (e.peak_spike != null ? e.peak_spike : 0) + ' dB</span></div>';
+    }).join('');
+  }
+
+  async function clearMotionLog(e) {
+    if (e) e.stopPropagation();
+    try { const r = await fetch('/api/findmy/wifi/motion/log/clear', { method: 'POST' }); const d = await r.json(); if (d.status === 'ok') { motionEvents = []; renderLog(); } } catch (err) {}
+  }
+  window.clearMotionLog = clearMotionLog;
+
+  async function pollMotion() {
+    if (document.hidden) return;
     try {
-      if (window.OrbitLab && typeof window.OrbitLab.onModuleOpened === 'function') {
-        window.OrbitLab.onModuleOpened(title);
+      let payload = null;
+      if (window.OrbitLab && typeof OrbitLab.getPhoneWifiInfo === 'function') {
+        try { const raw = OrbitLab.getPhoneWifiInfo(); const p = raw && JSON.parse(raw); if (p && p.available && p.rssi) payload = p; } catch (err) {}
       }
-    } catch (e) {}
-    setTimeout(() => {
-      drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
-      renderDisturbanceLog(motionEvents);
-    }, 40);
-  }
-}
-
-function onCardClicked(e, cardId) {
-  // If clicking an interactive button, link, log action, or fullscreen back bar, don't toggle
-  if (e.target.closest('button, a, .lab-fs-back-bar, .lab-log-btn, .lab-log-link')) return;
-  const card = $(cardId);
-  if (!card) return;
-  // If already fullscreen, tapping inside the body should not close it
-  if (card.classList.contains('fullscreen')) return;
-  toggleCardFullscreen(cardId);
-}
-
-// Keyboard navigation: Escape key closes fullscreen
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isFullscreenOpen()) {
-    closeLabFullscreen();
-  }
-});
-
-// Canvas helper
-function initCanvas(id) {
-  const c = $(id);
-  if (!c) return null;
-  const rect = c.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return null;
-  const dpr = window.devicePixelRatio || 1;
-  c.width = Math.round(rect.width * dpr);
-  c.height = Math.round(rect.height * dpr);
-  const ctx = c.getContext('2d');
-  ctx.scale(dpr, dpr);
-  return { ctx: ctx, width: rect.width, height: rect.height };
-}
-
-// Human-readable relative time formatting
-function formatTimeAgo(ev) {
-  if (!ev) return '';
-  let epochSec = ev.timestamp;
-  if (!epochSec && ev.date && ev.time) {
-    try {
-      const dt = new Date(`${ev.date}T${ev.time}`);
-      if (!isNaN(dt.getTime())) {
-        epochSec = dt.getTime() / 1000;
-      }
-    } catch (e) {}
-  }
-  if (!epochSec) return ev.time || '';
-  const nowSec = Date.now() / 1000;
-  const diff = Math.max(0, Math.floor(nowSec - epochSec));
-  if (diff < 5) return 'Just now';
-  if (diff < 60) return `${diff}s ago`;
-  const mins = Math.floor(diff / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-// Render unified disturbance log (tracks last 30 days)
-function renderDisturbanceLog(events) {
-  const container = $('labRecentMovements');
-  const countEl = $('labMotionLogCount');
-  if (!container) return;
-
-  const total = events ? events.length : 0;
-  if (countEl) {
-    countEl.textContent = total + (total === 1 ? ' event' : ' events');
-    countEl.className = 'lab-log-badge' + (total > 0 ? ' has-events' : '');
-  }
-
-  if (!events || events.length === 0) {
-    container.innerHTML = '<div class="lab-recent-empty">No disturbances recorded in the last 30 days. Reflections calm.</div>';
-    return;
-  }
-
-  const isEnlarged = isFullscreenOpen();
-  const sorted = [...events].reverse();
-  const displayList = isEnlarged ? sorted : sorted.slice(0, 5);
-
-  container.innerHTML = displayList.map(ev => {
-    const ago = formatTimeAgo(ev);
-    const zone = ev.zone || (ev.source === 'phone' ? 'Vicinity' : 'Room');
-    const isVicinity = zone.toLowerCase().includes('vicinity');
-    const tagClass = isVicinity ? 'phone' : 'laptop';
-    const tagLabel = isVicinity ? 'Vicinity' : 'Room';
-    return `
-      <div class="lab-recent-item">
-        <div class="lab-recent-time-badge">
-          <span class="lab-recent-dot" style="${isVicinity ? 'background:#8EA8FF;' : ''}"></span>
-          <span class="lab-sensor-tag ${tagClass}">${tagLabel}</span>
-          <span class="lab-recent-rel">${ago}</span>
-          <span class="lab-recent-clock">${ev.time || ''}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span class="lab-recent-spike">+${ev.peak_spike} dB</span>
-          <span style="font-size:10px;color:var(--text3);">${ev.dbm} dBm</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-// ----------------------------------------------------
-// 1. Dual Motion canvas (Laptop + Phone) with visual envelope & spikes
-// ----------------------------------------------------
-let laptopMotionHist = [];
-let laptopMotionMeanDbm = -65;
-let laptopMotionThreshold = 1.8;
-let laptopMotionSpike = 0.0;
-let laptopMotionPeakSpike = 0.0;
-let laptopMotionDetected = false;
-
-let phoneMotionHist = [];
-let phoneMotionMeanDbm = -65;
-let phoneMotionThreshold = 1.8;
-let phoneMotionSpike = 0.0;
-let phoneMotionPeakSpike = 0.0;
-let phoneMotionDetected = false;
-let phoneMotionActive = false;
-let phoneMotionStatus = "Standby (Zero background battery)";
-
-let motionEvents = [];
-
-async function clearMotionLog(e) {
-  if (e) e.stopPropagation();
-  try {
-    const res = await fetch('/api/findmy/wifi/motion/log/clear', { method: 'POST' });
-    const data = await res.json();
-    if (data.status === 'ok') {
-      motionEvents = [];
-      renderDisturbanceLog([]);
-    }
-  } catch (err) {}
-}
-
-function drawLabMotion() {
-  const sc = initCanvas('labMotionCanvas');
-  if (!sc) return;
-  const { ctx, width, height } = sc;
-  ctx.clearRect(0, 0, width, height);
-
-  const minVal = -95, maxVal = -40;
-  const isEnlarged = height > 140;
-  const padBottom = isEnlarged ? 26 : 14;
-  const padTop = isEnlarged ? 20 : 10;
-  const drawHeight = height - padTop - padBottom;
-
-  const toY = (dbm) => height - padBottom - ((dbm - minVal) / (maxVal - minVal)) * drawHeight;
-
-  // Background reference lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 1;
-
-  if (isEnlarged) {
-    [-50, -65, -80, -90].forEach(val => {
-      const y = toY(val);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      ctx.fillStyle = '#7D8593';
-      ctx.font = '10px system-ui';
-      ctx.fillText(val + ' dBm', 8, y - 4);
-    });
-  } else {
-    const midY = toY(-67.5);
-    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(width, midY); ctx.stroke();
-  }
-
-  // 1. Draw Laptop Waveform (Green #46D39A)
-  if (laptopMotionHist.length) {
-    const pts = laptopMotionHist.slice(isEnlarged ? -60 : -30);
-    const step = width / Math.max(pts.length - 1, 1);
-
-    // Shaded Quiet Envelope
-    ctx.beginPath();
-    pts.forEach((pt, i) => {
-      const upperDbm = pt.env_upper != null ? pt.env_upper : (laptopMotionMeanDbm + laptopMotionThreshold);
-      const x = i * step;
-      const y = toY(upperDbm);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    for (let i = pts.length - 1; i >= 0; i--) {
-      const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (laptopMotionMeanDbm - laptopMotionThreshold);
-      const x = i * step;
-      const y = toY(lowerDbm);
-      ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = laptopMotionDetected ? 'rgba(255, 122, 122, 0.12)' : 'rgba(70, 211, 154, 0.08)';
-    ctx.fill();
-
-    // Signal Line
-    ctx.beginPath();
-    ctx.strokeStyle = laptopMotionDetected ? '#FF7A7A' : '#46D39A';
-    ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
-    ctx.lineJoin = 'round';
-    pts.forEach((pt, i) => {
-      const x = i * step;
-      const y = toY(pt.dbm || -70);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Spikes
-    pts.forEach((pt, i) => {
-      if (pt.is_spike) {
-        const x = i * step;
-        const y = toY(pt.dbm || -70);
-        ctx.beginPath();
-        ctx.arc(x, y, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#FF7A7A';
-        ctx.fill();
-      }
-    });
-  }
-
-  // 2. Draw Phone Waveform (Blue #8EA8FF) when active
-  if (phoneMotionActive && phoneMotionHist.length) {
-    const pts = phoneMotionHist.slice(isEnlarged ? -60 : -30);
-    const step = width / Math.max(pts.length - 1, 1);
-
-    // Shaded Quiet Envelope
-    ctx.beginPath();
-    pts.forEach((pt, i) => {
-      const upperDbm = pt.env_upper != null ? pt.env_upper : (phoneMotionMeanDbm + phoneMotionThreshold);
-      const x = i * step;
-      const y = toY(upperDbm);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    for (let i = pts.length - 1; i >= 0; i--) {
-      const lowerDbm = pts[i].env_lower != null ? pts[i].env_lower : (phoneMotionMeanDbm - phoneMotionThreshold);
-      const x = i * step;
-      const y = toY(lowerDbm);
-      ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = phoneMotionDetected ? 'rgba(255, 122, 122, 0.12)' : 'rgba(142, 168, 255, 0.08)';
-    ctx.fill();
-
-    // Signal Line
-    ctx.beginPath();
-    ctx.strokeStyle = phoneMotionDetected ? '#FF7A7A' : '#8EA8FF';
-    ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
-    ctx.lineJoin = 'round';
-    pts.forEach((pt, i) => {
-      const x = i * step;
-      const y = toY(pt.dbm || -70);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Spikes
-    pts.forEach((pt, i) => {
-      if (pt.is_spike) {
-        const x = i * step;
-        const y = toY(pt.dbm || -70);
-        ctx.beginPath();
-        ctx.arc(x, y, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#FF7A7A';
-        ctx.fill();
-      }
-    });
-  }
-
-  // Minimalist Sensor Legend (clean dots and labels in top/corner)
-  ctx.font = '10px system-ui';
-  // Room Wi-Fi legend
-  ctx.fillStyle = '#46D39A';
-  ctx.beginPath(); ctx.arc(14, 14, 3.5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#A6AEBB';
-  ctx.fillText('Connected Wi-Fi (Room)', 22, 17);
-
-  // Vicinity legend
-  const phoneX = isEnlarged ? 175 : 155;
-  ctx.fillStyle = phoneMotionActive ? '#8EA8FF' : '#555C66';
-  ctx.beginPath(); ctx.arc(phoneX, 14, 3.5, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = phoneMotionActive ? '#A6AEBB' : '#6A7280';
-  ctx.fillText(phoneMotionActive ? 'Local Vicinity (Near)' : 'Vicinity (Standby)', phoneX + 8, 17);
-}
-
-async function pollLabMotion() {
-  if (document.hidden) return;
-  try {
-    let phonePayload = null;
-    if (window.OrbitLab && typeof window.OrbitLab.getPhoneWifiInfo === 'function') {
-      try {
-        const raw = window.OrbitLab.getPhoneWifiInfo();
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && parsed.available && parsed.rssi) {
-            phonePayload = parsed;
-          }
-        }
-      } catch (err) {}
-    }
-
-    const fetchOpts = phonePayload ? {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(phonePayload)
-    } : { method: 'GET' };
-
-    const res = await fetch('/api/findmy/wifi/motion', fetchOpts);
-    const data = await res.json();
-    if (data.status === 'ok') {
+      const res = await fetch('/api/findmy/wifi/motion', payload
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+        : { method: 'GET' });
+      const data = await res.json();
+      if (data.status !== 'ok') return;
       const lap = data.laptop || data;
-      laptopMotionHist = lap.history || [];
-      laptopMotionThreshold = lap.threshold || 1.8;
-      laptopMotionMeanDbm = lap.mean_dbm != null ? lap.mean_dbm : -65;
-      laptopMotionPeakSpike = lap.max_spike || 0.0;
-      laptopMotionSpike = lap.spike || 0.0;
-      laptopMotionDetected = !!lap.motion_detected;
-
+      roomHist = lap.history || []; roomThr = lap.threshold || 1.8; roomMean = lap.mean_dbm != null ? lap.mean_dbm : -65;
+      const roomMoving = !!lap.motion_detected, roomSpike = lap.spike || 0;
       const ph = data.phone || null;
-      if (ph) {
-        phoneMotionActive = !!ph.active;
-        phoneMotionStatus = ph.status || (phoneMotionActive ? "Active (Foreground)" : "Standby (Zero background battery)");
-        phoneMotionHist = ph.history || [];
-        phoneMotionThreshold = ph.threshold || 1.8;
-        phoneMotionMeanDbm = ph.mean_dbm != null ? ph.mean_dbm : -65;
-        phoneMotionPeakSpike = ph.max_spike || 0.0;
-        phoneMotionSpike = ph.spike || 0.0;
-        phoneMotionDetected = !!ph.motion_detected;
-      }
-
+      phoneActive = !!(ph && ph.active);
+      if (ph) { vicHist = ph.history || []; vicThr = ph.threshold || 1.8; vicMean = ph.mean_dbm != null ? ph.mean_dbm : -65; }
+      const vicMoving = !!(ph && ph.motion_detected), vicSpike = (ph && ph.spike) || 0;
       motionEvents = data.events || lap.events || [];
+      drawMotion(); renderLog();
 
-      drawLabMotion();
+      const b = $('motionBadge');
+      b.textContent = roomMoving ? 'Movement' : 'Quiet'; b.className = 'badge ' + (roomMoving ? 'alert' : 'good');
+      const roomTxt = 'Room <b style="color:' + (roomMoving ? DANGER : 'var(--text)') + '">' + (roomMoving ? 'movement (+' + roomSpike + ' dB)' : 'quiet') + '</b>';
+      const vicTxt = !phoneActive ? '<span class="sep">·</span>nearby <b style="color:var(--text-3)">phone off</b>'
+        : '<span class="sep">·</span>nearby <b style="color:' + (vicMoving ? DANGER : 'var(--text)') + '">' + (vicMoving ? 'movement' : 'calm') + '</b>';
+      $('motionRead').innerHTML = roomTxt + vicTxt;
+    } catch (e) {}
+  }
 
-      // Dual Badges
-      const bRoom = $('labMotionBadge');
-      if (bRoom) {
-        if (laptopMotionDetected) {
-          bRoom.textContent = 'Room: Movement (+' + laptopMotionSpike + ' dB)';
-          bRoom.className = 'lab-badge alert';
-        } else {
-          bRoom.textContent = 'Room: Quiet';
-          bRoom.className = 'lab-badge active';
-        }
-      }
-      const bVicinity = $('labMotionPhoneBadge');
-      if (bVicinity) {
-        if (!phoneMotionActive) {
-          bVicinity.textContent = 'Vicinity: Standby';
-          bVicinity.className = 'lab-badge';
-        } else if (phoneMotionDetected) {
-          bVicinity.textContent = 'Vicinity: Movement (+' + phoneMotionSpike + ' dB)';
-          bVicinity.className = 'lab-badge alert';
-        } else {
-          bVicinity.textContent = 'Vicinity: Calm';
-          bVicinity.className = 'lab-badge active';
-        }
-      }
+  // ====================================================
+  // 2. Spectrum  (/api/findmy/wifi/spectrum) — also drives Same-place
+  // ====================================================
+  let specNetworks = [];
+  function drawSpectrum() {
+    const sc = initCanvas('specCanvas'); if (!sc) return;
+    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
+    const big = height > 160, mid = width * 0.46, padB = 16, top = big ? 14 : 8, dh = height - padB - top;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(mid, 6); ctx.lineTo(mid, height - 6); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf();
+    ctx.fillText('2.4 GHz', 6, height - 4); ctx.fillText('5 GHz', mid + 8, height - 4);
+    if (!specNetworks.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Scanning the air…', width / 2, height / 2); ctx.textAlign = 'start'; return; }
+    const toY = (d) => height - padB - ((Math.max(-95, Math.min(-30, d)) + 95) / 65) * dh;
+    specNetworks.forEach(ap => {
+      const b24 = (ap.freq || 0) < 3000 || ap.band === '2.4GHz';
+      let x = b24 ? 16 + ((Math.max(1, Math.min(14, ap.chan || 6)) - 1) / 13) * (mid - 34)
+                  : mid + 14 + ((Math.max(0, Math.min(129, (ap.chan || 36) - 36)) / 129)) * (width - mid - 28);
+      const y = toY(ap.dbm);
+      ctx.beginPath(); ctx.moveTo(x, height - padB); ctx.lineTo(x, y);
+      ctx.strokeStyle = ap.connected ? GOOD : (ap.shared ? 'rgba(255,255,255,0.3)' : (b24 ? 'rgba(142,168,255,0.22)' : 'rgba(70,211,154,0.22)'));
+      ctx.lineWidth = ap.connected ? 2.4 : 1.4; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, ap.connected ? 5 : (ap.shared ? 4.2 : 3), 0, 7);
+      ctx.fillStyle = ap.connected ? GOOD : (ap.shared ? '#fff' : (b24 ? ACCENT : GOOD)); ctx.fill();
+      if (big && (ap.connected || ap.dbm > -62)) { ctx.fillStyle = '#ECEEF1'; ctx.font = '10px ' + fontOf(); ctx.fillText((ap.ssid || 'AP').slice(0, 10), Math.max(2, x - 14), y - 8); }
+    });
+  }
 
-      // Footer values
-      if ($('labMotionTarget')) {
-        const ssid = lap.target && lap.target.ssid ? lap.target.ssid : 'Wi-Fi';
-        const dbmStr = lap.current_dbm != null ? lap.current_dbm + ' dBm' : '–';
-        $('labMotionTarget').textContent = `${ssid} (${dbmStr})`;
-      }
-      if ($('labMotionPhoneTarget')) {
-        if (phoneMotionActive) {
-          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Vicinity Link';
-          const pDbm = ph.current_dbm != null ? ph.current_dbm + ' dBm' : '–';
-          $('labMotionPhoneTarget').textContent = `${pSsid} (${pDbm})`;
-        } else {
-          $('labMotionPhoneTarget').textContent = 'Local Vicinity (Active on demand)';
-        }
-      }
-
-      if ($('labMotionSpike')) {
-        const spk = $('labMotionSpike');
-        spk.textContent = '+' + laptopMotionSpike + ' dB';
-        spk.style.color = laptopMotionDetected ? 'var(--danger)' : 'var(--text)';
-      }
-      if ($('labMotionPhoneSpike')) {
-        const pSpk = $('labMotionPhoneSpike');
-        if (phoneMotionActive) {
-          pSpk.textContent = '+' + phoneMotionSpike + ' dB';
-          pSpk.style.color = phoneMotionDetected ? 'var(--danger)' : 'var(--text)';
-        } else {
-          pSpk.textContent = '–';
-          pSpk.style.color = 'var(--text3)';
-        }
-      }
-
-      if ($('labMotionTotalLogs')) {
-        $('labMotionTotalLogs').textContent = (lap.total_events || 0) + ' events';
-      }
-
-      // Details view
-      if ($('labMotionLapDbm')) $('labMotionLapDbm').textContent = (lap.current_dbm != null ? lap.current_dbm + ' dBm' : '–');
-      if ($('labMotionPhoneDbmDetail')) $('labMotionPhoneDbmDetail').textContent = (phoneMotionActive && ph.current_dbm != null ? ph.current_dbm + ' dBm' : 'Active');
-      if ($('labMotionSpikeDetail')) $('labMotionSpikeDetail').textContent = '+' + laptopMotionSpike + ' dB ' + (laptopMotionDetected ? '(Exceeded envelope)' : '(Within envelope)');
-      if ($('labMotionPhoneSpikeDetail')) $('labMotionPhoneSpikeDetail').textContent = phoneMotionActive ? ('+' + phoneMotionSpike + ' dB ' + (phoneMotionDetected ? '(Exceeded envelope)' : '(Within envelope)')) : 'Calm';
-      if ($('labMotionStatusNote')) {
-        const parts = [];
-        if (laptopMotionDetected && phoneMotionDetected) {
-          parts.push('Full-space movement detected: both immediate laptop vicinity and connected Wi-Fi room reflections disturbed.');
-        } else if (phoneMotionDetected) {
-          parts.push('Immediate vicinity movement detected near laptop (+' + phoneMotionSpike + ' dB). Room remains calm.');
-        } else if (laptopMotionDetected) {
-          parts.push('Room-wide movement detected across connected Wi-Fi field (+' + laptopMotionSpike + ' dB). Immediate vicinity calm.');
-        } else {
-          parts.push('Dual-zone calm maintained. Both immediate laptop vicinity and room Wi-Fi reflections are quiet.');
-        }
-        $('labMotionStatusNote').textContent = parts.join(' ');
-      }
-
-      renderDisturbanceLog(motionEvents);
+  function renderSamePlace() {
+    const shared = specNetworks.filter(n => n.shared && n.phone_dbm != null);
+    const meter = $('spMeter'), read = $('spRead'), badge = $('spBadge'), list = $('spList');
+    if (!specNetworks.length) { read.textContent = 'Waiting for a Wi-Fi scan…'; return; }
+    if (!shared.length) {
+      meter.style.width = '0'; badge.textContent = '—'; badge.className = 'badge';
+      read.textContent = 'No networks seen by both devices yet. Open this with your phone nearby.';
+      list.innerHTML = '<div class="log-empty">No networks seen by both devices yet.</div>';
+      return;
     }
-  } catch (e) {}
-}
+    const gaps = shared.map(n => Math.abs(n.dbm - n.phone_dbm));
+    const gap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const match = Math.max(0, Math.min(1, (shared.length / Math.max(specNetworks.length, 1)) * 0.65 + (1 - Math.min(gap, 18) / 18) * 0.35));
+    meter.style.width = Math.round(match * 100) + '%';
+    const v = match > 0.55 ? ['Same place', 'good'] : match > 0.3 ? ['Same building', ''] : ['Apart', 'alert'];
+    badge.textContent = v[0]; badge.className = 'badge ' + v[1];
+    read.innerHTML = '<b>' + shared.length + '</b> of ' + specNetworks.length + ' networks shared<span class="sep">·</span>signals within <b>' + Math.round(gap) + ' dB</b>';
+    const dbmPct = (d) => Math.max(3, Math.min(100, ((d + 90) / 60) * 100));
+    list.innerHTML = shared.sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
+      '<div class="sh"><div class="name"><span>' + (n.ssid || 'Hidden') + '</span><span class="d">Δ ' + Math.round(Math.abs(n.dbm - n.phone_dbm)) + ' dB</span></div>' +
+      '<div class="bars"><div class="bar"><span>Phone</span><div class="track"><div class="fill" style="width:' + dbmPct(n.phone_dbm) + '%;background:#8EA8FF"></div></div></div>' +
+      '<div class="bar"><span>Laptop</span><div class="track"><div class="fill" style="width:' + dbmPct(n.dbm) + '%;background:#46D39A"></div></div></div></div></div>').join('');
+  }
 
-// ----------------------------------------------------
-// 2. Spectrum canvas
-// ----------------------------------------------------
-let specNetworks = [];
-function drawLabSpectrum() {
-  const sc = initCanvas('labSpecCanvas');
-  if (!sc) return;
-  const { ctx, width, height } = sc;
-  ctx.clearRect(0, 0, width, height);
-
-  const isEnlarged = height > 140;
-  const midX = width * 0.45;
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.setLineDash([3, 3]);
-  ctx.beginPath(); ctx.moveTo(midX, 10); ctx.lineTo(midX, height - 20); ctx.stroke();
-  ctx.setLineDash([]);
-
-  ctx.fillStyle = '#7D8593';
-  ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
-  ctx.fillText('2.4 GHz Band', 10, height - 6);
-  ctx.fillText('5 GHz Band', midX + 10, height - 6);
-
-  if (!specNetworks.length) return;
-
-  const minDbm = -95, maxDbm = -35;
-  const padBottom = isEnlarged ? 30 : 20;
-  const drawHeight = height - padBottom - (isEnlarged ? 24 : 10);
-
-  specNetworks.forEach(ap => {
-    let x = 0;
-    if (ap.freq < 3000) {
-      const chan = Math.max(1, Math.min(14, ap.chan || 6));
-      x = 10 + ((chan - 1) / 13) * (midX - 25);
-    } else {
-      const chan = ap.chan || 36;
-      x = (midX + 10) + (Math.max(0, Math.min(130, chan - 36)) / 130) * (width - midX - 25);
-    }
-
-    const norm = Math.max(0, Math.min(1, (ap.dbm - minDbm) / (maxDbm - minDbm)));
-    const barH = norm * drawHeight;
-    const y = height - padBottom - barH;
-
-    const barW = isEnlarged ? 12 : 7;
-    ctx.fillStyle = ap.connected ? '#46D39A' : (ap.shared ? '#8EA8FF' : '#556070');
-    ctx.fillRect(x - barW/2, y, barW, barH);
-
-    if (ap.connected) {
-      ctx.beginPath();
-      ctx.arc(x, y - 4, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#46D39A';
-      ctx.fill();
-    }
-
-    if (isEnlarged && (ap.connected || ap.dbm > -65)) {
-      ctx.fillStyle = '#ECEEF1';
-      ctx.font = '9px system-ui';
-      const label = (ap.ssid || 'AP').slice(0, 8);
-      ctx.fillText(label, Math.max(2, x - 12), y - 7);
-    }
-  });
-}
-
-async function pollLabSpectrum() {
-  if (document.hidden) return;
-  try {
-    const res = await fetch('/api/findmy/wifi/spectrum');
-    const data = await res.json();
-    if (data.status === 'ok') {
+  async function pollSpectrum() {
+    if (document.hidden) return;
+    try {
+      const res = await fetch('/api/findmy/wifi/spectrum'); const data = await res.json();
+      if (data.status !== 'ok') return;
       specNetworks = data.networks || [];
-      drawLabSpectrum();
+      const b24 = (data.bands && data.bands['2.4GHz']) || 0, b5 = (data.bands && data.bands['5GHz']) || 0, sh = data.shared_count || 0;
+      drawSpectrum();
+      $('specBadge').textContent = (data.total || specNetworks.length);
+      $('specRead').innerHTML = '<b>' + b24 + '</b> on 2.4 GHz<span class="sep">·</span><b>' + b5 + '</b> on 5 GHz<span class="sep">·</span><b>' + sh + '</b> shared';
+      $('specList').innerHTML = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
+        '<dt>' + (n.connected ? '★ ' : '') + (n.ssid || 'Hidden') + '</dt><dd>' + n.dbm + ' dBm' + (n.shared ? ' · shared' : '') + '</dd>').join('');
+      if (data.connected_ssid) $('connName').textContent = data.connected_ssid;
+      renderSamePlace();
+    } catch (e) {}
+  }
 
-      const totalCount = data.total || 0;
-      const b24 = (data.bands && data.bands['2.4GHz']) || 0;
-      const b5 = (data.bands && data.bands['5GHz']) || 0;
-      const sharedCount = data.shared_count || 0;
-
-      $('labSpecCount').textContent = totalCount + ' APs';
-      $('labSpec24').textContent = b24;
-      $('labSpec5').textContent = b5;
-      $('labSpecShared').textContent = sharedCount + ' APs';
-
-      // Most congested channel
-      const chanCounts = {};
-      specNetworks.forEach(ap => { chanCounts[ap.chan] = (chanCounts[ap.chan] || 0) + 1; });
-      let maxChan = null, maxCount = 0;
-      for (const [ch, c] of Object.entries(chanCounts)) {
-        if (c > maxCount) { maxCount = c; maxChan = ch; }
-      }
-      const congStr = maxChan ? 'Ch ' + maxChan + ' (' + maxCount + ' APs)' : '–';
-      if ($('labSpecCongestion')) $('labSpecCongestion').textContent = congStr;
-
-      // Connected network
-      const connAp = specNetworks.find(ap => ap.connected);
-      const connStr = connAp ? connAp.ssid + ' (' + connAp.dbm + ' dBm)' : 'Not connected';
-      if ($('labSpecConnected')) $('labSpecConnected').textContent = connStr;
-
-      // Details
-      if ($('labSpecTotalDetail')) $('labSpecTotalDetail').textContent = totalCount + ' visible routers';
-      if ($('labSpec24Detail')) $('labSpec24Detail').textContent = b24 + ' APs across 13 channels';
-      if ($('labSpec5Detail')) $('labSpec5Detail').textContent = b5 + ' APs across 25 channels';
-      if ($('labSpecSharedDetail')) $('labSpecSharedDetail').textContent = sharedCount + ' routers seen by both devices';
-      if ($('labSpecConnectedDetail')) $('labSpecConnectedDetail').textContent = connAp ? connAp.ssid + ' · ' + connAp.dbm + ' dBm (Ch ' + connAp.chan + ')' : 'None';
-      if ($('labSpecCongestionDetail')) $('labSpecCongestionDetail').textContent = maxChan ? 'Channel ' + maxChan + ' (' + maxCount + ' APs)' : 'None';
-
-      const topList = $('labTopAps');
-      if (topList && specNetworks.length) {
-        const sorted = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6);
-        topList.innerHTML = sorted.map(ap => `
-          <div class="lab-ap-row">
-            <div class="lab-ap-ssid">${ap.connected ? '★ ' : ''}${ap.ssid || 'Hidden Network'}</div>
-            <div class="lab-ap-meta">${ap.freq < 3000 ? '2.4G' : '5G'} · Ch ${ap.chan} · <b>${ap.dbm} dBm</b>${ap.shared ? ' · <span style="color:var(--online)">Shared</span>' : ''}</div>
-          </div>
-        `).join('');
-      }
+  // ====================================================
+  // 3. Room map  (/api/findmy/wifi/clusters)
+  // ====================================================
+  let clusters = null;
+  function drawRoom() {
+    const sc = initCanvas('roomCanvas'); if (!sc) return;
+    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
+    const big = height > 160, cx = width / 2, cy = height / 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, 8); ctx.lineTo(cx, height - 8); ctx.moveTo(8, cy); ctx.lineTo(width - 8, cy); ctx.stroke();
+    const enough = clusters && clusters.total_fingerprints >= 3 && clusters.clusters && clusters.clusters.length;
+    if (!enough) {
+      ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center';
+      ctx.fillText('Collecting Wi-Fi fingerprints…', cx, cy + 4); ctx.textAlign = 'start'; return;
     }
-  } catch (e) {}
-}
-
-// ----------------------------------------------------
-// 3. Cluster Canvas (2D SVD Room Topography)
-// ----------------------------------------------------
-let clusterData = null;
-function drawLabClusters() {
-  const sc = initCanvas('labClusterCanvas');
-  if (!sc) return;
-  const { ctx, width, height } = sc;
-  ctx.clearRect(0, 0, width, height);
-
-  const cx = width / 2;
-  const cy = height / 2;
-  const isEnlarged = height > 140;
-
-  // Crosshairs
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.beginPath(); ctx.moveTo(cx, 10); ctx.lineTo(cx, height - 10); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(10, cy); ctx.lineTo(width - 10, cy); ctx.stroke();
-
-  // Concentric room distance rings
-  const maxR = Math.min(width, height) * 0.42;
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1;
-  [0.35, 0.7, 1.0].forEach(r => {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * maxR, 0, Math.PI * 2);
-    ctx.stroke();
-  });
-
-  if (!clusterData || !clusterData.clusters || clusterData.clusters.length === 0) {
-    ctx.fillStyle = '#7D8593';
-    ctx.font = '11px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText('Accumulating RF ambient fingerprints…', cx, cy + 4);
-    ctx.textAlign = 'start';
-    return;
+    const pts = clusters.clusters, lap = clusters.live_laptop, ph = clusters.live_phone;
+    let span = 10;
+    pts.forEach(p => { span = Math.max(span, Math.abs(p.x), Math.abs(p.y)); });
+    if (lap) span = Math.max(span, Math.abs(lap.x), Math.abs(lap.y));
+    if (ph) span = Math.max(span, Math.abs(ph.x), Math.abs(ph.y));
+    span *= 1.3;
+    const pad = big ? 30 : 16;
+    const sx = (x) => cx + (x / span) * (width / 2 - pad), sy = (y) => cy - (y / span) * (height / 2 - pad);
+    pts.forEach(p => { ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), big ? 4 : 3, 0, 7); ctx.fillStyle = 'rgba(160,174,187,0.28)'; ctx.fill(); });
+    if (lap && ph) { ctx.beginPath(); ctx.moveTo(sx(lap.x), sy(lap.y)); ctx.lineTo(sx(ph.x), sy(ph.y)); ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]); }
+    const dot = (p, col, r, label) => {
+      if (!p) return; const x = sx(p.x), y = sy(p.y);
+      ctx.beginPath(); ctx.arc(x, y, r + 5, 0, 7); ctx.fillStyle = col + '22'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = col; ctx.strokeStyle = '#0A0C10'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
+      if (big) { ctx.fillStyle = '#ECEEF1'; ctx.font = '11px ' + fontOf(); ctx.fillText(label, x + 10, y + 3); }
+    };
+    dot(lap, GOOD, big ? 7 : 5, 'Laptop'); dot(ph, ACCENT, big ? 7 : 4, 'Phone');
   }
 
-  // Calculate dynamic coordinate bounds so points never draw off-screen
-  const pts = clusterData.clusters || [];
-  let minX = -10, maxX = 10, minY = -10, maxY = 10;
-  pts.forEach(pt => {
-    if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
-    if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
-  });
-  if (clusterData.live_laptop) {
-    if (clusterData.live_laptop.x < minX) minX = clusterData.live_laptop.x;
-    if (clusterData.live_laptop.x > maxX) maxX = clusterData.live_laptop.x;
-    if (clusterData.live_laptop.y < minY) minY = clusterData.live_laptop.y;
-    if (clusterData.live_laptop.y > maxY) maxY = clusterData.live_laptop.y;
-  }
-  if (clusterData.live_phone) {
-    if (clusterData.live_phone.x < minX) minX = clusterData.live_phone.x;
-    if (clusterData.live_phone.x > maxX) maxX = clusterData.live_phone.x;
-    if (clusterData.live_phone.y < minY) minY = clusterData.live_phone.y;
-    if (clusterData.live_phone.y > maxY) maxY = clusterData.live_phone.y;
-  }
-  const spanX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.35 || 25;
-  const spanY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.35 || 25;
-
-  const toScreen = (x, y) => [
-    cx + (x / spanX) * (width / 2 - (isEnlarged ? 32 : 18)),
-    cy - (y / spanY) * (height / 2 - (isEnlarged ? 32 : 18))
-  ];
-
-  // Fingerprint cluster spots
-  pts.forEach(pt => {
-    const [px, py] = toScreen(pt.x, pt.y);
-    ctx.beginPath();
-    ctx.arc(px, py, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.fill();
-    if (isEnlarged && pt.label) {
-      ctx.fillStyle = '#A6AEBB';
-      ctx.font = '9px system-ui';
-      ctx.fillText(pt.label, px + 6, py - 3);
-    }
-  });
-
-  // Live Laptop Position
-  if (clusterData.live_laptop) {
-    const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-    ctx.beginPath();
-    ctx.arc(lx, ly, isEnlarged ? 7.5 : 5.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#46D39A';
-    ctx.fill();
-    ctx.strokeStyle = '#0D0F12';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = '#ECEEF1';
-    ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
-    ctx.fillText('Laptop', lx + (isEnlarged ? 10 : 7), ly + 3);
-  }
-
-  // Live Phone Position
-  if (clusterData.live_phone) {
-    const [phx, phy] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
-    ctx.beginPath();
-    ctx.arc(phx, phy, isEnlarged ? 7.5 : 5.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#8EA8FF';
-    ctx.fill();
-    ctx.strokeStyle = '#0D0F12';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = '#ECEEF1';
-    ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
-    ctx.fillText('Phone', phx + (isEnlarged ? 10 : 7), phy + 3);
-
-    // Connector link
-    if (clusterData.live_laptop) {
-      const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
-      ctx.beginPath();
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = 'rgba(142, 168, 255, 0.45)';
-      ctx.lineWidth = 1.5;
-      ctx.moveTo(lx, ly);
-      ctx.lineTo(phx, phy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
-}
-
-async function pollLabClusters() {
-  if (document.hidden) return;
-  try {
-    const res = await fetch('/api/findmy/wifi/clusters');
-    const data = await res.json();
-    if (data.status === 'ok') {
-      clusterData = data;
-      drawLabClusters();
-
-      const spots = data.total_fingerprints || (data.clusters && data.clusters.length) || 0;
-      $('labClusterCount').textContent = spots + ' spots';
-      if ($('labClusterTotalDetail')) $('labClusterTotalDetail').textContent = spots + ' ambient fingerprints stored';
-
-      if (data.live_laptop && $('labClusterLapCoord')) {
-        $('labClusterLapCoord').textContent = `(${data.live_laptop.x.toFixed(2)}, ${data.live_laptop.y.toFixed(2)})`;
-      }
-      if (data.live_phone && $('labClusterPhoneCoord')) {
-        $('labClusterPhoneCoord').textContent = `(${data.live_phone.x.toFixed(2)}, ${data.live_phone.y.toFixed(2)})`;
-      }
-
+  async function pollClusters() {
+    if (document.hidden) return;
+    try {
+      const res = await fetch('/api/findmy/wifi/clusters'); const data = await res.json();
+      if (data.status !== 'ok') return;
+      clusters = data; drawRoom();
+      const spots = data.total_fingerprints || 0;
+      $('roomBadge').textContent = spots + (spots === 1 ? ' spot' : ' spots');
+      if (spots < 3) { $('roomRead').textContent = 'Not enough saved spots yet — move around with location sharing on.'; return; }
       if (data.live_laptop && data.live_phone) {
         const d = Math.hypot(data.live_laptop.x - data.live_phone.x, data.live_laptop.y - data.live_phone.y);
-        const distStr = d.toFixed(2) + ' latent units';
-        if ($('labClusterDist')) $('labClusterDist').textContent = distStr;
-        if ($('labClusterDistFooter')) $('labClusterDistFooter').textContent = distStr;
-
-        const isSameRoom = d < 18.0;
-        const verdict = isSameRoom ? 'Same room' : 'Different room';
-        const confidence = isSameRoom ? Math.round(Math.max(65, (18.0 - d) * 2 + 65)) + '%' : Math.round(Math.min(95, (d - 18.0) * 1.5 + 60)) + '%';
-
-        if ($('labClusterVerdict')) {
-          const v = $('labClusterVerdict');
-          v.textContent = verdict + ' (' + confidence + ')';
-          v.style.color = isSameRoom ? 'var(--online)' : 'var(--text2)';
-        }
-        if ($('labClusterConfidence')) {
-          $('labClusterConfidence').textContent = verdict + ' (Confidence: ' + confidence + ')';
-        }
+        const same = d < 18;
+        $('roomRead').innerHTML = (same ? '<b style="color:var(--good)">Same area</b>' : '<b>Different area</b>') + '<span class="sep">·</span>' + spots + ' spots mapped';
       } else {
-        if ($('labClusterVerdict')) $('labClusterVerdict').textContent = 'Waiting for phone fix…';
-        if ($('labClusterDistFooter')) $('labClusterDistFooter').textContent = '–';
+        $('roomRead').textContent = spots + ' spots mapped · waiting for a phone reading';
       }
-    }
-  } catch (e) {}
-}
-
-// ----------------------------------------------------
-// 4. Peer-to-Peer RTT Timing
-// ----------------------------------------------------
-let p2pHist = [];
-let lastP2pRtt = null;
-let p2pJitter = 0.0;
-let p2pSeq = 0;
-
-function drawLabP2p() {
-  const sc = initCanvas('labP2pCanvas');
-  if (!sc) return;
-  const { ctx, width, height } = sc;
-  ctx.clearRect(0, 0, width, height);
-
-  const isEnlarged = height > 140;
-  const padBottom = isEnlarged ? 26 : 14;
-  const padTop = isEnlarged ? 20 : 10;
-  const drawHeight = height - padTop - padBottom;
-
-  const minRtt = 0, maxRtt = Math.max(60, ...(p2pHist.slice(-30).map(x => x || 0)), 30);
-  const toY = (rtt) => height - padBottom - (Math.max(0, Math.min(maxRtt, rtt)) / maxRtt) * drawHeight;
-
-  // Latency thresholds
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 1;
-  [15, 30, 50].forEach(val => {
-    if (val < maxRtt) {
-      const y = toY(val);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      if (isEnlarged) {
-        ctx.fillStyle = '#7D8593';
-        ctx.font = '10px system-ui';
-        ctx.fillText(val + ' ms', 8, y - 4);
-      }
-    }
-  });
-
-  if (!p2pHist.length) return;
-  const pts = p2pHist.slice(isEnlarged ? -50 : -25);
-  const step = width / Math.max(pts.length - 1, 1);
-
-  // Gradient area
-  ctx.beginPath();
-  pts.forEach((rtt, i) => {
-    const x = i * step;
-    const y = toY(rtt);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.lineTo((pts.length - 1) * step, height - padBottom);
-  ctx.lineTo(0, height - padBottom);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(142, 168, 255, 0.08)';
-  ctx.fill();
-
-  // Line
-  ctx.beginPath();
-  ctx.strokeStyle = '#8EA8FF';
-  ctx.lineWidth = isEnlarged ? 2.2 : 1.8;
-  pts.forEach((rtt, i) => {
-    const x = i * step;
-    const y = toY(rtt);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  // Highlight latest ping
-  if (pts.length) {
-    const lastX = (pts.length - 1) * step;
-    const lastY = toY(pts[pts.length - 1]);
-    ctx.beginPath();
-    ctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-    ctx.fillStyle = '#8EA8FF';
-    ctx.fill();
+    } catch (e) {}
   }
-}
 
-async function sendLabP2p() {
-  if (document.hidden) return;
-  const t0 = performance.now();
-  p2pSeq++;
-  try {
-    const res = await fetch('/api/findmy/p2p/ping', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ t: Date.now() / 1000, seq: p2pSeq })
-    });
-    const data = await res.json();
-    if (data.status === 'ok') {
-      const rtt = Math.round(performance.now() - t0);
-      const jitter = lastP2pRtt != null ? Math.abs(rtt - lastP2pRtt) : 0;
-      p2pJitter = jitter;
-      lastP2pRtt = rtt;
-      p2pHist.push(rtt);
-      drawLabP2p();
-
-      const rttStr = rtt + ' ms';
-      const jitStr = '±' + jitter + ' ms';
-      $('labP2pRtt').textContent = rttStr;
-      $('labP2pJitter').textContent = jitStr;
-
-      if ($('labP2pRttDetail')) $('labP2pRttDetail').textContent = rttStr;
-      if ($('labP2pJitterDetail')) $('labP2pJitterDetail').textContent = jitStr;
-      if ($('labP2pSeqDetail')) $('labP2pSeqDetail').textContent = '#' + p2pSeq + ' probes';
-
-      if (p2pHist.length) {
-        const minVal = Math.min(...p2pHist);
-        const maxVal = Math.max(...p2pHist);
-        const rangeStr = minVal + ' ms min / ' + maxVal + ' ms peak';
-        if ($('labP2pRange')) $('labP2pRange').textContent = rangeStr;
-        if ($('labP2pMinMax')) $('labP2pMinMax').textContent = rangeStr;
-      }
-    }
-  } catch (e) {}
-}
-
-function refreshAllTelemetry() {
-  pollLabMotion();
-  pollLabSpectrum();
-  pollLabClusters();
-  sendLabP2p();
-}
-
-// Battery-conserving lifecycle polling
-let motionTimer = null;
-let p2pTimer = null;
-let specTimer = null;
-let clusterTimer = null;
-let isPollingActive = false;
-
-function startAllPolling() {
-  if (isPollingActive) return;
-  isPollingActive = true;
-  refreshAllTelemetry();
-  if (!motionTimer) motionTimer = setInterval(pollLabMotion, 800);
-  if (!p2pTimer) p2pTimer = setInterval(sendLabP2p, 1200);
-  if (!specTimer) specTimer = setInterval(pollLabSpectrum, 4000);
-  if (!clusterTimer) clusterTimer = setInterval(pollLabClusters, 4000);
-}
-
-function stopAllPolling() {
-  isPollingActive = false;
-  if (motionTimer) { clearInterval(motionTimer); motionTimer = null; }
-  if (p2pTimer) { clearInterval(p2pTimer); p2pTimer = null; }
-  if (specTimer) { clearInterval(specTimer); specTimer = null; }
-  if (clusterTimer) { clearInterval(clusterTimer); clusterTimer = null; }
-}
-
-window.startAllPolling = startAllPolling;
-window.stopAllPolling = stopAllPolling;
-
-// Immediately stop polling and release CPU/radio when hidden, blurred, or tab switched
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    stopAllPolling();
-  } else {
-    startAllPolling();
+  // ====================================================
+  // 4. Link latency  (/api/findmy/p2p/ping)
+  // ====================================================
+  let linkHist = [], lastRtt = null, seq = 0, sent = 0, ok = 0;
+  function drawLink() {
+    const sc = initCanvas('linkCanvas'); if (!sc) return;
+    const { ctx, width, height } = sc; ctx.clearRect(0, 0, width, height);
+    const big = height > 160, padB = big ? 22 : 9, top = 10, dh = height - padB - top;
+    if (!linkHist.length) { ctx.fillStyle = '#5c646f'; ctx.font = '12px ' + fontOf(); ctx.textAlign = 'center'; ctx.fillText('Pinging…', width / 2, height / 2); ctx.textAlign = 'start'; return; }
+    const pts = linkHist.slice(big ? -50 : -40), hi = Math.max(10, Math.max.apply(null, pts) * 1.2), step = width / Math.max(pts.length - 1, 1);
+    const toY = (v) => height - padB - (v / hi) * dh;
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+    (big ? [10, 25, 50] : [hi / 2]).forEach(v => { if (v < hi) { const y = toY(v); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); if (big) { ctx.fillStyle = '#5c646f'; ctx.font = '10px ' + fontOf(); ctx.fillText(v + ' ms', 6, y - 4); } } });
+    ctx.beginPath(); pts.forEach((v, i) => { const x = i * step, y = toY(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.closePath(); ctx.fillStyle = 'rgba(253,186,116,0.08)'; ctx.fill();
+    ctx.beginPath(); pts.forEach((v, i) => { const x = i * step, y = toY(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.strokeStyle = WARN; ctx.lineWidth = big ? 2.2 : 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+    const lx = (pts.length - 1) * step, ly = toY(pts[pts.length - 1]); ctx.beginPath(); ctx.arc(lx, ly, big ? 4 : 3.2, 0, 7); ctx.fillStyle = WARN; ctx.fill();
   }
-});
-window.addEventListener('pagehide', stopAllPolling);
-window.addEventListener('pageshow', startAllPolling);
-window.addEventListener('blur', () => {
-  if (isEmbedded) stopAllPolling();
-});
-window.addEventListener('focus', () => {
-  if (isEmbedded) startAllPolling();
-});
 
-// Boot initial polling
-startAllPolling();
+  async function pingLink() {
+    if (document.hidden) return;
+    const t0 = performance.now(); seq++; sent++;
+    try {
+      const res = await fetch('/api/findmy/p2p/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: Date.now() / 1000, seq }) });
+      const data = await res.json();
+      if (data.status !== 'ok') return;
+      ok++;
+      const rtt = Math.max(0.1, +(performance.now() - t0).toFixed(1));
+      const jit = lastRtt != null ? Math.abs(rtt - lastRtt) : 0; lastRtt = rtt;
+      linkHist.push(rtt); if (linkHist.length > 120) linkHist.shift();
+      drawLink();
+      const loss = sent ? Math.round((1 - ok / sent) * 100) : 0;
+      $('linkRead').innerHTML = '<b>' + rtt.toFixed(1) + ' ms</b> round trip<span class="sep">·</span>jitter <b>' + jit.toFixed(1) + ' ms</b><span class="sep">·</span>' + (loss ? loss + '% loss' : 'no loss');
+      const steady = jit < 8;
+      $('linkBadge').textContent = steady ? 'Steady' : 'Jumpy'; $('linkBadge').className = 'badge ' + (steady ? 'good' : 'alert');
+      const recent = linkHist.slice(-30);
+      $('lRange').textContent = Math.min.apply(null, recent).toFixed(1) + ' – ' + Math.max.apply(null, recent).toFixed(1) + ' ms';
+      $('lSeq').textContent = seq;
+    } catch (e) {}
+  }
 
-// Auto-redraw on resize
-window.addEventListener('resize', () => {
-  drawLabMotion();
-  drawLabSpectrum();
-  drawLabClusters();
-  drawLabP2p();
-});
+  // ====================================================
+  // lifecycle — native WifiLabActivity calls start/stop
+  // ====================================================
+  let timers = [], active = false;
+  function refreshAll() { pollMotion(); pollSpectrum(); pollClusters(); pingLink(); }
+  function startAllPolling() {
+    if (active) return; active = true; refreshAll();
+    timers = [ setInterval(pollMotion, 800), setInterval(pingLink, 1200), setInterval(pollSpectrum, 4000), setInterval(pollClusters, 4000) ];
+  }
+  function stopAllPolling() { active = false; timers.forEach(clearInterval); timers = []; }
+  window.startAllPolling = startAllPolling;
+  window.stopAllPolling = stopAllPolling;
+
+  document.addEventListener('visibilitychange', () => { document.hidden ? stopAllPolling() : startAllPolling(); });
+  window.addEventListener('pagehide', stopAllPolling);
+  window.addEventListener('pageshow', startAllPolling);
+  window.addEventListener('resize', redrawAll);
+
+  redrawAll();
+  startAllPolling();
 </script>
 </body>
 </html>
