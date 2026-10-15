@@ -185,11 +185,22 @@
     </div>
     <div class="meter"><i id="spMeter"></i></div>
     <div class="read" id="spRead">Waiting for the phone to share what it sees…</div>
+    <div class="sp-loc" id="spLoc" style="display:none;margin-top:10px;padding:9px 12px;background:var(--surface-sub);border-radius:var(--radius-sm);border:1px solid var(--hairline);font-size:12px;color:var(--text-2);line-height:1.45;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+        <span style="font-weight:500;color:var(--text);" id="spLocPlace">Location</span>
+        <span style="font-size:11px;color:var(--text-3);" id="spLocMethod">Wi-Fi signal map</span>
+      </div>
+      <div id="spLocDetail" style="color:var(--text-3);font-size:11.5px;">Fetching location from signal strengths…</div>
+    </div>
     <details>
       <summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Shared networks</summary>
       <div class="body">
         <div class="shared-list" id="spList"><div class="log-empty">No networks seen by both devices yet.</div></div>
         <p style="margin:0">When both devices see the same routers at similar strength, they're in the same place. Big gaps mean a wall or floor between them.</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--hairline);">
+          <span style="font-size:11.5px;color:var(--text-3);" id="spNearbyStatus">Nearby listening</span>
+          <button type="button" class="btn-subtle" id="spPingBtn" onclick="triggerNearby(true)" style="background:var(--surface-sub);border:1px solid var(--hairline);color:var(--text-2);padding:4px 10px;border-radius:14px;font-size:11.5px;cursor:pointer;">Ping phone nearby</button>
+        </div>
       </div>
     </details>
   </section>
@@ -456,28 +467,113 @@
     });
   }
 
-  function renderSamePlace() {
+  let lastNearbyPing = 0;
+  async function triggerNearby(force) {
+    const now = Date.now();
+    if (!force && (now - lastNearbyPing < 50000)) return;
+    lastNearbyPing = now;
+    if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Pinging phone…';
+    try {
+      await fetch('/api/findmy/phone/nearby', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: true })
+      });
+      if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Nearby active (listening 3 min)';
+    } catch (e) {
+      if ($('spNearbyStatus')) $('spNearbyStatus').textContent = 'Nearby idle';
+    }
+  }
+
+  function renderSamePlace(sp) {
+    sp = sp || {};
     const shared = specNetworks.filter(n => n.shared && n.phone_dbm != null);
     const meter = $('spMeter'), read = $('spRead'), badge = $('spBadge'), list = $('spList');
-    if (!specNetworks.length) { read.textContent = 'Waiting for a Wi-Fi scan…'; return; }
-    if (!shared.length) {
-      meter.style.width = '0'; badge.textContent = '—'; badge.className = 'badge';
-      read.textContent = 'No networks seen by both devices yet. Open this with your phone nearby.';
-      list.innerHTML = '<div class="log-empty">No networks seen by both devices yet.</div>';
-      return;
+    const locBox = $('spLoc'), locPlace = $('spLocPlace'), locMethod = $('spLocMethod'), locDetail = $('spLocDetail');
+    const nearbyStatus = $('spNearbyStatus');
+
+    if (nearbyStatus) {
+      nearbyStatus.textContent = sp.active ? 'Nearby active (listening)' : (sp.phone_active ? 'Phone active' : 'Nearby idle');
     }
-    const gaps = shared.map(n => Math.abs(n.dbm - n.phone_dbm));
-    const gap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    const match = Math.max(0, Math.min(1, (shared.length / Math.max(specNetworks.length, 1)) * 0.65 + (1 - Math.min(gap, 18) / 18) * 0.35));
-    meter.style.width = Math.round(match * 100) + '%';
-    const v = match > 0.55 ? ['Same place', 'good'] : match > 0.3 ? ['Same building', ''] : ['Apart', 'alert'];
-    badge.textContent = v[0]; badge.className = 'badge ' + v[1];
-    read.innerHTML = '<b>' + shared.length + '</b> of ' + specNetworks.length + ' networks shared<span class="sep">·</span>signals within <b>' + Math.round(gap) + ' dB</b>';
-    const dbmPct = (d) => Math.max(3, Math.min(100, ((d + 90) / 60) * 100));
-    list.innerHTML = shared.sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
-      '<div class="sh"><div class="name"><span>' + (n.ssid || 'Hidden') + '</span><span class="d">Δ ' + Math.round(Math.abs(n.dbm - n.phone_dbm)) + ' dB</span></div>' +
-      '<div class="bars"><div class="bar"><span>Phone</span><div class="track"><div class="fill" style="width:' + dbmPct(n.phone_dbm) + '%;background:#8EA8FF"></div></div></div>' +
-      '<div class="bar"><span>Laptop</span><div class="track"><div class="fill" style="width:' + dbmPct(n.dbm) + '%;background:#46D39A"></div></div></div></div></div>').join('');
+
+    const bleM = sp.bluetooth_distance;
+    const zone = sp.zone || (bleM != null && bleM < 2.0 ? 'Same room' : null);
+    const matchPct = sp.match_percent != null ? sp.match_percent : (bleM != null && bleM < 1.5 ? 96 : (shared.length ? Math.min(100, Math.round(shared.length / Math.max(specNetworks.length, 1) * 100)) : 0));
+    const dist = sp.distance != null ? sp.distance : bleM;
+    const gap = sp.signal_gap != null ? sp.signal_gap : (shared.length ? (shared.map(n => Math.abs(n.dbm - n.phone_dbm)).reduce((a,b)=>a+b,0) / shared.length) : null);
+    const sharedCount = sp.shared_count || shared.length;
+
+    meter.style.width = Math.max(0, Math.min(100, matchPct)) + '%';
+
+    if (bleM != null && bleM < 1.5) {
+      badge.textContent = 'Same room'; badge.className = 'badge good';
+      read.innerHTML = '<b>Within a metre</b> (Bluetooth)<span class="sep">·</span><b>' + sharedCount + '</b> shared networks' + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
+    } else if (zone === 'Same room') {
+      badge.textContent = 'Same room'; badge.className = 'badge good';
+      read.innerHTML = '<b>Same room</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + '<span class="sep">·</span>signals within <b>' + Math.round(gap != null ? gap : 4) + ' dB</b>';
+    } else if (zone === 'Next room or two') {
+      badge.textContent = 'Next room'; badge.className = 'badge';
+      read.innerHTML = '<b>Next room or two</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
+    } else if (zone === 'Same building') {
+      badge.textContent = 'Same building'; badge.className = 'badge';
+      read.innerHTML = '<b>Same building</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '') + (gap != null ? '<span class="sep">·</span>Δ <b>' + Math.round(gap) + ' dB</b>' : '');
+    } else if (zone === 'Elsewhere') {
+      badge.textContent = 'Apart'; badge.className = 'badge alert';
+      read.innerHTML = '<b>Different location</b>' + (dist != null ? '<span class="sep">·</span>~<b>' + dist + ' m</b> apart' : '');
+    } else if (shared.length > 0) {
+      const v = matchPct > 55 ? ['Same place', 'good'] : matchPct > 30 ? ['Same building', ''] : ['Apart', 'alert'];
+      badge.textContent = v[0]; badge.className = 'badge ' + v[1];
+      read.innerHTML = '<b>' + shared.length + '</b> of ' + specNetworks.length + ' networks shared<span class="sep">·</span>signals within <b>' + Math.round(gap != null ? gap : 6) + ' dB</b>';
+    } else if (sp.active || sp.recent) {
+      badge.textContent = 'Pinging'; badge.className = 'badge';
+      read.textContent = 'Pinging phone nearby… listening on Wi-Fi and Bluetooth';
+    } else {
+      badge.textContent = '—'; badge.className = 'badge';
+      read.textContent = 'Waiting for the phone to share what it sees…';
+    }
+
+    const loc = sp.location || {};
+    const lap = loc.laptop;
+    const phone = loc.phone;
+    const placeLabel = loc.place_label || (lap && lap.ssid ? lap.ssid : '');
+
+    if (locBox) {
+      if (placeLabel || (lap && lap.lat != null)) {
+        locBox.style.display = 'block';
+        if (locPlace) locPlace.textContent = placeLabel || 'Current Location';
+        if (locMethod) {
+          const acc = lap && lap.acc ? '±' + Math.round(lap.acc) + ' m · ' : '';
+          locMethod.textContent = acc + (loc.method || 'Wi-Fi signal map');
+        }
+        if (locDetail) {
+          let line = '';
+          if (lap && lap.lat != null && lap.lng != null) {
+            line += lap.lat.toFixed(4) + '° N, ' + lap.lng.toFixed(4) + '° E';
+          }
+          if (loc.apart_metres != null) {
+            line += (line ? ' · ' : '') + 'Devices ' + (loc.apart_metres <= 2 ? 'in same spot' : '~' + Math.round(loc.apart_metres) + ' m apart');
+          } else if (zone) {
+            line += (line ? ' · ' : '') + zone;
+          }
+          if (!line) line = 'Position resolved from RF signal fingerprints';
+          locDetail.textContent = line;
+        }
+      } else {
+        locBox.style.display = 'none';
+      }
+    }
+
+    if (list) {
+      if (!shared.length) {
+        list.innerHTML = '<div class="log-empty">No networks seen by both devices yet. Click Ping phone nearby to sync.</div>';
+      } else {
+        const dbmPct = (d) => Math.max(3, Math.min(100, ((d + 90) / 60) * 100));
+        list.innerHTML = shared.sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
+          '<div class="sh"><div class="name"><span>' + (n.ssid || 'Hidden') + '</span><span class="d">Δ ' + Math.round(Math.abs(n.dbm - n.phone_dbm)) + ' dB</span></div>' +
+          '<div class="bars"><div class="bar"><span>Phone</span><div class="track"><div class="fill" style="width:' + dbmPct(n.phone_dbm) + '%;background:#8EA8FF"></div></div></div>' +
+          '<div class="bar"><span>Laptop</span><div class="track"><div class="fill" style="width:' + dbmPct(n.dbm) + '%;background:#46D39A"></div></div></div></div></div>').join('');
+      }
+    }
   }
 
   async function pollSpectrum() {
@@ -493,7 +589,17 @@
       $('specList').innerHTML = [...specNetworks].sort((a, b) => b.dbm - a.dbm).slice(0, 6).map(n =>
         '<dt>' + (n.connected ? '★ ' : '') + (n.ssid || 'Hidden') + '</dt><dd>' + n.dbm + ' dBm' + (n.shared ? ' · shared' : '') + '</dd>').join('');
       if (data.connected_ssid) $('connName').textContent = data.connected_ssid;
-      renderSamePlace();
+
+      if ($('heroSsid')) {
+        const pLabel = (data.same_place && data.same_place.location && data.same_place.location.place_label) || '';
+        $('heroSsid').textContent = (data.connected_ssid || 'Wi-Fi') + (pLabel ? ' · ' + pLabel : '');
+      }
+
+      renderSamePlace(data.same_place);
+
+      if (!data.same_place || (!data.same_place.active && !data.same_place.phone_active)) {
+        triggerNearby(false);
+      }
     } catch (e) {}
   }
 
@@ -596,9 +702,9 @@
   // lifecycle — native WifiLabActivity calls start/stop
   // ====================================================
   let timers = [], active = false;
-  function refreshAll() { pollMotion(); pollSpectrum(); pollClusters(); pingLink(); }
+  function refreshAll() { triggerNearby(false); pollMotion(); pollSpectrum(); pollClusters(); pingLink(); }
   function startAllPolling() {
-    if (active) return; active = true; refreshAll();
+    if (active) return; active = true; triggerNearby(true); refreshAll();
     timers = [ setInterval(pollMotion, 800), setInterval(pingLink, 1200), setInterval(pollSpectrum, 4000), setInterval(pollClusters, 4000) ];
   }
   function stopAllPolling() { active = false; timers.forEach(clearInterval); timers = []; }

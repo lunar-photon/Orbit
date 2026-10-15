@@ -5559,13 +5559,103 @@ def wifi_spectrum_data():
         })
 
     networks.sort(key=lambda x: (x['band'], x['chan'], -x['dbm']))
+
+    now_ts = time.time()
+    nearby_active = (now_ts < NEARBY.get('until', 0))
+    nearby_recent = (now_ts - NEARBY.get('t', 0) < 60)
+
+    laptop_loc = None
+    try:
+        found_loc, _, _ = laptop_locate(rescan=False)
+        laptop_loc = found_loc
+    except Exception:
+        pass
+    if not laptop_loc:
+        laptop_loc = laptop_last()
+
+    phone_loc = NEARBY.get('phone_at')
+    if not phone_loc:
+        try:
+            gps_dist, p_lat, p_lng, l_lat, l_lng = last_known_gps_distance()
+            if p_lat is not None:
+                phone_loc = {'lat': p_lat, 'lng': p_lng, 'acc': 20}
+        except Exception:
+            pass
+
+    place_label = ""
+    try:
+        place = public_place()
+        if place:
+            isp = place.get('isp') or ''
+            city = place.get('city') or ''
+            if 'IISER' in isp or 'Indian Institute Of Science Education' in isp:
+                place_label = "IISER Thiruvananthapuram"
+            elif isp and city:
+                place_label = f"{isp}, {city}"
+            elif city:
+                place_label = city
+    except Exception:
+        pass
+    if not place_label and connected_ssid:
+        place_label = connected_ssid
+
+    offset_dbm = get_antenna_offset()
+    laptop_aps = {n['bssid']: n['dbm'] for n in networks}
+    common_aps, signal_gap, strong_count = _wifi_identity_match([], phone_scan_data or {}, laptop_aps, offset_dbm=offset_dbm)
+
+    score = NEARBY.get('score')
+    zone = NEARBY.get('zone')
+    distance = NEARBY.get('distance')
+
+    if phone_scan_data and laptop_aps:
+        live_score = wifi_likeness(phone_scan_data, laptop_aps, offset_dbm=offset_dbm)
+        if live_score is not None:
+            score = live_score
+            apart_val = NEARBY.get('apart')
+            if apart_val is None and phone_loc and laptop_loc and 'lat' in phone_loc and 'lat' in laptop_loc:
+                apart_val = round(_metres(phone_loc['lat'], phone_loc['lng'], laptop_loc['lat'], laptop_loc['lng']))
+            zone = wifi_zone(live_score, len(common_aps), strong_count, signal_gap, apart=apart_val)
+            distance = wifi_distance_estimate(live_score, signal_gap, len(common_aps), apart_val)
+
+    ble_reading = ORBIT_BLE.phone_reading()
+    ble_m = None
+    if ble_reading and ble_reading.get('dbm') is not None:
+        ble_m = round(math.pow(10, (-59 - ble_reading['dbm']) / 22), 1)
+
+    same_place = {
+        'active': nearby_active,
+        'recent': nearby_recent,
+        'phone_active': bool(phone_scan_data and (now_ts - NEARBY.get('t', 0) < 60)),
+        'score': round(score, 3) if score is not None else None,
+        'match_percent': round((score or 0) * 100) if score is not None else None,
+        'word': likeness_word(score) if score is not None else None,
+        'zone': zone or ('Same room' if (ble_m is not None and ble_m < 2.0) else None),
+        'distance': distance,
+        'bluetooth': ble_reading,
+        'bluetooth_distance': ble_m,
+        'signal_gap': round(signal_gap, 1) if signal_gap is not None else None,
+        'shared_count': len(common_aps),
+        'strong_count': strong_count,
+        'total_shared': sum(1 for n in networks if n['shared']),
+        'total_laptop': len(networks),
+        'total_phone': len(phone_scan_data) if phone_scan_data else 0,
+        'location': {
+            'place_label': place_label,
+            'laptop': laptop_loc,
+            'phone': phone_loc,
+            'apart_metres': NEARBY.get('apart'),
+            'method': NEARBY.get('method', 'Wi-Fi signal fingerprinting')
+        }
+    }
+
     return {
         'status': 'ok',
         'networks': networks,
         'bands': bands,
         'connected_ssid': connected_ssid,
         'total': len(networks),
-        'shared_count': sum(1 for n in networks if n['shared'])
+        'shared_count': sum(1 for n in networks if n['shared']),
+        'same_place': same_place
     }
 
 
@@ -6162,18 +6252,26 @@ def set_lost(on):
     return lost_state()
 
 
+_PUBLIC_PLACE_CACHE = {'t': 0.0, 'data': {}}
+
+
 def public_place():
     """{ip, isp, city, region, country} of this computer's internet address, or {}."""
+    now = time.time()
+    if now - _PUBLIC_PLACE_CACHE['t'] < 3600 and _PUBLIC_PLACE_CACHE['data']:
+        return _PUBLIC_PLACE_CACHE['data']
     try:
         req = urllib.request.Request('https://ipinfo.io/json', headers={'Accept': 'application/json',
                                                                         'User-Agent': 'Orbit'})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=4) as r:
             d = json.loads(r.read().decode('utf-8', 'replace'))
+        org = str(d.get('org') or '')
+        data = {'ip': d.get('ip'), 'isp': re.sub(r'^AS\d+\s+', '', org) or None, 'city': d.get('city'),
+                'region': d.get('region'), 'country': d.get('country')}
+        _PUBLIC_PLACE_CACHE.update(t=now, data=data)
+        return data
     except Exception:
-        return {}
-    org = str(d.get('org') or '')
-    return {'ip': d.get('ip'), 'isp': re.sub(r'^AS\d+\s+', '', org) or None, 'city': d.get('city'),
-            'region': d.get('region'), 'country': d.get('country')}
+        return _PUBLIC_PLACE_CACHE.get('data', {})
 
 
 def lost_report():
@@ -8630,8 +8728,19 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
 
             if purpose == 'presence':
                 WALK_AWAY.scan(score)
-            elif purpose == 'find_phone':
-                NEARBY.update(t=time.time(), score=score, zone=zone, distance=est_dist)
+            NEARBY.update(
+                t=time.time(),
+                score=score,
+                zone=zone,
+                distance=est_dist,
+                phone_at=extra.get('phone_at'),
+                laptop_at=extra.get('laptop_at'),
+                apart=extra.get('apart'),
+                signal_gap=round(signal_gap, 1) if signal_gap is not None else None,
+                common_count=len(common_aps),
+                strong_count=strong_count,
+                method=method
+            )
             self.send_json({"status": "ok", "score": None if score is None else round(score, 3),
                             "word": likeness_word(score), "zone": zone, "zone_method": method,
                             "networks": len(mine),
@@ -8699,9 +8808,13 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
         elif path in ('/api/findmy/phone/locate', '/api/findmy/phone/ring', '/api/findmy/phone/nearby'):
             # From the Find my phone page on this computer
             client_info, token = authenticate_client(self, load_config())
-            if not client_info or not client_info.get('local'):
-                self.send_json({"error": "unauthorized"}, status=401)
-                return
+            if not client_info:
+                if (self.client_address[0] in ('127.0.0.1', '::1', 'localhost')
+                        and not is_tunnel_request(self) and not is_foreign_browser_request(self)):
+                    client_info = {"client_name": "Local PC", "local": True}
+                else:
+                    self.send_json({"error": "unauthorized"}, status=401)
+                    return
             on = bool((body if isinstance(body, dict) else {}).get('on', True))
             if path.endswith('/locate'):
                 auth_mgr.broadcast_ndjson(json.dumps({"event": "locate", "time": int(time.time())}) + "\n")
