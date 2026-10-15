@@ -687,12 +687,12 @@
         <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labMotionPhoneTarget">Standby</span></div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labMotionPhoneTarget">Connected Wi-Fi · Standby</span></div>
         <div>Disturbance: <span class="lab-val" id="labMotionPhoneSpike">–</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
         <div>Retention: <span class="lab-val">Last 30 days</span></div>
-        <div>Phone Mode: <span class="lab-val" id="labMotionPhoneMode" style="color:var(--online);">Zero background battery</span></div>
+        <div>Phone Mode: <span class="lab-val" id="labMotionPhoneMode" style="color:var(--online);">Connected Wi-Fi · Zero battery drain</span></div>
       </div>
       <div class="lab-recent-movements">
         <div class="lab-recent-header">
@@ -1187,14 +1187,14 @@ function drawLabMotion() {
   ctx.fillStyle = '#46D39A';
   ctx.beginPath(); ctx.arc(14, 14, 3.5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#A6AEBB';
-  ctx.fillText('Laptop Sensor', 22, 17);
+  ctx.fillText('Laptop connected Wi-Fi', 22, 17);
 
   // Phone legend
-  const phoneX = 110;
+  const phoneX = isEnlarged ? 175 : 135;
   ctx.fillStyle = phoneMotionActive ? '#8EA8FF' : '#555C66';
   ctx.beginPath(); ctx.arc(phoneX, 14, 3.5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = phoneMotionActive ? '#A6AEBB' : '#6A7280';
-  ctx.fillText(phoneMotionActive ? 'Phone Sensor' : 'Phone (Standby)', phoneX + 8, 17);
+  ctx.fillText(phoneMotionActive ? 'Phone connected Wi-Fi' : 'Phone (Standby)', phoneX + 8, 17);
 }
 
 async function pollLabMotion() {
@@ -1279,11 +1279,11 @@ async function pollLabMotion() {
       }
       if ($('labMotionPhoneTarget')) {
         if (phoneMotionActive) {
-          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Wi-Fi';
+          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Connected Wi-Fi';
           const pDbm = ph.current_dbm != null ? ph.current_dbm + ' dBm' : '–';
           $('labMotionPhoneTarget').textContent = `${pSsid} (${pDbm})`;
         } else {
-          $('labMotionPhoneTarget').textContent = 'Standby (Zero battery)';
+          $('labMotionPhoneTarget').textContent = 'Connected Wi-Fi · Standby (Zero battery)';
         }
       }
 
@@ -1320,8 +1320,9 @@ async function pollLabMotion() {
           if (phoneMotionDetected) parts.push('Phone RF zone disturbed (+' + phoneMotionSpike + ' dB).');
           else parts.push('Phone Fresnel zone quiet.');
         } else {
-          parts.push('Phone presence sensor is in standby (preserves battery; no background logging).');
+          parts.push('Phone presence sensor is in standby until Wi-Fi Lab is active on phone (zero background battery drain).');
         }
+        parts.push('Monitors RF reflections between each device and its connected Wi-Fi router.');
         $('labMotionStatusNote').textContent = parts.join(' ');
       }
 
@@ -1460,42 +1461,78 @@ function drawLabClusters() {
 
   const cx = width / 2;
   const cy = height / 2;
-  const scale = Math.min(width, height) * 0.38;
-
-  // Concentric room distance rings
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-  ctx.lineWidth = 1;
-  [0.35, 0.7, 1.0].forEach(r => {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * scale, 0, Math.PI * 2);
-    ctx.stroke();
-  });
+  const isEnlarged = height > 140;
 
   // Crosshairs
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.beginPath(); ctx.moveTo(cx, 10); ctx.lineTo(cx, height - 10); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(10, cy); ctx.lineTo(width - 10, cy); ctx.stroke();
 
-  if (!clusterData || !clusterData.clusters) return;
+  // Concentric room distance rings
+  const maxR = Math.min(width, height) * 0.42;
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  [0.35, 0.7, 1.0].forEach(r => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * maxR, 0, Math.PI * 2);
+    ctx.stroke();
+  });
 
-  const isEnlarged = height > 140;
+  if (!clusterData || !clusterData.clusters || clusterData.clusters.length === 0) {
+    ctx.fillStyle = '#7D8593';
+    ctx.font = '11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('Accumulating RF ambient fingerprints…', cx, cy + 4);
+    ctx.textAlign = 'start';
+    return;
+  }
+
+  // Calculate dynamic coordinate bounds so points never draw off-screen
+  const pts = clusterData.clusters || [];
+  let minX = -10, maxX = 10, minY = -10, maxY = 10;
+  pts.forEach(pt => {
+    if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
+  });
+  if (clusterData.live_laptop) {
+    if (clusterData.live_laptop.x < minX) minX = clusterData.live_laptop.x;
+    if (clusterData.live_laptop.x > maxX) maxX = clusterData.live_laptop.x;
+    if (clusterData.live_laptop.y < minY) minY = clusterData.live_laptop.y;
+    if (clusterData.live_laptop.y > maxY) maxY = clusterData.live_laptop.y;
+  }
+  if (clusterData.live_phone) {
+    if (clusterData.live_phone.x < minX) minX = clusterData.live_phone.x;
+    if (clusterData.live_phone.x > maxX) maxX = clusterData.live_phone.x;
+    if (clusterData.live_phone.y < minY) minY = clusterData.live_phone.y;
+    if (clusterData.live_phone.y > maxY) maxY = clusterData.live_phone.y;
+  }
+  const spanX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.35 || 25;
+  const spanY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.35 || 25;
+
+  const toScreen = (x, y) => [
+    cx + (x / spanX) * (width / 2 - (isEnlarged ? 32 : 18)),
+    cy - (y / spanY) * (height / 2 - (isEnlarged ? 32 : 18))
+  ];
 
   // Fingerprint cluster spots
-  clusterData.clusters.forEach(pt => {
-    const px = cx + pt.x * scale;
-    const py = cy + pt.y * scale;
+  pts.forEach(pt => {
+    const [px, py] = toScreen(pt.x, pt.y);
     ctx.beginPath();
     ctx.arc(px, py, isEnlarged ? 4.5 : 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
     ctx.fill();
+    if (isEnlarged && pt.label) {
+      ctx.fillStyle = '#A6AEBB';
+      ctx.font = '9px system-ui';
+      ctx.fillText(pt.label, px + 6, py - 3);
+    }
   });
 
   // Live Laptop Position
   if (clusterData.live_laptop) {
-    const lx = cx + clusterData.live_laptop.x * scale;
-    const ly = cy + clusterData.live_laptop.y * scale;
+    const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
     ctx.beginPath();
-    ctx.arc(lx, ly, isEnlarged ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(lx, ly, isEnlarged ? 7.5 : 5.5, 0, Math.PI * 2);
     ctx.fillStyle = '#46D39A';
     ctx.fill();
     ctx.strokeStyle = '#0D0F12';
@@ -1503,16 +1540,15 @@ function drawLabClusters() {
     ctx.stroke();
 
     ctx.fillStyle = '#ECEEF1';
-    ctx.font = '10px system-ui';
-    ctx.fillText('Laptop', lx + (isEnlarged ? 10 : 8), ly + 3);
+    ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
+    ctx.fillText('Laptop', lx + (isEnlarged ? 10 : 7), ly + 3);
   }
 
   // Live Phone Position
   if (clusterData.live_phone) {
-    const phx = cx + clusterData.live_phone.x * scale;
-    const phy = cy + clusterData.live_phone.y * scale;
+    const [phx, phy] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
     ctx.beginPath();
-    ctx.arc(phx, phy, isEnlarged ? 8 : 6, 0, Math.PI * 2);
+    ctx.arc(phx, phy, isEnlarged ? 7.5 : 5.5, 0, Math.PI * 2);
     ctx.fillStyle = '#8EA8FF';
     ctx.fill();
     ctx.strokeStyle = '#0D0F12';
@@ -1520,16 +1556,15 @@ function drawLabClusters() {
     ctx.stroke();
 
     ctx.fillStyle = '#ECEEF1';
-    ctx.font = '10px system-ui';
-    ctx.fillText('Phone', phx + (isEnlarged ? 10 : 8), phy + 3);
+    ctx.font = isEnlarged ? '11px system-ui' : '9px system-ui';
+    ctx.fillText('Phone', phx + (isEnlarged ? 10 : 7), phy + 3);
 
     // Connector link
     if (clusterData.live_laptop) {
-      const lx = cx + clusterData.live_laptop.x * scale;
-      const ly = cy + clusterData.live_laptop.y * scale;
+      const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
       ctx.beginPath();
       ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = 'rgba(142, 168, 255, 0.4)';
+      ctx.strokeStyle = 'rgba(142, 168, 255, 0.45)';
       ctx.lineWidth = 1.5;
       ctx.moveTo(lx, ly);
       ctx.lineTo(phx, phy);
@@ -1565,9 +1600,9 @@ async function pollLabClusters() {
         if ($('labClusterDist')) $('labClusterDist').textContent = distStr;
         if ($('labClusterDistFooter')) $('labClusterDistFooter').textContent = distStr;
 
-        const isSameRoom = d < 1.5;
+        const isSameRoom = d < 18.0;
         const verdict = isSameRoom ? 'Same room' : 'Different room';
-        const confidence = isSameRoom ? Math.round(Math.max(70, (1.5 - d) * 20 + 70)) + '%' : Math.round(Math.min(95, d * 15 + 40)) + '%';
+        const confidence = isSameRoom ? Math.round(Math.max(65, (18.0 - d) * 2 + 65)) + '%' : Math.round(Math.min(95, (d - 18.0) * 1.5 + 60)) + '%';
 
         if ($('labClusterVerdict')) {
           const v = $('labClusterVerdict');

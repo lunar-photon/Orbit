@@ -152,7 +152,7 @@ public class FindMyActivity extends Activity {
         showAlerts();
         findMe();
         FindMy.reportCapabilities(this);
-        locate(false);
+        locate(true);
         openPhotoFrom(getIntent());
     }
 
@@ -286,7 +286,7 @@ public class FindMyActivity extends Activity {
 
     // ---- the computer ----
     private void locate(boolean fresh) {
-        if (fresh) tvSeen.setText("Asking your computer…");
+        if (fresh && (laptop == null || !laptop.has("lat"))) tvSeen.setText("Asking your computer…");
         io.execute(() -> {
             JSONObject r = FindMy.getJson(this, "/api/findmy/laptop" + (fresh ? "?fresh=1" : ""));
             if (r != null) FindMy.absorbLaptop(this, r);

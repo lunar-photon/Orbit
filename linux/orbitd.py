@@ -5172,8 +5172,8 @@ class WifiMotionMonitor:
         with self.lock:
             self.phone_last_seen = now
             self.phone_signal = val
-            if ssid: self.phone_ssid = ssid
-            if bssid: self.phone_bssid = bssid.lower()
+            if ssid and ssid != "<unknown ssid>": self.phone_ssid = ssid
+            if bssid and bssid != "02:00:00:00:00:00": self.phone_bssid = bssid.lower()
             if freq: self.phone_freq = freq
             self.phone_history.append((now, val))
 
@@ -5197,6 +5197,7 @@ class WifiMotionMonitor:
                         self.phone_event_counter += 1
                         t_str = datetime.datetime.fromtimestamp(now).strftime('%H:%M:%S')
                         d_str = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d')
+                        disp_ssid = self.phone_ssid or (self.connected_ssid if self.connected_ssid else 'Connected Wi-Fi')
                         ev = {
                             'id': self.phone_event_counter,
                             'source': 'phone',
@@ -5210,7 +5211,7 @@ class WifiMotionMonitor:
                             'baseline': round(base_mean, 1),
                             'threshold': threshold,
                             'variance': variance,
-                            'ssid': self.phone_ssid or 'Wi-Fi (Phone)',
+                            'ssid': disp_ssid,
                             'duration': 0.5
                         }
                         self.phone_active_event = ev
@@ -5402,7 +5403,7 @@ class WifiMotionMonitor:
                         'lower': round(p_base_mean - threshold, 2)
                     },
                     'history': p_hist,
-                    'target': {'ssid': self.phone_ssid, 'bssid': self.phone_bssid, 'freq': self.phone_freq},
+                    'target': {'ssid': self.phone_ssid or (self.connected_ssid if self.connected_ssid else 'Connected Wi-Fi'), 'bssid': self.phone_bssid, 'freq': self.phone_freq},
                     'events': phone_events_list,
                     'last_event': phone_events_list[-1] if phone_events_list else None,
                     'total_events': len(phone_events_list),
@@ -5423,7 +5424,7 @@ class WifiMotionMonitor:
                     'max_spike': 0.0,
                     'envelope': {'upper': None, 'lower': None},
                     'history': [],
-                    'target': {'ssid': self.phone_ssid, 'bssid': self.phone_bssid, 'freq': self.phone_freq},
+                    'target': {'ssid': self.phone_ssid or (self.connected_ssid if self.connected_ssid else 'Connected Wi-Fi'), 'bssid': self.phone_bssid, 'freq': self.phone_freq},
                     'events': phone_events_list,
                     'last_event': phone_events_list[-1] if phone_events_list else None,
                     'total_events': len(phone_events_list),

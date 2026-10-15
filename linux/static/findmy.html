@@ -659,10 +659,31 @@ if (isEmbedded) {
   document.body.classList.add('embedded');
 }
 
+const CACHE_KEY = 'orbit_findmy_cache';
+function loadCachedLocation() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+}
+function saveCachedLocation(data) {
+  try {
+    if (data && data.last) {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    }
+  } catch (e) {}
+}
+
 let map = null;
+const cachedLoc = loadCachedLocation();
+const initLat = (cachedLoc && cachedLoc.last && cachedLoc.last.lat) ? cachedLoc.last.lat : 20.6;
+const initLng = (cachedLoc && cachedLoc.last && cachedLoc.last.lng) ? cachedLoc.last.lng : 78.9;
+const initZoom = (cachedLoc && cachedLoc.last && cachedLoc.last.lat) ? 17 : 4;
+
 if (!isEmbedded && $('map') && typeof L !== 'undefined') {
   try {
-    map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20.6, 78.9], 4);
+    map = L.map('map', { zoomControl: true, attributionControl: true }).setView([initLat, initLng], initZoom);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
@@ -691,6 +712,7 @@ async function api(path, body) {
 }
 
 function show(v) {
+  if (v && v.last) saveCachedLocation(v);
   const last = v.last;
   if (!last) {
     $('seen').textContent = 'No location yet. Turn on "Share location with this computer" in Orbit on the phone.';
@@ -707,7 +729,7 @@ function show(v) {
       } else {
         dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
       }
-      const pts = v.trail.map(p => [p.lat, p.lng]);
+      const pts = (v.trail || []).map(p => [p.lat, p.lng]);
       if (trail) trail.setLatLngs(pts);
       else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
       dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
@@ -778,11 +800,18 @@ async function refresh() {
   catch (e) { $('note').textContent = e.message; }
 }
 
-$('locate').onclick = async () => {
-  const r = await api('/api/findmy/phone/locate', {});
-  $('note').textContent = r.phone_connected ? 'Asked your phone. Its answer usually lands within 30 seconds.'
-    : "Your phone isn't connected right now; it reports again when it is.";
-};
+async function requestLiveLocation() {
+  try {
+    $('note').textContent = 'Requesting live location from your phone…';
+    const r = await api('/api/findmy/phone/locate', {});
+    $('note').textContent = r.phone_connected ? 'Asked your phone for live location. Answer lands within 20-30 seconds.'
+      : "Your phone is in standby; requesting live fix as soon as it wakes.";
+  } catch (e) {
+    if ($('note')) $('note').textContent = e.message;
+  }
+}
+
+$('locate').onclick = requestLiveLocation;
 $('ring').onclick = async () => {
   ringing = !ringing;
   await api('/api/findmy/phone/ring', { on: ringing });
@@ -1473,8 +1502,13 @@ window.addEventListener('resize', () => {
 });
 
 if (!isEmbedded) {
+  const c = loadCachedLocation();
+  if (c && !dot) {
+    show(c);
+  }
   refresh();
   setInterval(refresh, 2000);
+  requestLiveLocation();
 }
 
 if (isEmbedded || location.pathname === '/wifilab' || location.search.includes('tab=lab')) {

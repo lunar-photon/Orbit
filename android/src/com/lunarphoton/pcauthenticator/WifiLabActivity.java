@@ -1,11 +1,17 @@
 package com.lunarphoton.pcauthenticator;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.WebChromeClient;
@@ -30,6 +36,10 @@ public class WifiLabActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_wifi_lab);
+
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 101);
+        }
 
         findViewById(R.id.btn_wifilab_back).setOnClickListener(v -> handleBack());
         findViewById(R.id.btn_wifilab_refresh).setOnClickListener(v -> reload());
@@ -83,15 +93,53 @@ public class WifiLabActivity extends Activity {
                 if (ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2) {
                     ssid = ssid.substring(1, ssid.length() - 1);
                 }
-                JSONObject obj = new JSONObject();
-                obj.put("available", true);
-                obj.put("rssi", rssi);
-                obj.put("ssid", ssid != null ? ssid : "");
-                obj.put("bssid", info.getBSSID() != null ? info.getBSSID().toLowerCase() : "");
+                if ("<unknown ssid>".equalsIgnoreCase(ssid)) ssid = "";
+                String bssid = info.getBSSID() != null ? info.getBSSID().toLowerCase() : "";
+                if ("02:00:00:00:00:00".equals(bssid)) bssid = "";
+
                 int freq = 0;
                 if (android.os.Build.VERSION.SDK_INT >= 21) {
                     freq = info.getFrequency();
                 }
+
+                // Modern Android 10+ (API 29+) NetworkCapabilities check
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    try {
+                        ConnectivityManager cm = (ConnectivityManager) getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+                        if (cm != null) {
+                            Network net = cm.getActiveNetwork();
+                            if (net != null) {
+                                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                                    Object transportInfo = caps.getTransportInfo();
+                                    if (transportInfo instanceof WifiInfo) {
+                                        WifiInfo tInfo = (WifiInfo) transportInfo;
+                                        if (tInfo.getRssi() != -127 && tInfo.getRssi() != 0) {
+                                            rssi = tInfo.getRssi();
+                                        }
+                                        String tSsid = tInfo.getSSID();
+                                        if (tSsid != null && tSsid.startsWith("\"") && tSsid.endsWith("\"") && tSsid.length() >= 2) {
+                                            tSsid = tSsid.substring(1, tSsid.length() - 1);
+                                        }
+                                        if (tSsid != null && !tSsid.isEmpty() && !"<unknown ssid>".equalsIgnoreCase(tSsid)) {
+                                            ssid = tSsid;
+                                        }
+                                        if (tInfo.getBSSID() != null && !"02:00:00:00:00:00".equals(tInfo.getBSSID())) {
+                                            bssid = tInfo.getBSSID().toLowerCase();
+                                        }
+                                        if (freq == 0) freq = tInfo.getFrequency();
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                JSONObject obj = new JSONObject();
+                obj.put("available", true);
+                obj.put("rssi", rssi);
+                obj.put("ssid", ssid != null ? ssid : "");
+                obj.put("bssid", bssid);
                 obj.put("freq", freq);
                 obj.put("t", System.currentTimeMillis() / 1000.0);
                 return obj.toString();

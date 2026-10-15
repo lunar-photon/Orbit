@@ -24,7 +24,17 @@
 <script>
   // Orbit's Find my map: the computer (blue) and this phone (green), named, with a line between
   // them and how far apart. Orbit calls show({laptop, phone, apart}); each {lat, lng, acc, label}.
-  const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([20.6, 78.9], 4);
+  let cached = null;
+  try {
+    const raw = localStorage.getItem('orbit_findmap_cache');
+    if (raw) cached = JSON.parse(raw);
+  } catch (e) {}
+
+  const initLat = (cached && cached.laptop && cached.laptop.lat) ? cached.laptop.lat : 20.6;
+  const initLng = (cached && cached.laptop && cached.laptop.lng) ? cached.laptop.lng : 78.9;
+  const initZoom = (cached && cached.laptop && cached.laptop.lat) ? 17 : 4;
+
+  const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([initLat, initLng], initZoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
   const items = {};
   function place(key, p, colour, radius) {
@@ -44,6 +54,9 @@
   }
   let line = null, fitted = 0;          // how many were in view when it last zoomed to fit
   function show(d) {
+    if (d && (d.laptop || d.phone)) {
+      try { localStorage.setItem('orbit_findmap_cache', JSON.stringify(d)); } catch (e) {}
+    }
     const a = place('laptop', d.laptop, '#8EA8FF', 9), b = place('phone', d.phone, '#46D39A', 7);
     document.getElementById('empty').style.display = (a || b) ? 'none' : 'flex';
     if (a && b) {
@@ -62,6 +75,7 @@
       fitted = pts.length;
     }
   }
+  if (cached) show(cached);
 </script>
 </body>
 </html>
