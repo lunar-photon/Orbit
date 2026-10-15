@@ -672,27 +672,27 @@
           <h3>Presence Disturbance</h3>
         </div>
         <div class="lab-header-actions">
-          <span class="lab-badge active" id="labMotionBadge">Laptop: Quiet</span>
-          <span class="lab-badge" id="labMotionPhoneBadge">Phone: Standby</span>
+          <span class="lab-badge active" id="labMotionBadge">Room: Quiet</span>
+          <span class="lab-badge" id="labMotionPhoneBadge">Vicinity: Calm</span>
           <button class="lab-expand-btn" type="button" aria-label="Enlarge view" onclick="event.stopPropagation(); toggleCardFullscreen('cardMotion')">
             <svg class="icon-expand" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
             <svg class="icon-collapse" viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14L3 21"/></svg>
           </button>
         </div>
       </div>
-      <div class="lab-desc">Multipath tripwire sensing human presence across laptop &amp; phone RF reflections</div>
+      <div class="lab-desc">Dual-zone multipath radar combining immediate laptop vicinity and connected Wi-Fi room reflections</div>
       <canvas id="labMotionCanvas" class="lab-canvas"></canvas>
       <div class="lab-footer">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop: <span class="lab-val" id="labMotionTarget">–</span></div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Room: <span class="lab-val" id="labMotionTarget">–</span></div>
         <div>Disturbance: <span class="lab-val" id="labMotionSpike">0.0 dB</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
-        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone: <span class="lab-val" id="labMotionPhoneTarget">Connected Wi-Fi · Standby</span></div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Vicinity: <span class="lab-val" id="labMotionPhoneTarget">Local Vicinity (Active)</span></div>
         <div>Disturbance: <span class="lab-val" id="labMotionPhoneSpike">–</span></div>
       </div>
       <div class="lab-footer" style="margin-top:2px;">
-        <div>Retention: <span class="lab-val">Last 30 days</span></div>
-        <div>Phone Mode: <span class="lab-val" id="labMotionPhoneMode" style="color:var(--online);">Connected Wi-Fi · Zero battery drain</span></div>
+        <div>Coverage: <span class="lab-val" id="labMotionCoverage">Dual-zone (Vicinity + Room)</span></div>
+        <div>Disturbance Log: <span class="lab-val" id="labMotionTotalLogs">0 events</span></div>
       </div>
       <div class="lab-recent-movements">
         <div class="lab-recent-header">
@@ -712,14 +712,14 @@
       </div>
       <div class="lab-details">
         <div class="lab-grid">
-          <div class="lab-metric"><span>Laptop Signal</span><b id="labMotionLapDbm">– dBm</b></div>
-          <div class="lab-metric"><span>Laptop Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
-          <div class="lab-metric"><span>Phone Signal</span><b id="labMotionPhoneDbmDetail">Standby</b></div>
-          <div class="lab-metric"><span>Phone Disturbance</span><b id="labMotionPhoneSpikeDetail">Standby</b></div>
+          <div class="lab-metric"><span>Room Wi-Fi Signal</span><b id="labMotionLapDbm">– dBm</b></div>
+          <div class="lab-metric"><span>Room Disturbance</span><b id="labMotionSpikeDetail">0.0 dB spike</b></div>
+          <div class="lab-metric"><span>Vicinity Telemetry</span><b id="labMotionPhoneDbmDetail">–</b></div>
+          <div class="lab-metric"><span>Vicinity Disturbance</span><b id="labMotionPhoneSpikeDetail">–</b></div>
           <div class="lab-metric"><span>Quiet Noise Envelope</span><b>±1.8 dB threshold</b></div>
           <div class="lab-metric"><span>Retention Window</span><b>Last 30 days</b></div>
         </div>
-        <div class="lab-note-box" id="labMotionStatusNote">Laptop continuously monitors ambient reflections and logs events. Phone presence detector operates in foreground without background battery consumption.</div>
+        <div class="lab-note-box" id="labMotionStatusNote">The laptop presence monitor fuses both its own immediate vicinity sensor and the connected Wi-Fi router to detect motion right around the desk as well as across the wider room.</div>
       </div>
     </article>
 
@@ -997,13 +997,14 @@ function renderDisturbanceLog(events) {
 
   container.innerHTML = displayList.map(ev => {
     const ago = formatTimeAgo(ev);
-    const isPhone = ev.source === 'phone';
-    const tagClass = isPhone ? 'phone' : 'laptop';
-    const tagLabel = isPhone ? 'Phone' : 'Laptop';
+    const zone = ev.zone || (ev.source === 'phone' ? 'Vicinity' : 'Room');
+    const isVicinity = zone.toLowerCase().includes('vicinity');
+    const tagClass = isVicinity ? 'phone' : 'laptop';
+    const tagLabel = isVicinity ? 'Vicinity' : 'Room';
     return `
       <div class="lab-recent-item">
         <div class="lab-recent-time-badge">
-          <span class="lab-recent-dot" style="${isPhone ? 'background:#8EA8FF;' : ''}"></span>
+          <span class="lab-recent-dot" style="${isVicinity ? 'background:#8EA8FF;' : ''}"></span>
           <span class="lab-sensor-tag ${tagClass}">${tagLabel}</span>
           <span class="lab-recent-rel">${ago}</span>
           <span class="lab-recent-clock">${ev.time || ''}</span>
@@ -1183,18 +1184,18 @@ function drawLabMotion() {
 
   // Minimalist Sensor Legend (clean dots and labels in top/corner)
   ctx.font = '10px system-ui';
-  // Laptop legend
+  // Room Wi-Fi legend
   ctx.fillStyle = '#46D39A';
   ctx.beginPath(); ctx.arc(14, 14, 3.5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#A6AEBB';
-  ctx.fillText('Laptop connected Wi-Fi', 22, 17);
+  ctx.fillText('Connected Wi-Fi (Room)', 22, 17);
 
-  // Phone legend
-  const phoneX = isEnlarged ? 175 : 135;
+  // Vicinity legend
+  const phoneX = isEnlarged ? 175 : 155;
   ctx.fillStyle = phoneMotionActive ? '#8EA8FF' : '#555C66';
   ctx.beginPath(); ctx.arc(phoneX, 14, 3.5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = phoneMotionActive ? '#A6AEBB' : '#6A7280';
-  ctx.fillText(phoneMotionActive ? 'Phone connected Wi-Fi' : 'Phone (Standby)', phoneX + 8, 17);
+  ctx.fillText(phoneMotionActive ? 'Local Vicinity (Near)' : 'Vicinity (Standby)', phoneX + 8, 17);
 }
 
 async function pollLabMotion() {
@@ -1247,27 +1248,27 @@ async function pollLabMotion() {
       drawLabMotion();
 
       // Dual Badges
-      const bLap = $('labMotionBadge');
-      if (bLap) {
+      const bRoom = $('labMotionBadge');
+      if (bRoom) {
         if (laptopMotionDetected) {
-          bLap.textContent = 'Laptop: Movement (+' + laptopMotionSpike + ' dB)';
-          bLap.className = 'lab-badge alert';
+          bRoom.textContent = 'Room: Movement (+' + laptopMotionSpike + ' dB)';
+          bRoom.className = 'lab-badge alert';
         } else {
-          bLap.textContent = 'Laptop: Quiet';
-          bLap.className = 'lab-badge active';
+          bRoom.textContent = 'Room: Quiet';
+          bRoom.className = 'lab-badge active';
         }
       }
-      const bPhone = $('labMotionPhoneBadge');
-      if (bPhone) {
+      const bVicinity = $('labMotionPhoneBadge');
+      if (bVicinity) {
         if (!phoneMotionActive) {
-          bPhone.textContent = 'Phone: Standby';
-          bPhone.className = 'lab-badge';
+          bVicinity.textContent = 'Vicinity: Standby';
+          bVicinity.className = 'lab-badge';
         } else if (phoneMotionDetected) {
-          bPhone.textContent = 'Phone: Movement (+' + phoneMotionSpike + ' dB)';
-          bPhone.className = 'lab-badge alert';
+          bVicinity.textContent = 'Vicinity: Movement (+' + phoneMotionSpike + ' dB)';
+          bVicinity.className = 'lab-badge alert';
         } else {
-          bPhone.textContent = 'Phone: Quiet';
-          bPhone.className = 'lab-badge active';
+          bVicinity.textContent = 'Vicinity: Calm';
+          bVicinity.className = 'lab-badge active';
         }
       }
 
@@ -1279,11 +1280,11 @@ async function pollLabMotion() {
       }
       if ($('labMotionPhoneTarget')) {
         if (phoneMotionActive) {
-          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Connected Wi-Fi';
+          const pSsid = ph.target && ph.target.ssid ? ph.target.ssid : 'Vicinity Link';
           const pDbm = ph.current_dbm != null ? ph.current_dbm + ' dBm' : '–';
           $('labMotionPhoneTarget').textContent = `${pSsid} (${pDbm})`;
         } else {
-          $('labMotionPhoneTarget').textContent = 'Connected Wi-Fi · Standby (Zero battery)';
+          $('labMotionPhoneTarget').textContent = 'Local Vicinity (Active on demand)';
         }
       }
 
@@ -1309,20 +1310,20 @@ async function pollLabMotion() {
 
       // Details view
       if ($('labMotionLapDbm')) $('labMotionLapDbm').textContent = (lap.current_dbm != null ? lap.current_dbm + ' dBm' : '–');
-      if ($('labMotionPhoneDbmDetail')) $('labMotionPhoneDbmDetail').textContent = (phoneMotionActive && ph.current_dbm != null ? ph.current_dbm + ' dBm' : 'Standby');
+      if ($('labMotionPhoneDbmDetail')) $('labMotionPhoneDbmDetail').textContent = (phoneMotionActive && ph.current_dbm != null ? ph.current_dbm + ' dBm' : 'Active');
       if ($('labMotionSpikeDetail')) $('labMotionSpikeDetail').textContent = '+' + laptopMotionSpike + ' dB ' + (laptopMotionDetected ? '(Exceeded envelope)' : '(Within envelope)');
-      if ($('labMotionPhoneSpikeDetail')) $('labMotionPhoneSpikeDetail').textContent = phoneMotionActive ? ('+' + phoneMotionSpike + ' dB ' + (phoneMotionDetected ? '(Exceeded envelope)' : '(Within envelope)')) : 'Standby';
+      if ($('labMotionPhoneSpikeDetail')) $('labMotionPhoneSpikeDetail').textContent = phoneMotionActive ? ('+' + phoneMotionSpike + ' dB ' + (phoneMotionDetected ? '(Exceeded envelope)' : '(Within envelope)')) : 'Calm';
       if ($('labMotionStatusNote')) {
         const parts = [];
-        if (laptopMotionDetected) parts.push('Laptop RF zone disturbed (+' + laptopMotionSpike + ' dB).');
-        else parts.push('Laptop Fresnel zone quiet.');
-        if (phoneMotionActive) {
-          if (phoneMotionDetected) parts.push('Phone RF zone disturbed (+' + phoneMotionSpike + ' dB).');
-          else parts.push('Phone Fresnel zone quiet.');
+        if (laptopMotionDetected && phoneMotionDetected) {
+          parts.push('Full-space movement detected: both immediate laptop vicinity and connected Wi-Fi room reflections disturbed.');
+        } else if (phoneMotionDetected) {
+          parts.push('Immediate vicinity movement detected near laptop (+' + phoneMotionSpike + ' dB). Room remains calm.');
+        } else if (laptopMotionDetected) {
+          parts.push('Room-wide movement detected across connected Wi-Fi field (+' + laptopMotionSpike + ' dB). Immediate vicinity calm.');
         } else {
-          parts.push('Phone presence sensor is in standby until Wi-Fi Lab is active on phone (zero background battery drain).');
+          parts.push('Dual-zone calm maintained. Both immediate laptop vicinity and room Wi-Fi reflections are quiet.');
         }
-        parts.push('Monitors RF reflections between each device and its connected Wi-Fi router.');
         $('labMotionStatusNote').textContent = parts.join(' ');
       }
 

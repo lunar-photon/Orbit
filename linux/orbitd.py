@@ -5201,6 +5201,7 @@ class WifiMotionMonitor:
                         ev = {
                             'id': self.phone_event_counter,
                             'source': 'phone',
+                            'zone': 'Vicinity',
                             'timestamp': now,
                             'start_time': now,
                             'time': t_str,
@@ -5221,6 +5222,19 @@ class WifiMotionMonitor:
                 else:
                     if self.phone_active_event and (now - self.phone_last_disturbance_time >= 3.0):
                         self.phone_active_event = None
+
+    def feed_vicinity_sample(self, val, label="Vicinity Link"):
+        try:
+            val = int(val)
+        except (ValueError, TypeError):
+            return
+        if val == -127 or val == 0:
+            return
+        now = time.time()
+        with self.lock:
+            if now - self.phone_last_seen < 3.0 and self.phone_ssid != "Vicinity Link":
+                return
+        self.feed_phone_sample(val, ssid=label)
 
     def _loop(self):
         while True:
@@ -5264,6 +5278,7 @@ class WifiMotionMonitor:
                                     ev = {
                                         'id': self.event_counter,
                                         'source': 'laptop',
+                                        'zone': 'Room',
                                         'timestamp': now,
                                         'start_time': now,
                                         'time': t_str,
@@ -5439,8 +5454,11 @@ class WifiMotionMonitor:
 
             return {
                 'status': 'ok',
+                'coverage': 'Dual-zone (Immediate vicinity + room)' if phone_status['active'] else 'Room-wide (Connected Wi-Fi)',
                 'laptop': laptop_status,
+                'room': laptop_status,
                 'phone': phone_status,
+                'vicinity': phone_status,
                 'events': combined_events,
                 'current_dbm': self.current_signal,
                 'mean_dbm': round(base_mean, 1),
@@ -8635,6 +8653,10 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             b = body if isinstance(body, dict) else {}
             client_t = _num(b.get('t'), 0, 2e9)
             seq = int(b.get('seq', 0))
+            if client_t > 0:
+                rtt_ms = round((time.time() - client_t) * 1000, 1)
+                equiv_dbm = -min(85, max(42, int(45 + rtt_ms)))
+                WIFI_MOTION.feed_vicinity_sample(equiv_dbm, label="Vicinity (P2P)")
             self.send_json({
                 'status': 'ok',
                 'client_t': client_t,
