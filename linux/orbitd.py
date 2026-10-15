@@ -6545,6 +6545,58 @@ def laptop_alerts(limit=10):
     return out
 
 
+# Find my photos: the phone's (a wrong unlock) and this computer's ('laptop-': a wrong password, lost mode)
+FINDMY_PHOTO_NAME = re.compile(r'(laptop-)?\d{8}-\d{6}-[0-9a-f]{6}\.jpg')
+
+
+def findmy_photos(limit=60):
+    """Every Find my photo still kept, newest first, for this computer's own Orbit app."""
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        rows = db.execute("SELECT t, kind, detail FROM events WHERE kind IN "
+                          "('laptop_wrong_password', 'wrong_unlock', 'lost_report') ORDER BY t DESC").fetchall()
+    out = []
+    for t, kind, detail in rows:
+        try:
+            d = json.loads(detail)
+        except ValueError:
+            continue
+        name = d.get('name')
+        if not name or not FINDMY_PHOTO_NAME.fullmatch(name) or not os.path.isfile(os.path.join(FINDMY_PHOTOS, name)):
+            continue
+        out.append({'t': t, 'kind': kind, 'name': name, 'city': d.get('city'),
+                    'networks': (d.get('networks') or [])[:6]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def findmy_delete_photo(name):
+    """Delete a photo. A wrong password or wrong unlock goes with it; a lost-mode report keeps its
+    networks and city, just without the photo."""
+    if not FINDMY_PHOTO_NAME.fullmatch(name or ''):
+        return False
+    with _FINDMY_LOCK, closing(_findmy_db()) as db:
+        for rowid, kind, detail in db.execute("SELECT rowid, kind, detail FROM events WHERE detail LIKE ?",
+                                              ('%' + name + '%',)).fetchall():
+            try:
+                d = json.loads(detail)
+            except ValueError:
+                continue
+            if d.get('name') != name:
+                continue
+            if kind == 'lost_report':
+                d.pop('name', None)
+                db.execute('UPDATE events SET detail = ? WHERE rowid = ?', (json.dumps(d), rowid))
+            else:
+                db.execute('DELETE FROM events WHERE rowid = ?', (rowid,))
+        db.commit()
+    try:
+        os.remove(os.path.join(FINDMY_PHOTOS, name))
+    except FileNotFoundError:
+        pass
+    return True
+
+
 # ---- lost mode: when this computer is marked lost (from the phone) ----
 # A thief won't take it anywhere the phone has been, so the Wi-Fi map can't place it. While it's
 # marked lost, every 10 minutes (the first at once) it reports what can be learned anywhere: a
@@ -7566,10 +7618,18 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
         elif path == '/api/findmy/photo':
             client_info, token = authenticate_client(self, load_config())
             name = qs.get('name', [''])[0]
-            if not client_info or not client_info.get('local') or not re.fullmatch(r'[0-9-]+-[0-9a-f]{6}\.jpg', name):
+            if not client_info or not client_info.get('local') or not FINDMY_PHOTO_NAME.fullmatch(name):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             self.serve_file(os.path.join(FINDMY_PHOTOS, name), 'image/jpeg')
+            return
+        elif path == '/api/findmy/photos':
+            # Who tried to get in, for the Orbit app on this computer
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            self.send_json({"status": "ok", "photos": findmy_photos()})
             return
         elif path == '/api/findmy/laptop':
             # The phone or local computer asks where this computer is: a fresh look, and where it was last found
@@ -9078,6 +9138,15 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "unauthorized"}, status=401)
                 return
             self.send_json({"status": "ok", **set_findmy_settings(body if isinstance(body, dict) else {})})
+            return
+        elif path == '/api/findmy/photo/delete':
+            # from the Orbit app on this computer
+            client_info, token = authenticate_client(self, load_config())
+            if not client_info or not client_info.get('local'):
+                self.send_json({"error": "unauthorized"}, status=401)
+                return
+            ok = findmy_delete_photo(str((body if isinstance(body, dict) else {}).get('name') or ''))
+            self.send_json({"status": "ok" if ok else "error"}, status=200 if ok else 400)
             return
         elif path == '/api/findmy/capabilities':
             # what the phone can time distances with (radio time-of-flight); logged to decide how to range

@@ -358,6 +358,10 @@ QPushButton#Tile { background: @SURFACE; border: 1px solid @HAIRLINE; border-rad
                    min-height: 74px; text-align: left; }
 QPushButton#Tile:hover { background: #1A1E24; border-color: @STROKE; }
 QPushButton#Tile:pressed { background: @RAISED; }
+QPushButton#Tile:disabled { background: @GROUND; border-color: @HAIRLINE; }
+QPushButton#Photo { background: @SURFACE; border: 1px solid @HAIRLINE; border-radius: 14px; padding: 0;
+                    text-align: left; min-width: 204px; max-width: 204px; min-height: 196px; max-height: 196px; }
+QPushButton#Photo:hover { background: #1A1E24; border-color: @STROKE; }
 
 QLineEdit, QComboBox { background: @SURFACE; border: 1px solid @STROKE; border-radius: 12px; padding: 0 12px;
                        min-height: 38px; selection-background-color: @ACCENT; selection-color: @GROUND; }
@@ -481,6 +485,10 @@ ICONS = {
     'chevron-down': '<path d="m6 9 6 6 6-6"/>',
     'chevron-right': '<path d="m9 18 6-6-6-6"/>',
     'alert': '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+    'map-pin': '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+    'radio': '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
+    'activity': '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+    'scan-face': '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01"/><path d="M15 9h.01"/>',
     'home': '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
 }
 
@@ -1807,6 +1815,483 @@ class OverviewPage(QWidget):
 
 
 # ==========================================
+# Find my page: who tried to get in, the phone's Find my buttons, this computer's settings
+# ==========================================
+
+def fetch_bytes(endpoint, timeout=8):
+    try:
+        with urllib.request.urlopen(f"{DAEMON_URL}{endpoint}", timeout=timeout) as resp:
+            return resp.read()
+    except Exception:
+        return b''
+
+
+def cover_pixmap(data, w, h, radius=10):
+    """The photo cropped to fill w x h, with rounded corners."""
+    src = QPixmap()
+    if not data or not src.loadFromData(data):
+        return None
+    app = QGuiApplication.instance()
+    dpr = max(1.0, app.devicePixelRatio() if app else 1.0)
+    pw, ph = int(w * dpr), int(h * dpr)
+    scaled = src.scaled(pw, ph, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation)
+    crop = scaled.copy((scaled.width() - pw) // 2, (scaled.height() - ph) // 2, pw, ph)
+    out = QPixmap(pw, ph)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, pw, ph), radius * dpr, radius * dpr)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, crop)
+    p.end()
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
+# kind -> (what happened, icon, tint)
+FINDMY_WORDS = {
+    'laptop_wrong_password': ("Wrong password on this computer", 'camera', C.DANGER),
+    'wrong_password': ("Wrong password on this computer", 'camera', C.DANGER),
+    'wrong_unlock': ("Wrong unlock attempt on the phone", 'smartphone', C.DANGER),
+    'lost_report': ("Lost mode report from this computer", 'globe', C.DANGER),
+    'sim_changed': ("The phone's SIM card changed", 'alert', C.WARN),
+    'sim_removed': ("The phone's SIM card was removed", 'alert', C.WARN),
+    'low_battery': ("Phone battery nearly flat, its last place saved", 'battery', C.WARN),
+    'walk_away_lock': ("Locked when you walked away", 'lock', C.ACCENT),
+}
+
+
+def photo_caption(ph):
+    return {'laptop_wrong_password': "Wrong password here",
+            'wrong_unlock': "Wrong unlock on the phone",
+            'lost_report': "Lost mode" + (f", {ph['city']}" if ph.get('city') else "")}.get(ph.get('kind'), "Photo")
+
+
+class Toggle(QWidget):
+    """A small on/off switch."""
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, on=False, parent=None):
+        super().__init__(parent)
+        self._on = bool(on)
+        self.setFixedSize(40, 22)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def isChecked(self):
+        return self._on
+
+    def setChecked(self, on):
+        self._on = bool(on)
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self.isEnabled() and self.rect().contains(e.position().toPoint()):
+            self.setChecked(not self._on)
+            self.toggled.emit(self._on)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        track = QColor(C.ACCENT if self._on else C.STROKE)
+        if not self.isEnabled():
+            track.setAlphaF(0.4)
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 11, 11)
+        p.setBrush(QColor(C.GROUND if self._on else C.T2))
+        p.drawEllipse(QRectF(self.width() - 19 if self._on else 3, 3, 16, 16))
+
+
+class PhotoTile(QPushButton):
+    def __init__(self, photo, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Photo")
+        self.photo = photo
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(204, 196)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 8)
+        lay.setSpacing(4)
+        self.img = QLabel()
+        self.img.setFixedSize(190, 142)
+        self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.img.setStyleSheet(f"background: {C.RAISED}; border-radius: 10px;")
+        self.img.setPixmap(line_pixmap('image', C.T3, 28))
+        lay.addWidget(self.img)
+        for w in (label(photo_caption(photo), "value"),
+                  label(f"{ago(photo['t'])}  ·  {time.strftime('%d %b, %H:%M', time.localtime(photo['t']))}", "faint")):
+            w.setContentsMargins(4, 0, 4, 0)
+            w.setText(w.fontMetrics().elidedText(w.text(), Qt.TextElideMode.ElideRight, 180))
+            w.setToolTip(photo_caption(photo))
+            lay.addWidget(w)
+        for w in self.findChildren(QLabel):
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def set_photo(self, data):
+        pm = cover_pixmap(data, 190, 142)
+        if pm is not None:
+            self.img.setStyleSheet("")
+            self.img.setPixmap(pm)
+
+
+class PhotoDialog(QDialog):
+    def __init__(self, photo, data, page, parent=None):
+        super().__init__(parent)
+        self.photo, self.data, self.page = photo, data, page
+        self.setWindowTitle(photo_caption(photo))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(12)
+        lay.addWidget(label(FINDMY_WORDS.get(photo['kind'], (photo_caption(photo),))[0], "h1"))
+        lay.addWidget(label(time.strftime('%A %d %B %Y, %H:%M:%S', time.localtime(photo['t'])), "muted"))
+        img = QLabel()
+        img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pm = QPixmap()
+        if data and pm.loadFromData(data):
+            img.setPixmap(pm.scaled(760, 520, Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation))
+        else:
+            img.setText("This photo couldn't be loaded.")
+        lay.addWidget(img, 1)
+        if photo.get('networks'):
+            nets = label("Wi-Fi around it: " + ", ".join(n for n in photo['networks'] if n), "faint", wrap=True)
+            lay.addWidget(nets)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        dl = button("Delete", 'trash', kind='danger')
+        dl.clicked.connect(self.delete)
+        row.addWidget(dl)
+        row.addStretch()
+        sv = button("Save to Downloads", 'download')
+        sv.clicked.connect(self.save)
+        sv.setEnabled(bool(data))
+        row.addWidget(sv)
+        cl = button("Close", kind='primary')
+        cl.clicked.connect(self.accept)
+        row.addWidget(cl)
+        lay.addLayout(row)
+
+    def save(self):
+        dest = os.path.join(os.path.expanduser('~/Downloads'), 'orbit-' + self.photo['name'])
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, 'wb') as f:
+                f.write(self.data)
+            notify("Photo saved", dest.replace(os.path.expanduser('~'), '~'))
+        except OSError as e:
+            QMessageBox.warning(self, "Couldn't save the photo", str(e))
+
+    def delete(self):
+        ret = QMessageBox.question(self, "Delete photo", "Delete this photo from this computer?\n\n"
+                                   "A copy your phone already has stays on the phone.",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                   QMessageBox.StandardButton.No)
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        res = post_json("/api/findmy/photo/delete", {"name": self.photo['name']})
+        if res.get('status') != 'ok':
+            QMessageBox.warning(self, "Couldn't delete the photo", str(res.get('message') or res.get('error') or res))
+            return
+        self.page.forget_photo(self.photo['name'])
+        self.accept()
+
+
+class FindMyPage(QWidget):
+    TILE_STEP = 214              # a photo card and the gap after it
+
+    def __init__(self, ctl, win, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Page")
+        self.ctl, self.win = ctl, win
+        self._photos_sig = None
+        self._thumbs = {}            # name -> jpeg bytes
+        self._tiles = {}
+        self._cols_now = 0
+        self._busy = False
+        self._nearby_until = 0.0
+        self._build()
+        ctl.state.changed.connect(self._on_state)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(15000)
+
+    def _build(self):
+        sa, lay = scroll_page()
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(sa)
+
+        # Who tried to get in
+        pc = Card()
+        h = QHBoxLayout()
+        h.addWidget(label("Who tried to get in", "title"))
+        self.photo_count = label("", "faint")
+        h.addWidget(self.photo_count)
+        h.addStretch()
+        rb = button(icon='refresh', kind='icon', size='small', tip="Refresh")
+        rb.clicked.connect(self.refresh)
+        h.addWidget(rb)
+        pc.lay.addLayout(h)
+        self.photos_empty = label("No photos. When someone types a wrong password on this computer, or a wrong "
+                                  "unlock on your phone, their photo shows up here.", "muted", wrap=True)
+        pc.lay.addWidget(self.photos_empty)
+        self.photo_grid = QGridLayout()
+        self.photo_grid.setHorizontalSpacing(10)
+        self.photo_grid.setVerticalSpacing(10)
+        self.photo_grid.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        pc.lay.addLayout(self.photo_grid)
+        lay.addWidget(pc)
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Your phone: the phone app's Find my buttons
+        ph = Card()
+        ph.lay.addWidget(label("Your phone", "title"))
+        g = QGridLayout()
+        g.setSpacing(10)
+        self.t_map = ActionTile('map-pin', C.ACCENT, "Show on map", "Where it is now")
+        self.t_map.clicked.connect(self.ctl.open_find_my)
+        self.t_ring = ActionTile('bell', C.RING, "Play sound", "Even on silent")
+        self.t_ring.clicked.connect(self.win.toggle_ring)
+        self.t_near = ActionTile('radio', C.ONLINE, "Nearby", "Same place as you?")
+        self.t_near.clicked.connect(self.toggle_nearby)
+        self.t_lab = ActionTile('activity', C.CLIP, "Wi-Fi Lab", "Signals, movement")
+        self.t_lab.clicked.connect(self.open_wifilab)
+        for i, t in enumerate((self.t_map, self.t_ring, self.t_near, self.t_lab)):
+            g.addWidget(t, i // 2, i % 2)
+        ph.lay.addLayout(g)
+        ph.lay.addStretch()
+        row.addWidget(ph, 1)
+
+        # This computer: the settings the phone app has for it, and lost mode
+        cc = Card()
+        cc.lay.addWidget(label("This computer", "title"))
+
+        def setting(icon, tint, title, desc):
+            w = QHBoxLayout()
+            w.setSpacing(12)
+            w.addWidget(IconTile(icon, tint, 36))
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            t = label(title, "value")
+            d = label(desc, "faint", wrap=True)
+            col.addWidget(t)
+            col.addWidget(d)
+            w.addLayout(col, 1)
+            return w, t, d
+        r, _, _ = setting('lock', C.ACCENT, "Lock when I walk away", "When your phone leaves, this computer locks itself")
+        self.sw_walk = Toggle()
+        self.sw_walk.toggled.connect(lambda on: self.set_setting('walk_away_lock', on, self.sw_walk))
+        r.addWidget(self.sw_walk)
+        cc.lay.addLayout(r)
+        r, _, _ = setting('camera', C.DANGER, "Photo on wrong password",
+                          "The webcam takes a photo of whoever types a wrong password")
+        self.sw_photo = Toggle()
+        self.sw_photo.toggled.connect(lambda on: self.set_setting('wrong_password_photo', on, self.sw_photo))
+        r.addWidget(self.sw_photo)
+        cc.lay.addLayout(r)
+        cc.lay.addWidget(rule())
+        r, self.lost_title, self.lost_desc = setting('alert', C.T3, "Not marked as lost",
+                                                     "If it goes missing, mark it lost from your phone")
+        self.lost_tile = r.itemAt(0).widget()
+        cc.lay.addLayout(r)
+        cc.lay.addStretch()
+        lb = button("Lock now", 'lock')
+        lb.clicked.connect(self.lock_now)
+        cc.lay.addWidget(lb, 0, Qt.AlignmentFlag.AlignLeft)
+        row.addWidget(cc, 1)
+        lay.addLayout(row)
+
+        # Recent
+        rc = Card()
+        rc.lay.addWidget(label("Recent", "title"))
+        self.recent_empty = label("Nothing unusual. All quiet in orbit.", "muted")
+        rc.lay.addWidget(self.recent_empty)
+        self.recent_box = QVBoxLayout()
+        self.recent_box.setSpacing(2)
+        rc.lay.addLayout(self.recent_box)
+        lay.addWidget(rc)
+        lay.addStretch()
+        self._on_state(self.ctl.state.s)
+
+    # ---- data ----
+    def refresh(self):
+        if self._busy:
+            return
+        self._busy = True
+
+        def work():
+            return {'photos': fetch_json("/api/findmy/photos", timeout=5),
+                    'laptop': fetch_json("/api/findmy/laptop", timeout=8),
+                    'phone': fetch_json("/api/findmy/phone", timeout=5)}
+        run_async(work, self._loaded)
+
+    def _tick(self):
+        if self.isVisible():
+            self.refresh()
+
+    def _loaded(self, res):
+        self._busy = False
+        if not isinstance(res, dict):
+            return
+        photos = (res.get('photos') or {}).get('photos')
+        if photos is not None:
+            self._show_photos(photos)
+        lap = res.get('laptop') or {}
+        st = lap.get('settings')
+        if st:
+            self.sw_walk.setChecked(st.get('walk_away_lock', True))
+            self.sw_photo.setChecked(st.get('wrong_password_photo', True))
+        lost = lap.get('lost') or {}
+        if lost.get('lost'):
+            since = f"Since {ago(lost['since']).lower()}. " if lost.get('since') else ""
+            self.lost_title.setText("Marked as lost")
+            self.lost_desc.setText(since + "It sends a photo, the Wi-Fi around it and its city every 10 minutes. "
+                                   "Mark it found from your phone.")
+            self.lost_tile.set_icon('alert', C.DANGER)
+        else:
+            self.lost_title.setText("Not marked as lost")
+            self.lost_desc.setText("If it goes missing, mark it lost from your phone")
+            self.lost_tile.set_icon('alert', C.T3)
+        phone = res.get('phone') or {}
+        near = phone.get('nearby') or {}
+        if time.time() < self._nearby_until:
+            self.t_near.set_text("Nearby: " + (near.get('word') or "comparing Wi-Fi…"), "Click to stop")
+        events = [e for e in (phone.get('events') or [])]
+        events += [dict(a, kind='laptop_wrong_password') for a in (lap.get('alerts') or [])
+                   if a.get('kind') == 'wrong_password']
+        events.sort(key=lambda e: e.get('t') or 0, reverse=True)
+        self._show_recent(events[:12])
+
+    def _show_photos(self, photos):
+        sig = [p['name'] for p in photos]
+        if sig == self._photos_sig:
+            return
+        self._photos_sig = sig
+        while self.photo_grid.count():
+            it = self.photo_grid.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self._tiles = {}
+        self._cols_now = self._cols()
+        self.photos_empty.setVisible(not photos)
+        self.photo_count.setText(str(len(photos)) if photos else "")
+        for i, ph in enumerate(photos):
+            t = PhotoTile(ph)
+            t.clicked.connect(lambda _=False, p=ph: self.open_photo(p))
+            self.photo_grid.addWidget(t, i // self._cols_now, i % self._cols_now)
+            self._tiles[ph['name']] = t
+            if ph['name'] in self._thumbs:
+                t.set_photo(self._thumbs[ph['name']])
+            else:
+                run_async(lambda n=ph['name']: fetch_bytes("/api/findmy/photo?name=" + quote(n)),
+                          lambda data, n=ph['name']: self._got_thumb(n, data))
+
+    def _cols(self):
+        # the page less the card's padding and the scrollbar
+        return max(1, (self.width() - 46 + 10) // self.TILE_STEP)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        cols = self._cols()
+        if self._tiles and cols != self._cols_now:
+            self._cols_now = cols
+            tiles = [self._tiles[n] for n in (self._photos_sig or []) if n in self._tiles]
+            for t in tiles:
+                self.photo_grid.removeWidget(t)
+            for i, t in enumerate(tiles):
+                self.photo_grid.addWidget(t, i // cols, i % cols)
+
+    def _got_thumb(self, name, data):
+        if not data:
+            return
+        self._thumbs[name] = data
+        t = self._tiles.get(name)
+        if t is not None:
+            t.set_photo(data)
+
+    def forget_photo(self, name):
+        self._thumbs.pop(name, None)
+        self._photos_sig = None
+        self.refresh()
+
+    def _show_recent(self, events):
+        while self.recent_box.count():
+            it = self.recent_box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        self.recent_empty.setVisible(not events)
+        for e in events:
+            kind = e.get('kind') or ''
+            what, icon, tint = FINDMY_WORDS.get(kind, (kind.replace('_', ' ').capitalize(), 'clock', C.T3))
+            if kind == 'sim_changed' and e.get('operator'):
+                what += f" ({e['operator']})"
+            if kind == 'lost_report' and e.get('city'):
+                what += f", {e['city']}"
+            w = QFrame()
+            w.setObjectName("Row")
+            r = QHBoxLayout(w)
+            r.setContentsMargins(0, 5, 0, 5)
+            r.setSpacing(12)
+            r.addWidget(IconTile(icon, tint, 32))
+            r.addWidget(label(what, "value"), 1)
+            r.addWidget(label(f"{ago(e.get('t'))}  ·  {time.strftime('%d %b, %H:%M', time.localtime(e.get('t') or 0))}",
+                              "faint"))
+            self.recent_box.addWidget(w)
+
+    # ---- actions ----
+    def open_photo(self, ph):
+        data = self._thumbs.get(ph['name']) or fetch_bytes("/api/findmy/photo?name=" + quote(ph['name']))
+        PhotoDialog(ph, data, self, self.win).exec()
+
+    def set_setting(self, key, on, sw):
+        def done(res):
+            if not isinstance(res, dict) or res.get('status') != 'ok':
+                sw.setChecked(not on)
+                QMessageBox.warning(self.win, "Couldn't change the setting",
+                                    str((res or {}).get('message') or (res or {}).get('error') or "No answer"))
+        run_async(lambda: post_json("/api/findmy/settings", {key: on}), done)
+
+    def toggle_nearby(self):
+        on = time.time() >= self._nearby_until
+        self._nearby_until = time.time() + 180 if on else 0.0
+        self.t_near.set_text("Nearby: comparing Wi-Fi…" if on else "Nearby",
+                             "Click to stop" if on else "Same place as you?")
+        run_async(lambda: post_json("/api/findmy/phone/nearby", {"on": on}))
+        if on:
+            for s in (4, 9, 15, 25, 40, 60):
+                QTimer.singleShot(s * 1000, self.refresh)
+            QTimer.singleShot(181000, self._nearby_done)
+
+    def _nearby_done(self):
+        if time.time() >= self._nearby_until:
+            self.t_near.set_text("Nearby", "Same place as you?")
+
+    def open_wifilab(self):
+        subprocess.Popen(["xdg-open", f"{DAEMON_URL}/wifilab"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def lock_now(self):
+        subprocess.Popen(["loginctl", "lock-session"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def set_ringing(self, on):
+        self.t_ring.set_text("Stop sound" if on else "Play sound",
+                             "Ringing now" if on else "Even on silent")
+
+    def _on_state(self, s):
+        conn = bool(s.get('connected'))
+        for t in (self.t_ring, self.t_near):
+            t.setEnabled(conn)
+        if not conn and time.time() < self._nearby_until:
+            self._nearby_until = 0.0
+            self._nearby_done()
+
+
+# ==========================================
 # Main window
 # ==========================================
 
@@ -1851,7 +2336,8 @@ class OrbitWindow(QMainWindow):
         sl.addSpacing(20)
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
-        for i, (text, icon) in enumerate((("Overview", 'grid'), ("Files", 'folder'), ("Send", 'send'))):
+        for i, (text, icon) in enumerate((("Overview", 'grid'), ("Files", 'folder'), ("Send", 'send'),
+                                          ("Find my", 'shield'))):
             b = QPushButton(f"  {text}")
             b.setObjectName("Nav")
             b.setCheckable(True)
@@ -1908,7 +2394,8 @@ class OrbitWindow(QMainWindow):
         self.overview = OverviewPage(self.ctl, self)
         self.files = FilesPage(self.ctl)
         self.send = SendPage(self.ctl)
-        for p in (self.overview, self.files, self.send):
+        self.findmy = FindMyPage(self.ctl, self)
+        for p in (self.overview, self.files, self.send, self.findmy):
             self.stack.addWidget(p)
         cl.addWidget(self.stack, 1)
         h.addWidget(content, 1)
@@ -1922,6 +2409,8 @@ class OrbitWindow(QMainWindow):
         if idx == 1 and not self._files_loaded:
             self._files_loaded = True
             self.files.load_directory(self.files.current_path, record_history=False)
+        if idx == 3:
+            self.findmy.refresh()
 
     def present(self, page=None):
         if page is not None:
@@ -1942,6 +2431,7 @@ class OrbitWindow(QMainWindow):
         self.h_ring.setIcon(line_icon('bell-off' if on else 'bell', C.DANGER if on else C.RING, 18))
         self.h_ring.setProperty("kind", "danger" if on else None)
         repolish(self.h_ring)
+        self.findmy.set_ringing(on)
 
     def update_header(self, s):
         if not s['service']:
@@ -2245,6 +2735,8 @@ class OrbitApp:
             self.open_explorer()
         elif c == 'show':
             self.show_phone_info()
+        elif c == 'findmy':
+            self.open_find_my_page()
         elif c == 'send':
             self.ensure_window().present(2)
             self.window.send.send_paths(cmd.get('files') or [])
@@ -2269,6 +2761,9 @@ class OrbitApp:
 
     def open_explorer(self):
         self.ensure_window().present(1)
+
+    def open_find_my_page(self):
+        self.ensure_window().present(3)
 
     def open_find_my(self):
         """The Find my phone map, in the browser (the key becomes a local-only cookie there)."""
@@ -2303,6 +2798,7 @@ class OrbitApp:
         self.act_clip = self.menu.addAction("Send clipboard to phone", self.sync_clipboard)
         self.act_ring = self.menu.addAction("Ring phone", self._toggle_ring)
         self.menu.addAction("Find my phone", self.open_find_my)
+        self.menu.addAction("Who tried to get in", self.open_find_my_page)
         # Orbit Cam's format, one at a time: Sharp suits current apps; Raw and Compatible are for
         # an app that doesn't see the camera or shows a broken picture
         self.cam_menu = self.menu.addMenu("Orbit Cam")
@@ -2457,6 +2953,8 @@ class OrbitApp:
             self.open_explorer()
         elif self.args.show:
             self.show_phone_info()
+        elif self.args.findmy:
+            self.open_find_my_page()
         if self.args.send:
             self.handle_command({'cmd': 'send', 'files': [os.path.abspath(p) for p in self.args.send]})
         return self.app.exec()
@@ -2495,7 +2993,7 @@ def selftest(args):
     report["devices"] = len(s["devices"])
     win = ctl.ensure_window()
     win.show()
-    for i in range(3):
+    for i in range(4):
         win.show_page(i)
         app.processEvents()
     win.files.load_directory_sync(PHONE_ROOT)
@@ -2510,10 +3008,14 @@ def selftest(args):
     if args.screenshot:
         base, ext = os.path.splitext(args.screenshot)
         ext = ext or ".png"
-        for i, name in enumerate(("overview", "files", "send")):
+        for i, name in enumerate(("overview", "files", "send", "findmy")):
             win.show_page(i)
+            deadline = time.time() + (3.0 if name == "findmy" else 0)
             for _ in range(5):
                 app.processEvents()
+            while time.time() < deadline:          # Find my loads its photos in the background
+                app.processEvents()
+                time.sleep(0.02)
             win.grab().save(f"{base}-{name}{ext}")
         dlg = PairDialog(ctl)
         dlg.show()
@@ -2534,6 +3036,7 @@ def parse_args():
                                 description="Orbit: tray app and dashboard for your phone.")
     p.add_argument("--browse", action="store_true", help="open the phone file browser")
     p.add_argument("--show", action="store_true", help="open the overview window")
+    p.add_argument("--findmy", action="store_true", help="open Find my: who tried to get in, and its settings")
     p.add_argument("--send", nargs="+", metavar="FILE", help="send files to the phone")
     p.add_argument("--selftest", action="store_true",
                    help="build all windows offscreen, load live status once, print a report and exit")
@@ -2555,6 +3058,8 @@ def main():
             cmd = {'cmd': 'browse'}
         elif args.show:
             cmd = {'cmd': 'show'}
+        elif args.findmy:
+            cmd = {'cmd': 'findmy'}
         if cmd and forward_to_running(cmd):
             print("[INFO] Orbit is already running; passed the request to it.")
         else:
