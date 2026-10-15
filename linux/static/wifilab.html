@@ -3,505 +3,586 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wi-Fi Lab · Orbit</title>
+<title>Find my phone · Orbit</title>
 <link rel="icon" href="/icon-192.png">
+<link rel="stylesheet" href="/leaflet/leaflet.css">
 <style>
   :root {
     --ground: #0D0F12; --surface: #15181D; --raised: #1D2128; --line: #262B33;
     --text: #ECEEF1; --text2: #A6AEBB; --text3: #7D8593;
-    --accent: #8EA8FF; --online: #46D39A; --warning: #FFB347; --danger: #FF7A7A;
+    --accent: #8EA8FF; --online: #46D39A; --danger: #FF7A7A;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--ground); color: var(--text);
-    font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
-    padding: 24px; min-height: 100vh;
-  }
-  header {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 24px; max-width: 1200px; margin-left: auto; margin-right: auto;
-  }
-  .title-group h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-  .title-group p { font-size: 13px; color: var(--text2); margin-top: 4px; }
-  .back-btn {
-    font: inherit; font-size: 13px; font-weight: 500; color: var(--text);
-    background: var(--raised); border: 1px solid var(--line); border-radius: 10px;
-    padding: 8px 16px; cursor: pointer; text-decoration: none; display: inline-flex;
-    align-items: center; gap: 6px;
-  }
-  .back-btn:hover { border-color: #3e4654; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif; }
+  #map { position: fixed; inset: 0; background: #1a1d22; }
+  .panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow-y: auto; overflow-x: hidden;
+    background: rgba(21, 24, 29, 0.96); border: 1px solid var(--line); border-radius: 18px; padding: 18px;
+    z-index: 1000; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); transition: width 0.25s ease; }
+  .panel.wide { width: 380px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .sub { margin-top: 4px; color: var(--text2); font-size: 13px; line-height: 1.4; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
+  .stat { background: var(--raised); border-radius: 12px; padding: 10px; }
+  .stat b { display: block; font-size: 15px; font-weight: 600; }
+  .stat span { font-size: 11px; color: var(--text3); }
+  .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  button { font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--raised);
+    border: 1px solid var(--line); border-radius: 12px; height: 44px; cursor: pointer; }
+  button:hover { border-color: #3a414c; }
+  button.on { background: var(--accent); color: #0D0F12; border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .note { margin-top: 10px; font-size: 12px; color: var(--text2); min-height: 16px; }
+  .meter { margin-top: 14px; background: var(--raised); border-radius: 12px; padding: 12px; display: none; }
+  .meter.show { display: block; }
+  .bar { height: 10px; border-radius: 5px; background: #2a3039; overflow: hidden; margin: 8px 0 6px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--online); border-radius: 5px; transition: width 0.6s; }
+  .meter b { font-size: 15px; }
+  h2 { font-size: 13px; color: var(--text2); font-weight: 600; margin: 18px 0 8px; }
+  .event { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .event:first-of-type { border-top: none; }
+  .event img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; cursor: zoom-in; }
+  .event .when { color: var(--text3); font-size: 12px; }
+  .empty { color: var(--text3); font-size: 13px; }
+  .alert { color: var(--danger); }
+  #big { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: none; align-items: center;
+    justify-content: center; z-index: 2000; cursor: zoom-out; }
+  #big img { max-width: 92%; max-height: 92%; border-radius: 12px; }
+  .leaflet-container { font: inherit; }
+  .tag { background: rgba(13, 15, 18, 0.9); color: #ECEEF1; border: 0; border-radius: 8px; padding: 3px 8px; font-weight: 600; box-shadow: none; }
+  .tag::before { display: none; }
 
-  .grid {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 20px; max-width: 1200px; margin-left: auto; margin-right: auto;
-  }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  /* Segmented tabs matching Orbit styling */
+  .tabs { display: flex; background: var(--raised); border-radius: 12px; padding: 3px; gap: 4px; margin-bottom: 16px; border: 1px solid var(--line); }
+  .tab-btn { flex: 1; border: none; background: transparent; height: 32px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer; transition: all 0.2s; }
+  .tab-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 
-  .card {
-    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
-    padding: 20px; display: flex; flex-direction: column; position: relative; overflow: hidden;
-  }
-  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-  .card-header h2 { font-size: 16px; font-weight: 600; }
-  .card-header .desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
-  .badge {
-    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
-    background: var(--raised); color: var(--text2); border: 1px solid var(--line);
-  }
-  .badge.active { background: rgba(70, 211, 154, 0.15); color: var(--online); border-color: rgba(70, 211, 154, 0.3); }
-  .badge.alert { background: rgba(255, 122, 122, 0.15); color: var(--danger); border-color: rgba(255, 122, 122, 0.3); }
+  /* Wi-Fi Lab cards matching rest of interface */
+  .lab-card { background: var(--raised); border-radius: 12px; padding: 12px; margin-top: 10px; border: 1px solid rgba(255,255,255,0.04); }
+  .lab-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .lab-card-header h3 { font-size: 13px; font-weight: 600; margin: 0; color: var(--text); }
+  .lab-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text2); }
+  .lab-badge.active { background: rgba(70, 211, 154, 0.15); color: var(--online); }
+  .lab-badge.alert { background: rgba(255, 122, 122, 0.15); color: var(--danger); }
+  .lab-canvas { width: 100%; height: 75px; background: #0D0F12; border-radius: 8px; display: block; border: 1px solid rgba(255,255,255,0.03); }
+  .lab-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; color: var(--text3); }
+  .lab-val { color: var(--text); font-weight: 600; }
 
-  canvas {
-    width: 100%; height: 240px; background: #0A0C0E; border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.04); display: block;
-  }
-  .card-footer {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-top: 14px; font-size: 12px; color: var(--text2);
-  }
-  .metric-val { font-size: 14px; font-weight: 600; color: var(--text); }
-
-  /* Legend indicators */
-  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text3); }
-  .legend-item { display: flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  @media (max-width: 600px) { .panel { left: 8px; right: 8px; width: auto !important; top: auto; bottom: 8px; max-height: 60%; } }
 </style>
 </head>
 <body>
+<div id="map"></div>
 
-<header>
-  <div class="title-group">
-    <h1>Wi-Fi Laboratory</h1>
-    <p>Real-time electromagnetic telemetry across all ambient access points</p>
-  </div>
-  <a href="/findmy" class="back-btn">← Back to Map</a>
-</header>
-
-<div class="grid">
-
-  <!-- 1. Motion & Shadowing Tripwire Radar -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>Presence Disturbance</h2>
-        <div class="desc">Fresnel-zone human motion tripwire via signal variance</div>
-      </div>
-      <span class="badge" id="motionBadge">Monitoring</span>
-    </div>
-    <canvas id="motionCanvas"></canvas>
-    <div class="card-footer">
-      <div>Target: <span class="metric-val" id="motionTarget">–</span></div>
-      <div>Variance: <span class="metric-val" id="motionVar">0.0 dB</span></div>
-    </div>
+<section class="panel" id="panel" aria-label="Find my phone">
+  <div class="tabs">
+    <button id="tabFind" type="button" class="tab-btn active" onclick="switchTab('find')">Find my phone</button>
+    <button id="tabLab" type="button" class="tab-btn" onclick="switchTab('lab')">Wi-Fi Lab</button>
   </div>
 
-  <!-- 2. RF Spectrum & Channel Constellation -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>Spectrum Constellation</h2>
-        <div class="desc">2.4 GHz and 5 GHz channels across all visible routers</div>
-      </div>
-      <div class="legend">
-        <div class="legend-item"><span class="dot" style="background: var(--accent);"></span> 2.4 GHz</div>
-        <div class="legend-item"><span class="dot" style="background: var(--online);"></span> 5 GHz</div>
-        <div class="legend-item"><span class="dot" style="background: #FFF; box-shadow: 0 0 6px #FFF;"></span> Shared with Phone</div>
-      </div>
+  <div id="viewFind">
+    <h1 id="title">Find my phone</h1>
+    <div class="sub" id="seen">Looking for its last report…</div>
+
+    <div class="stats">
+      <div class="stat"><b id="acc">–</b><span>accuracy</span></div>
+      <div class="stat"><b id="batt">–</b><span>battery</span></div>
+      <div class="stat"><b id="net">–</b><span>network</span></div>
     </div>
-    <canvas id="spectrumCanvas"></canvas>
-    <div class="card-footer">
-      <div>Routers in Range: <span class="metric-val" id="spectrumCount">0</span></div>
-      <div>Shared Links: <span class="metric-val" id="spectrumShared">0</span></div>
+
+    <div class="actions">
+      <button id="locate" type="button">Locate now</button>
+      <button id="ring" type="button">Play sound</button>
+      <button id="nearby" type="button">Nearby</button>
     </div>
+    <div class="note" id="note"></div>
+
+    <div class="meter" id="meter" role="status" aria-live="polite">
+      <div><b id="meterWord">Asking your phone for its Wi-Fi…</b></div>
+      <div class="bar"><i id="meterBar"></i></div>
+      <div class="sub" id="meterHint">Your phone sends what Wi-Fi it sees every few seconds: the more it looks like this computer's, the closer it is. No Bluetooth needed.</div>
+    </div>
+
+    <h2>Alerts</h2>
+    <div id="events"><div class="empty">Nothing unusual. All quiet in orbit.</div></div>
   </div>
 
-  <!-- 3. Topographic Room Clusters (2D PCA) -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>Topographic Room Clusters</h2>
-        <div class="desc">2D mathematical projection of indoor fingerprint spots</div>
+  <div id="viewLab" style="display: none;">
+    <h1 style="font-size: 18px;">Wi-Fi Laboratory</h1>
+    <div class="sub">Ambient RF telemetry across visible routers</div>
+
+    <!-- 1. Motion & Presence Disturbance -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Presence Disturbance</h3>
+        <span class="lab-badge" id="labMotionBadge">Quiet</span>
       </div>
-      <div class="legend">
-        <div class="legend-item"><span class="dot" style="background: rgba(255,255,255,0.3);"></span> History Spots</div>
-        <div class="legend-item"><span class="dot" style="background: var(--online);"></span> Laptop</div>
-        <div class="legend-item"><span class="dot" style="background: var(--accent);"></span> Phone</div>
+      <canvas id="labMotionCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <div class="lab-footer">
+        <div>Target: <span class="lab-val" id="labMotionTarget">–</span></div>
+        <div>Variance: <span class="lab-val" id="labMotionVar">0.0 dB</span></div>
       </div>
     </div>
-    <canvas id="clusterCanvas"></canvas>
-    <div class="card-footer">
-      <div>Fingerprint Memory: <span class="metric-val" id="clusterPoints">0 spots</span></div>
-      <div>Current State: <span class="metric-val" id="clusterState">Calibrated</span></div>
+
+    <!-- 2. Spectrum Constellation -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Spectrum Constellation</h3>
+        <span class="lab-badge" id="labSpecCount">0 APs</span>
+      </div>
+      <canvas id="labSpecCanvas" class="lab-canvas" style="height: 80px;"></canvas>
+      <div class="lab-footer">
+        <div>2.4G: <span class="lab-val" id="labSpec24">0</span> · 5G: <span class="lab-val" id="labSpec5">0</span></div>
+        <div>Shared: <span class="lab-val" id="labSpecShared">0</span></div>
+      </div>
+    </div>
+
+    <!-- 3. Topographic Room Clusters (2D PCA) -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Topographic Room Clusters</h3>
+        <span class="lab-badge" id="labClusterCount">0 spots</span>
+      </div>
+      <canvas id="labClusterCanvas" class="lab-canvas" style="height: 90px;"></canvas>
+      <div class="lab-footer">
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop</div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone</div>
+        <div class="lab-val">2D PCA</div>
+      </div>
+    </div>
+
+    <!-- 4. P2P Direct Probe & Latency RTT -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Peer-to-Peer RTT Timing</h3>
+        <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
+      </div>
+      <canvas id="labP2pCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <div class="lab-footer">
+        <div>Latency: <span class="lab-val" id="labP2pRtt">–</span></div>
+        <div>Jitter: <span class="lab-val" id="labP2pJitter">–</span></div>
+      </div>
     </div>
   </div>
+</section>
 
-  <!-- 4. P2P Direct Probe & Latency RTT -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <h2>Peer-to-Peer RTT Timing</h2>
-        <div class="desc">Microsecond round-trip packet latency and radio jitter</div>
-      </div>
-      <span class="badge active" id="p2pBadge">Direct Link</span>
-    </div>
-    <canvas id="p2pCanvas"></canvas>
-    <div class="card-footer">
-      <div>Round-Trip Time: <span class="metric-val" id="p2pRtt">–</span></div>
-      <div>Jitter: <span class="metric-val" id="p2pJitter">–</span></div>
-    </div>
-  </div>
+<div id="big" role="dialog" aria-label="Photo"><img alt="Photo taken after a wrong unlock attempt"></div>
 
-</div>
-
+<script src="/leaflet/leaflet.js"></script>
 <script>
-// Canvas high-DPI initialization
-function setupCanvas(id) {
-  const c = document.getElementById(id);
+const $ = (id) => document.getElementById(id);
+const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([20.6, 78.9], 4);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+map.zoomControl.setPosition('topright');
+
+let dot = null, ring = null, trail = null, centred = false, ringing = false, nearbyOn = false;
+let pc = null, pcRing = null, link = null;
+
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 - t);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + ' h ago';
+  return new Date(t * 1000).toLocaleString();
+}
+const reasons = { periodic: 'regular check-in', moved: 'it moved', requested: 'you asked',
+  low_battery: 'battery nearly flat: last report before it dies', sim_changed: 'its SIM changed', boot: 'it started up' };
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const r = await fetch(path, { credentials: 'same-origin', ...opt });
+  if (r.status === 401) throw new Error('This page has to be opened from Orbit on this computer.');
+  return r.json();
+}
+
+function show(v) {
+  const last = v.last;
+  if (!last) {
+    $('seen').textContent = 'No location yet. Turn on "Share location with this computer" in Orbit on the phone.';
+  } else {
+    $('seen').textContent = 'Seen ' + ago(last.t) + (reasons[last.reason] ? ' · ' + reasons[last.reason] : '');
+    $('acc').textContent = last.acc ? Math.round(last.acc) + ' m' : '–';
+    $('batt').textContent = last.battery != null ? last.battery + '%' + (last.charging ? ' +' : '') : '–';
+    $('net').textContent = last.net || '–';
+    const ll = [last.lat, last.lng];
+    if (!dot) {
+      ring = L.circle(ll, { radius: last.acc || 30, color: '#8EA8FF', weight: 1, fillColor: '#8EA8FF', fillOpacity: 0.12 }).addTo(map);
+      dot = L.circleMarker(ll, { radius: 8, color: '#0D0F12', weight: 3, fillColor: '#8EA8FF', fillOpacity: 1 }).addTo(map);
+    } else {
+      dot.setLatLng(ll); ring.setLatLng(ll); ring.setRadius(last.acc || 30);
+    }
+    const pts = v.trail.map(p => [p.lat, p.lng]);
+    if (trail) trail.setLatLngs(pts);
+    else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
+    dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
+    const lp = v.laptop;
+    if (lp) {
+      const pl = [lp.lat, lp.lng];
+      if (!pc) {
+        pcRing = L.circle(pl, { radius: lp.acc || 30, color: '#46D39A', weight: 1, fillColor: '#46D39A', fillOpacity: 0.1 }).addTo(map);
+        pc = L.circleMarker(pl, { radius: 7, color: '#0D0F12', weight: 3, fillColor: '#46D39A', fillOpacity: 1 }).addTo(map);
+        pc.bindTooltip('This computer', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
+        link = L.polyline([ll, pl], { color: '#ECEEF1', weight: 2, opacity: 0.5, dashArray: '4 6' }).addTo(map);
+        link.bindTooltip('', { permanent: true, direction: 'center', className: 'tag' });
+      }
+      pc.setLatLng(pl); pcRing.setLatLng(pl); pcRing.setRadius(lp.acc || 30); link.setLatLngs([ll, pl]);
+      const m = map.distance(ll, pl);
+      link.setTooltipContent(m < 1000 ? Math.round(m) + ' m apart' : (m / 1000).toFixed(1) + ' km apart');
+    }
+    if (!centred) {
+      if (lp) map.fitBounds([ll, [lp.lat, lp.lng]], { padding: [80, 80], maxZoom: 18 });
+      else map.setView(ll, Math.max(15, Math.min(18, 19 - Math.log2((last.acc || 30) / 10))));
+      centred = true;
+    }
+  }
+  // alerts
+  const ev = v.events;
+  if (ev && ev.length) {
+    $('events').innerHTML = '';
+    for (const e of ev) {
+      const row = document.createElement('div'); row.className = 'event';
+      const text = document.createElement('div');
+      const what = { sim_changed: 'SIM card changed' + (e.operator ? ' (' + e.operator + ')' : ''),
+        sim_removed: 'SIM card removed', wrong_unlock: 'Wrong unlock attempt',
+        low_battery: 'Battery nearly flat: last location saved' }[e.kind] || e.kind;
+      text.innerHTML = '<div' + (e.kind === 'low_battery' ? '' : ' class="alert"') + '></div><div class="when"></div>';
+      text.firstChild.textContent = what; text.lastChild.textContent = ago(e.t);
+      if (e.name) {
+        const img = document.createElement('img');
+        img.src = '/api/findmy/photo?name=' + encodeURIComponent(e.name);
+        img.alt = 'Photo from the wrong unlock attempt';
+        img.onclick = () => { $('big').firstChild.src = img.src; $('big').style.display = 'flex'; };
+        row.appendChild(img);
+      }
+      row.appendChild(text); $('events').appendChild(row);
+    }
+  }
+  // nearby
+  const n = v.nearby || {};
+  if (nearbyOn) {
+    if (!n.on) {
+      nearbyOn = false; $('nearby').classList.remove('on'); $('meter').classList.remove('show');
+    } else if (v.bluetooth && v.bluetooth.dbm != null) {
+      const dbm = v.bluetooth.dbm, m = Math.pow(10, (-59 - dbm) / 22);
+      $('meterWord').textContent = (m < 1 ? 'Within a metre' : 'About ' + Math.round(m) + ' m') + ' (Bluetooth)';
+      $('meterBar').style.width = Math.max(4, Math.min(100, (dbm + 100) * 100 / 55)) + '%';
+    } else if (n.score == null) {
+      $('meterWord').textContent = 'Asking your phone for its Wi-Fi…';
+      $('meterBar').style.width = '0';
+    } else {
+      $('meterBar').style.width = Math.max(4, Math.min(100, n.score * 100 / 0.7)) + '%';
+      $('meterWord').textContent = n.word;
+    }
+  }
+}
+
+async function refresh() {
+  try { show(await api('/api/findmy/phone')); }
+  catch (e) { $('note').textContent = e.message; }
+}
+
+$('locate').onclick = async () => {
+  const r = await api('/api/findmy/phone/locate', {});
+  $('note').textContent = r.phone_connected ? 'Asked your phone. Its answer usually lands within 30 seconds.'
+    : "Your phone isn't connected right now; it reports again when it is.";
+};
+$('ring').onclick = async () => {
+  ringing = !ringing;
+  await api('/api/findmy/phone/ring', { on: ringing });
+  $('ring').textContent = ringing ? 'Stop sound' : 'Play sound';
+  $('ring').classList.toggle('on', ringing);
+};
+$('nearby').onclick = async () => {
+  nearbyOn = !nearbyOn;
+  await api('/api/findmy/phone/nearby', { on: nearbyOn });
+  $('nearby').classList.toggle('on', nearbyOn);
+  $('meter').classList.toggle('show', nearbyOn);
+};
+$('big').onclick = () => { $('big').style.display = 'none'; };
+
+// ---- Tab Switching ----
+let currentTab = 'find';
+function switchTab(tab) {
+  currentTab = tab;
+  $('tabFind').classList.toggle('active', tab === 'find');
+  $('tabLab').classList.toggle('active', tab === 'lab');
+  $('viewFind').style.display = tab === 'find' ? 'block' : 'none';
+  $('viewLab').style.display = tab === 'lab' ? 'block' : 'none';
+  $('panel').classList.toggle('wide', tab === 'lab');
+
+  if (tab === 'lab') {
+    pollLabMotion();
+    pollLabSpectrum();
+    pollLabClusters();
+    sendLabP2p();
+  }
+}
+
+// Check URL param or path
+if (location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
+  switchTab('lab');
+}
+
+// ---- Wi-Fi Lab Canvas Drawing & Polling ----
+function initCanvas(id) {
+  const c = $(id);
+  if (!c) return null;
   const rect = c.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   c.width = rect.width * dpr;
   c.height = rect.height * dpr;
   const ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  return { canvas: c, ctx: ctx, width: rect.width, height: rect.height };
+  return { ctx: ctx, width: rect.width, height: rect.height };
 }
 
-// 1. Motion Disturbance Plotter
-const motionState = {
-  history: [],
-  render: function() {
-    const { ctx, width, height } = setupCanvas('motionCanvas');
-    ctx.clearRect(0, 0, width, height);
+// 1. Motion canvas
+let motionHist = [];
+function drawLabMotion() {
+  const sc = initCanvas('labMotionCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
 
-    // Draw grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    for (let y = 40; y < height; y += 40) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-    }
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
 
-    if (!this.history.length) return;
+  if (!motionHist.length) return;
+  const pts = motionHist.slice(-30);
+  const step = width / Math.max(pts.length - 1, 1);
+  const minVal = -95, maxVal = -40;
 
-    // Draw baseline band
-    const midY = height / 2;
-    ctx.fillStyle = 'rgba(70, 211, 154, 0.05)';
-    ctx.fillRect(0, midY - 20, width, 40);
+  ctx.beginPath();
+  ctx.strokeStyle = '#46D39A';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
 
-    // Draw waveform line
-    ctx.beginPath();
-    ctx.strokeStyle = '#46D39A';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
+  pts.forEach((pt, i) => {
+    const norm = ((pt.dbm || -70) - minVal) / (maxVal - minVal);
+    const y = height - (norm * (height - 20) + 10);
+    const x = i * step;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
 
-    const pts = this.history.slice(-40);
-    const step = width / Math.max(pts.length - 1, 1);
-    const minVal = -95, maxVal = -40;
-
-    pts.forEach((pt, i) => {
-      const dbm = pt.dbm || -70;
-      const norm = (dbm - minVal) / (maxVal - minVal);
-      const y = height - (norm * (height - 30) + 15);
-      const x = i * step;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Pulse dot on latest sample
-    if (pts.length > 0) {
-      const last = pts[pts.length - 1];
-      const norm = (last.dbm - minVal) / (maxVal - minVal);
-      const y = height - (norm * (height - 30) + 15);
-      const x = (pts.length - 1) * step;
-      ctx.fillStyle = '#46D39A';
-      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
-    }
-  }
-};
-
-// 2. Spectrum Constellation Plotter
-const spectrumState = {
-  networks: [],
-  render: function() {
-    const { ctx, width, height } = setupCanvas('spectrumCanvas');
-    ctx.clearRect(0, 0, width, height);
-
-    // 2.4 GHz (left half) vs 5 GHz (right half)
-    const midX = width * 0.45;
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(midX, 10); ctx.lineTo(midX, height - 20); ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = '#7D8593';
-    ctx.font = '10px system-ui';
-    ctx.fillText('2.4 GHz Band (Ch 1 - 14)', 14, 16);
-    ctx.fillText('5 GHz Band (Ch 36 - 165)', midX + 14, 16);
-
-    if (!this.networks.length) return;
-
-    this.networks.forEach(ap => {
-      const is24 = ap.freq < 3000;
-      let x = 0;
-      if (is24) {
-        x = 20 + ((ap.chan - 1) / 13) * (midX - 40);
-      } else {
-        const cNorm = Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36)));
-        x = (midX + 20) + cNorm * (width - midX - 40);
-      }
-
-      // Signal Y (clamped between -95 and -30)
-      const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
-      const y = height - 25 - normSig * (height - 60);
-
-      // Draw beacon lollipop line
-      ctx.beginPath();
-      ctx.moveTo(x, height - 25);
-      ctx.lineTo(x, y);
-      ctx.strokeStyle = ap.shared ? 'rgba(255, 255, 255, 0.4)' : (is24 ? 'rgba(142, 168, 255, 0.25)' : 'rgba(70, 211, 154, 0.25)');
-      ctx.lineWidth = ap.connected ? 3 : 1.5;
-      ctx.stroke();
-
-      // Draw node circle
-      ctx.beginPath();
-      ctx.arc(x, y, ap.connected ? 6 : (ap.shared ? 5 : 3.5), 0, Math.PI * 2);
-      ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
-      ctx.fill();
-
-      // Label top/connected APs
-      if (ap.connected || ap.dbm > -60) {
-        ctx.fillStyle = '#ECEEF1';
-        ctx.font = '10px system-ui';
-        ctx.fillText(ap.ssid.substring(0, 10), x - 12, y - 8);
-      }
-    });
-  }
-};
-
-// 3. Topographic Room Cluster Plotter (2D PCA)
-const clusterState = {
-  clusters: [],
-  laptop: null,
-  phone: null,
-  render: function() {
-    const { ctx, width, height } = setupCanvas('clusterCanvas');
-    ctx.clearRect(0, 0, width, height);
-
-    // Crosshairs
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
-    ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
-    ctx.stroke();
-
-    if (!this.clusters.length) return;
-
-    // Determine scale bounds
-    let minX = -10, maxX = 10, minY = -10, maxY = 10;
-    this.clusters.forEach(pt => {
-      if (pt.x < minX) minX = pt.x;
-      if (pt.x > maxX) maxX = pt.x;
-      if (pt.y < minY) minY = pt.y;
-      if (pt.y > maxY) maxY = pt.y;
-    });
-    const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
-    const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
-
-    const toScreen = (x, y) => {
-      const sx = width / 2 + (x / padX) * (width / 2 - 20);
-      const sy = height / 2 - (y / padY) * (height / 2 - 20);
-      return [sx, sy];
-    };
-
-    // Draw stored spots
-    this.clusters.forEach(pt => {
-      const [sx, sy] = toScreen(pt.x, pt.y);
-      ctx.beginPath();
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.fill();
-    });
-
-    // Draw Laptop marker
-    if (this.laptop) {
-      const [lx, ly] = toScreen(this.laptop.x, this.laptop.y);
-      ctx.beginPath();
-      ctx.arc(lx, ly, 7, 0, Math.PI * 2);
-      ctx.fillStyle = '#46D39A';
-      ctx.fill();
-      ctx.strokeStyle = '#0D0F12';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
-    // Draw Phone marker
-    if (this.phone) {
-      const [px, py] = toScreen(this.phone.x, this.phone.y);
-      ctx.beginPath();
-      ctx.arc(px, py, 7, 0, Math.PI * 2);
-      ctx.fillStyle = '#8EA8FF';
-      ctx.fill();
-      ctx.strokeStyle = '#0D0F12';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Inter-device link line
-      if (this.laptop) {
-        const [lx, ly] = toScreen(this.laptop.x, this.laptop.y);
-        ctx.beginPath();
-        ctx.setLineDash([3, 3]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.moveTo(lx, ly); ctx.lineTo(px, py);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-  }
-};
-
-// 4. P2P Direct Probe Plotter
-const p2pState = {
-  history: [],
-  render: function() {
-    const { ctx, width, height } = setupCanvas('p2pCanvas');
-    ctx.clearRect(0, 0, width, height);
-
-    // Target baseline threshold lines (10ms, 25ms, 50ms)
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    for (let y = 30; y < height; y += 45) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-    }
-
-    if (!this.history.length) return;
-
-    // Draw latency trajectory
-    ctx.beginPath();
-    ctx.strokeStyle = '#8EA8FF';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-
-    const pts = this.history.slice(-30);
-    const step = width / Math.max(pts.length - 1, 1);
-    const maxLatency = 50; // ms scale
-
-    pts.forEach((ms, i) => {
-      const norm = Math.min(1, ms / maxLatency);
-      const y = height - (norm * (height - 30) + 15);
-      const x = i * step;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Pulse dot on current latency
-    if (pts.length > 0) {
-      const current = pts[pts.length - 1];
-      const norm = Math.min(1, current / maxLatency);
-      const y = height - (norm * (height - 30) + 15);
-      const x = (pts.length - 1) * step;
-      ctx.fillStyle = '#8EA8FF';
-      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
-    }
-  }
-};
-
-// Data polling loops
-async function pollMotion() {
+async function pollLabMotion() {
+  if (currentTab !== 'lab') return;
   try {
     const res = await fetch('/api/findmy/wifi/motion');
     const data = await res.json();
     if (data.status === 'ok') {
-      motionState.history = data.history || [];
-      motionState.render();
-
-      const badge = document.getElementById('motionBadge');
+      motionHist = data.history || [];
+      drawLabMotion();
+      $('labMotionVar').textContent = data.variance + ' dB';
+      const b = $('labMotionBadge');
       if (data.motion_detected) {
-        badge.textContent = 'Movement Detected';
-        badge.className = 'badge alert';
+        b.textContent = 'Movement Detected'; b.className = 'lab-badge alert';
       } else {
-        badge.textContent = 'Room Quiet';
-        badge.className = 'badge active';
+        b.textContent = 'Room Quiet'; b.className = 'lab-badge active';
       }
-      document.getElementById('motionVar').textContent = data.variance + ' dB';
       if (data.target && data.target.ssid) {
-        document.getElementById('motionTarget').textContent = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+        $('labMotionTarget').textContent = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
       }
     }
-  } catch (e) { }
+  } catch (e) {}
 }
 
-async function pollSpectrum() {
+// 2. Spectrum canvas
+let specNetworks = [];
+function drawLabSpectrum() {
+  const sc = initCanvas('labSpecCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  const midX = width * 0.45;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(midX, 4); ctx.lineTo(midX, height - 16); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#7D8593';
+  ctx.font = '9px system-ui';
+  ctx.fillText('2.4 GHz', 8, 12);
+  ctx.fillText('5 GHz', midX + 8, 12);
+
+  if (!specNetworks.length) return;
+  specNetworks.forEach(ap => {
+    const is24 = ap.freq < 3000;
+    let x = is24 ? 14 + ((ap.chan - 1) / 13) * (midX - 28)
+                 : (midX + 14) + Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36))) * (width - midX - 28);
+    const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
+    const y = height - 18 - normSig * (height - 36);
+
+    ctx.beginPath();
+    ctx.moveTo(x, height - 18);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = ap.shared ? 'rgba(255,255,255,0.45)' : (is24 ? 'rgba(142,168,255,0.3)' : 'rgba(70,211,154,0.3)');
+    ctx.lineWidth = ap.connected ? 2.5 : 1.2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(x, y, ap.connected ? 4 : (ap.shared ? 3.5 : 2.5), 0, Math.PI * 2);
+    ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
+    ctx.fill();
+  });
+}
+
+async function pollLabSpectrum() {
+  if (currentTab !== 'lab') return;
   try {
     const res = await fetch('/api/findmy/wifi/spectrum');
     const data = await res.json();
     if (data.status === 'ok') {
-      spectrumState.networks = data.networks || [];
-      spectrumState.render();
-      document.getElementById('spectrumCount').textContent = data.total;
-      document.getElementById('spectrumShared').textContent = data.shared_count;
+      specNetworks = data.networks || [];
+      drawLabSpectrum();
+      $('labSpecCount').textContent = data.total + ' APs';
+      $('labSpec24').textContent = (data.bands && data.bands['2.4GHz']) || 0;
+      $('labSpec5').textContent = (data.bands && data.bands['5GHz']) || 0;
+      $('labSpecShared').textContent = data.shared_count || 0;
     }
-  } catch (e) { }
+  } catch (e) {}
 }
 
-async function pollClusters() {
+// 3. Cluster canvas (2D PCA)
+let clusterData = null;
+function drawLabClusters() {
+  const sc = initCanvas('labClusterCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (!clusterData || !clusterData.clusters) return;
+  const pts = clusterData.clusters;
+  let minX = -10, maxX = 10, minY = -10, maxY = 10;
+  pts.forEach(pt => {
+    if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
+  });
+  const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
+  const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
+
+  const toScreen = (x, y) => [width / 2 + (x / padX) * (width / 2 - 14), height / 2 - (y / padY) * (height / 2 - 14)];
+
+  pts.forEach(pt => {
+    const [sx, sy] = toScreen(pt.x, pt.y);
+    ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; ctx.fill();
+  });
+
+  if (clusterData.live_laptop) {
+    const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
+    ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#46D39A'; ctx.fill();
+  }
+  if (clusterData.live_phone) {
+    const [px, py] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#8EA8FF'; ctx.fill();
+    if (clusterData.live_laptop) {
+      const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
+      ctx.beginPath(); ctx.setLineDash([2, 2]); ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+}
+
+async function pollLabClusters() {
+  if (currentTab !== 'lab') return;
   try {
     const res = await fetch('/api/findmy/wifi/clusters');
     const data = await res.json();
     if (data.status === 'ok') {
-      clusterState.clusters = data.clusters || [];
-      clusterState.laptop = data.live_laptop;
-      clusterState.phone = data.live_phone;
-      clusterState.render();
-      document.getElementById('clusterPoints').textContent = (data.total_fingerprints || data.clusters.length) + ' spots';
+      clusterData = data;
+      drawLabClusters();
+      $('labClusterCount').textContent = (data.total_fingerprints || (data.clusters && data.clusters.length) || 0) + ' spots';
     }
-  } catch (e) { }
+  } catch (e) {}
 }
 
-let lastRtt = 0;
-let seq = 0;
-async function sendP2pProbe() {
+// 4. P2P ping
+let p2pHist = [];
+let lastP2pRtt = 0;
+let p2pSeq = 0;
+function drawLabP2p() {
+  const sc = initCanvas('labP2pCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (!p2pHist.length) return;
+  const pts = p2pHist.slice(-25);
+  const step = width / Math.max(pts.length - 1, 1);
+  const maxMs = 40;
+
+  ctx.beginPath();
+  ctx.strokeStyle = '#8EA8FF';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+
+  pts.forEach((ms, i) => {
+    const norm = Math.min(1, ms / maxMs);
+    const y = height - (norm * (height - 20) + 10);
+    const x = i * step;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+async function sendLabP2p() {
+  if (currentTab !== 'lab') return;
   const t0 = performance.now();
-  seq++;
+  p2pSeq++;
   try {
     const res = await fetch('/api/findmy/p2p/ping', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ t: Date.now() / 1000, seq: seq })
+      body: JSON.stringify({ t: Date.now() / 1000, seq: p2pSeq })
     });
     if (res.ok) {
       const t1 = performance.now();
       const rtt = Math.round((t1 - t0) * 10) / 10;
-      const jitter = Math.round(Math.abs(rtt - lastRtt) * 10) / 10;
-      lastRtt = rtt;
-
-      p2pState.history.push(rtt);
-      p2pState.render();
-
-      document.getElementById('p2pRtt').textContent = rtt + ' ms';
-      document.getElementById('p2pJitter').textContent = '±' + jitter + ' ms';
+      const jitter = Math.round(Math.abs(rtt - lastP2pRtt) * 10) / 10;
+      lastP2pRtt = rtt;
+      p2pHist.push(rtt);
+      drawLabP2p();
+      $('labP2pRtt').textContent = rtt + ' ms';
+      $('labP2pJitter').textContent = '±' + jitter + ' ms';
     }
-  } catch (e) { }
+  } catch (e) {}
 }
 
-// Initial renders and timers
 window.addEventListener('resize', () => {
-  motionState.render();
-  spectrumState.render();
-  clusterState.render();
-  p2pState.render();
+  if (currentTab === 'lab') {
+    drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+  }
 });
 
-pollMotion();
-pollSpectrum();
-pollClusters();
-sendP2pProbe();
-
-setInterval(pollMotion, 500);
-setInterval(sendP2pProbe, 750);
-setInterval(pollSpectrum, 5000);
-setInterval(pollClusters, 3000);
+refresh();
+setInterval(refresh, 2000);
+setInterval(pollLabMotion, 500);
+setInterval(sendLabP2p, 800);
+setInterval(pollLabSpectrum, 5000);
+setInterval(pollLabClusters, 3000);
 </script>
 </body>
 </html>

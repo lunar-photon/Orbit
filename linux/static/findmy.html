@@ -16,9 +16,10 @@
   html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif; }
   #map { position: fixed; inset: 0; background: #1a1d22; }
-  .panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow: auto;
+  .panel { position: fixed; top: 16px; left: 16px; width: 340px; max-height: calc(100% - 32px); overflow-y: auto; overflow-x: hidden;
     background: rgba(21, 24, 29, 0.96); border: 1px solid var(--line); border-radius: 18px; padding: 18px;
-    z-index: 1000; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); }
+    z-index: 1000; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); transition: width 0.25s ease; }
+  .panel.wide { width: 380px; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; }
   .sub { margin-top: 4px; color: var(--text2); font-size: 13px; line-height: 1.4; }
   .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
@@ -50,40 +51,119 @@
   .leaflet-container { font: inherit; }
   .tag { background: rgba(13, 15, 18, 0.9); color: #ECEEF1; border: 0; border-radius: 8px; padding: 3px 8px; font-weight: 600; box-shadow: none; }
   .tag::before { display: none; }
-  @media (max-width: 600px) { .panel { left: 8px; right: 8px; width: auto; top: auto; bottom: 8px; max-height: 55%; } }
+
+  /* Segmented tabs matching Orbit styling */
+  .tabs { display: flex; background: var(--raised); border-radius: 12px; padding: 3px; gap: 4px; margin-bottom: 16px; border: 1px solid var(--line); }
+  .tab-btn { flex: 1; border: none; background: transparent; height: 32px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer; transition: all 0.2s; }
+  .tab-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+
+  /* Wi-Fi Lab cards matching rest of interface */
+  .lab-card { background: var(--raised); border-radius: 12px; padding: 12px; margin-top: 10px; border: 1px solid rgba(255,255,255,0.04); }
+  .lab-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .lab-card-header h3 { font-size: 13px; font-weight: 600; margin: 0; color: var(--text); }
+  .lab-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.06); color: var(--text2); }
+  .lab-badge.active { background: rgba(70, 211, 154, 0.15); color: var(--online); }
+  .lab-badge.alert { background: rgba(255, 122, 122, 0.15); color: var(--danger); }
+  .lab-canvas { width: 100%; height: 75px; background: #0D0F12; border-radius: 8px; display: block; border: 1px solid rgba(255,255,255,0.03); }
+  .lab-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; color: var(--text3); }
+  .lab-val { color: var(--text); font-weight: 600; }
+
+  @media (max-width: 600px) { .panel { left: 8px; right: 8px; width: auto !important; top: auto; bottom: 8px; max-height: 60%; } }
 </style>
 </head>
 <body>
 <div id="map"></div>
 
-<section class="panel" aria-label="Find my phone">
-  <h1 id="title">Find my phone</h1>
-  <div class="sub" id="seen">Looking for its last report…</div>
-
-  <div class="stats">
-    <div class="stat"><b id="acc">–</b><span>accuracy</span></div>
-    <div class="stat"><b id="batt">–</b><span>battery</span></div>
-    <div class="stat"><b id="net">–</b><span>network</span></div>
+<section class="panel" id="panel" aria-label="Find my phone">
+  <div class="tabs">
+    <button id="tabFind" type="button" class="tab-btn active" onclick="switchTab('find')">Find my phone</button>
+    <button id="tabLab" type="button" class="tab-btn" onclick="switchTab('lab')">Wi-Fi Lab</button>
   </div>
 
-  <div class="actions">
-    <button id="locate" type="button">Locate now</button>
-    <button id="ring" type="button">Play sound</button>
-    <button id="nearby" type="button">Nearby</button>
-  </div>
-  <div style="margin-top: 8px;">
-    <button id="btnLab" type="button" onclick="location.href='/wifilab'" style="width: 100%; height: 38px; font-size: 12px; background: rgba(142, 168, 255, 0.1); border-color: rgba(142, 168, 255, 0.25); color: var(--accent);">Open Wi-Fi Lab</button>
-  </div>
-  <div class="note" id="note"></div>
+  <div id="viewFind">
+    <h1 id="title">Find my phone</h1>
+    <div class="sub" id="seen">Looking for its last report…</div>
 
-  <div class="meter" id="meter" role="status" aria-live="polite">
-    <div><b id="meterWord">Asking your phone for its Wi-Fi…</b></div>
-    <div class="bar"><i id="meterBar"></i></div>
-    <div class="sub" id="meterHint">Your phone sends what Wi-Fi it sees every few seconds: the more it looks like this computer's, the closer it is. No Bluetooth needed.</div>
+    <div class="stats">
+      <div class="stat"><b id="acc">–</b><span>accuracy</span></div>
+      <div class="stat"><b id="batt">–</b><span>battery</span></div>
+      <div class="stat"><b id="net">–</b><span>network</span></div>
+    </div>
+
+    <div class="actions">
+      <button id="locate" type="button">Locate now</button>
+      <button id="ring" type="button">Play sound</button>
+      <button id="nearby" type="button">Nearby</button>
+    </div>
+    <div class="note" id="note"></div>
+
+    <div class="meter" id="meter" role="status" aria-live="polite">
+      <div><b id="meterWord">Asking your phone for its Wi-Fi…</b></div>
+      <div class="bar"><i id="meterBar"></i></div>
+      <div class="sub" id="meterHint">Your phone sends what Wi-Fi it sees every few seconds: the more it looks like this computer's, the closer it is. No Bluetooth needed.</div>
+    </div>
+
+    <h2>Alerts</h2>
+    <div id="events"><div class="empty">Nothing unusual. All quiet in orbit.</div></div>
   </div>
 
-  <h2>Alerts</h2>
-  <div id="events"><div class="empty">Nothing unusual. All quiet in orbit.</div></div>
+  <div id="viewLab" style="display: none;">
+    <h1 style="font-size: 18px;">Wi-Fi Laboratory</h1>
+    <div class="sub">Ambient RF telemetry across visible routers</div>
+
+    <!-- 1. Motion & Presence Disturbance -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Presence Disturbance</h3>
+        <span class="lab-badge" id="labMotionBadge">Quiet</span>
+      </div>
+      <canvas id="labMotionCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <div class="lab-footer">
+        <div>Target: <span class="lab-val" id="labMotionTarget">–</span></div>
+        <div>Variance: <span class="lab-val" id="labMotionVar">0.0 dB</span></div>
+      </div>
+    </div>
+
+    <!-- 2. Spectrum Constellation -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Spectrum Constellation</h3>
+        <span class="lab-badge" id="labSpecCount">0 APs</span>
+      </div>
+      <canvas id="labSpecCanvas" class="lab-canvas" style="height: 80px;"></canvas>
+      <div class="lab-footer">
+        <div>2.4G: <span class="lab-val" id="labSpec24">0</span> · 5G: <span class="lab-val" id="labSpec5">0</span></div>
+        <div>Shared: <span class="lab-val" id="labSpecShared">0</span></div>
+      </div>
+    </div>
+
+    <!-- 3. Topographic Room Clusters (2D PCA) -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Topographic Room Clusters</h3>
+        <span class="lab-badge" id="labClusterCount">0 spots</span>
+      </div>
+      <canvas id="labClusterCanvas" class="lab-canvas" style="height: 90px;"></canvas>
+      <div class="lab-footer">
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#46D39A;margin-right:4px;"></span>Laptop</div>
+        <div><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#8EA8FF;margin-right:4px;"></span>Phone</div>
+        <div class="lab-val">2D PCA</div>
+      </div>
+    </div>
+
+    <!-- 4. P2P Direct Probe & Latency RTT -->
+    <div class="lab-card">
+      <div class="lab-card-header">
+        <h3>Peer-to-Peer RTT Timing</h3>
+        <span class="lab-badge active" id="labP2pBadge">Direct Link</span>
+      </div>
+      <canvas id="labP2pCanvas" class="lab-canvas" style="height: 65px;"></canvas>
+      <div class="lab-footer">
+        <div>Latency: <span class="lab-val" id="labP2pRtt">–</span></div>
+        <div>Jitter: <span class="lab-val" id="labP2pJitter">–</span></div>
+      </div>
+    </div>
+  </div>
 </section>
 
 <div id="big" role="dialog" aria-label="Photo"><img alt="Photo taken after a wrong unlock attempt"></div>
@@ -137,7 +217,6 @@ function show(v) {
     if (trail) trail.setLatLngs(pts);
     else trail = L.polyline(pts, { color: '#8EA8FF', weight: 3, opacity: 0.45, dashArray: '4 6' }).addTo(map);
     dot.bindTooltip('Your phone', { permanent: true, direction: 'top', offset: [0, -10], className: 'tag' });
-    // this computer too, where the Wi-Fi map last placed it, and how far apart they are
     const lp = v.laptop;
     if (lp) {
       const pl = [lp.lat, lp.lng];
@@ -160,7 +239,7 @@ function show(v) {
   }
   // alerts
   const ev = v.events;
-  if (ev.length) {
+  if (ev && ev.length) {
     $('events').innerHTML = '';
     for (const e of ev) {
       const row = document.createElement('div'); row.className = 'event';
@@ -186,7 +265,6 @@ function show(v) {
     if (!n.on) {
       nearbyOn = false; $('nearby').classList.remove('on'); $('meter').classList.remove('show');
     } else if (v.bluetooth && v.bluetooth.dbm != null) {
-      // Bluetooth (when the phone's is on): signal strength to a rough distance
       const dbm = v.bluetooth.dbm, m = Math.pow(10, (-59 - dbm) / 22);
       $('meterWord').textContent = (m < 1 ? 'Within a metre' : 'About ' + Math.round(m) + ' m') + ' (Bluetooth)';
       $('meterBar').style.width = Math.max(4, Math.min(100, (dbm + 100) * 100 / 55)) + '%';
@@ -224,8 +302,287 @@ $('nearby').onclick = async () => {
 };
 $('big').onclick = () => { $('big').style.display = 'none'; };
 
+// ---- Tab Switching ----
+let currentTab = 'find';
+function switchTab(tab) {
+  currentTab = tab;
+  $('tabFind').classList.toggle('active', tab === 'find');
+  $('tabLab').classList.toggle('active', tab === 'lab');
+  $('viewFind').style.display = tab === 'find' ? 'block' : 'none';
+  $('viewLab').style.display = tab === 'lab' ? 'block' : 'none';
+  $('panel').classList.toggle('wide', tab === 'lab');
+
+  if (tab === 'lab') {
+    pollLabMotion();
+    pollLabSpectrum();
+    pollLabClusters();
+    sendLabP2p();
+  }
+}
+
+// Check URL param or path
+if (location.pathname === '/wifilab' || location.search.includes('tab=lab')) {
+  switchTab('lab');
+}
+
+// ---- Wi-Fi Lab Canvas Drawing & Polling ----
+function initCanvas(id) {
+  const c = $(id);
+  if (!c) return null;
+  const rect = c.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  c.width = rect.width * dpr;
+  c.height = rect.height * dpr;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx: ctx, width: rect.width, height: rect.height };
+}
+
+// 1. Motion canvas
+let motionHist = [];
+function drawLabMotion() {
+  const sc = initCanvas('labMotionCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (!motionHist.length) return;
+  const pts = motionHist.slice(-30);
+  const step = width / Math.max(pts.length - 1, 1);
+  const minVal = -95, maxVal = -40;
+
+  ctx.beginPath();
+  ctx.strokeStyle = '#46D39A';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+
+  pts.forEach((pt, i) => {
+    const norm = ((pt.dbm || -70) - minVal) / (maxVal - minVal);
+    const y = height - (norm * (height - 20) + 10);
+    const x = i * step;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+async function pollLabMotion() {
+  if (currentTab !== 'lab') return;
+  try {
+    const res = await fetch('/api/findmy/wifi/motion');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      motionHist = data.history || [];
+      drawLabMotion();
+      $('labMotionVar').textContent = data.variance + ' dB';
+      const b = $('labMotionBadge');
+      if (data.motion_detected) {
+        b.textContent = 'Movement Detected'; b.className = 'lab-badge alert';
+      } else {
+        b.textContent = 'Room Quiet'; b.className = 'lab-badge active';
+      }
+      if (data.target && data.target.ssid) {
+        $('labMotionTarget').textContent = data.target.ssid + ' (' + (data.current_dbm || '–') + ' dBm)';
+      }
+    }
+  } catch (e) {}
+}
+
+// 2. Spectrum canvas
+let specNetworks = [];
+function drawLabSpectrum() {
+  const sc = initCanvas('labSpecCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  const midX = width * 0.45;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(midX, 4); ctx.lineTo(midX, height - 16); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#7D8593';
+  ctx.font = '9px system-ui';
+  ctx.fillText('2.4 GHz', 8, 12);
+  ctx.fillText('5 GHz', midX + 8, 12);
+
+  if (!specNetworks.length) return;
+  specNetworks.forEach(ap => {
+    const is24 = ap.freq < 3000;
+    let x = is24 ? 14 + ((ap.chan - 1) / 13) * (midX - 28)
+                 : (midX + 14) + Math.max(0, Math.min(1, (ap.chan - 36) / (165 - 36))) * (width - midX - 28);
+    const normSig = Math.max(0, Math.min(1, (ap.dbm + 95) / 65));
+    const y = height - 18 - normSig * (height - 36);
+
+    ctx.beginPath();
+    ctx.moveTo(x, height - 18);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = ap.shared ? 'rgba(255,255,255,0.45)' : (is24 ? 'rgba(142,168,255,0.3)' : 'rgba(70,211,154,0.3)');
+    ctx.lineWidth = ap.connected ? 2.5 : 1.2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(x, y, ap.connected ? 4 : (ap.shared ? 3.5 : 2.5), 0, Math.PI * 2);
+    ctx.fillStyle = ap.connected ? '#FFF' : (ap.shared ? '#FFF' : (is24 ? '#8EA8FF' : '#46D39A'));
+    ctx.fill();
+  });
+}
+
+async function pollLabSpectrum() {
+  if (currentTab !== 'lab') return;
+  try {
+    const res = await fetch('/api/findmy/wifi/spectrum');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      specNetworks = data.networks || [];
+      drawLabSpectrum();
+      $('labSpecCount').textContent = data.total + ' APs';
+      $('labSpec24').textContent = (data.bands && data.bands['2.4GHz']) || 0;
+      $('labSpec5').textContent = (data.bands && data.bands['5GHz']) || 0;
+      $('labSpecShared').textContent = data.shared_count || 0;
+    }
+  } catch (e) {}
+}
+
+// 3. Cluster canvas (2D PCA)
+let clusterData = null;
+function drawLabClusters() {
+  const sc = initCanvas('labClusterCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (!clusterData || !clusterData.clusters) return;
+  const pts = clusterData.clusters;
+  let minX = -10, maxX = 10, minY = -10, maxY = 10;
+  pts.forEach(pt => {
+    if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
+    if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
+  });
+  const padX = Math.max(Math.abs(minX), Math.abs(maxX)) * 1.3 || 20;
+  const padY = Math.max(Math.abs(minY), Math.abs(maxY)) * 1.3 || 20;
+
+  const toScreen = (x, y) => [width / 2 + (x / padX) * (width / 2 - 14), height / 2 - (y / padY) * (height / 2 - 14)];
+
+  pts.forEach(pt => {
+    const [sx, sy] = toScreen(pt.x, pt.y);
+    ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; ctx.fill();
+  });
+
+  if (clusterData.live_laptop) {
+    const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
+    ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#46D39A'; ctx.fill();
+  }
+  if (clusterData.live_phone) {
+    const [px, py] = toScreen(clusterData.live_phone.x, clusterData.live_phone.y);
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#8EA8FF'; ctx.fill();
+    if (clusterData.live_laptop) {
+      const [lx, ly] = toScreen(clusterData.live_laptop.x, clusterData.live_laptop.y);
+      ctx.beginPath(); ctx.setLineDash([2, 2]); ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+}
+
+async function pollLabClusters() {
+  if (currentTab !== 'lab') return;
+  try {
+    const res = await fetch('/api/findmy/wifi/clusters');
+    const data = await res.json();
+    if (data.status === 'ok') {
+      clusterData = data;
+      drawLabClusters();
+      $('labClusterCount').textContent = (data.total_fingerprints || (data.clusters && data.clusters.length) || 0) + ' spots';
+    }
+  } catch (e) {}
+}
+
+// 4. P2P ping
+let p2pHist = [];
+let lastP2pRtt = 0;
+let p2pSeq = 0;
+function drawLabP2p() {
+  const sc = initCanvas('labP2pCanvas');
+  if (!sc) return;
+  const { ctx, width, height } = sc;
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (!p2pHist.length) return;
+  const pts = p2pHist.slice(-25);
+  const step = width / Math.max(pts.length - 1, 1);
+  const maxMs = 40;
+
+  ctx.beginPath();
+  ctx.strokeStyle = '#8EA8FF';
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+
+  pts.forEach((ms, i) => {
+    const norm = Math.min(1, ms / maxMs);
+    const y = height - (norm * (height - 20) + 10);
+    const x = i * step;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+async function sendLabP2p() {
+  if (currentTab !== 'lab') return;
+  const t0 = performance.now();
+  p2pSeq++;
+  try {
+    const res = await fetch('/api/findmy/p2p/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t: Date.now() / 1000, seq: p2pSeq })
+    });
+    if (res.ok) {
+      const t1 = performance.now();
+      const rtt = Math.round((t1 - t0) * 10) / 10;
+      const jitter = Math.round(Math.abs(rtt - lastP2pRtt) * 10) / 10;
+      lastP2pRtt = rtt;
+      p2pHist.push(rtt);
+      drawLabP2p();
+      $('labP2pRtt').textContent = rtt + ' ms';
+      $('labP2pJitter').textContent = '±' + jitter + ' ms';
+    }
+  } catch (e) {}
+}
+
+window.addEventListener('resize', () => {
+  if (currentTab === 'lab') {
+    drawLabMotion(); drawLabSpectrum(); drawLabClusters(); drawLabP2p();
+  }
+});
+
 refresh();
-setInterval(() => { refresh(); }, 1000 * 2);
+setInterval(refresh, 2000);
+setInterval(pollLabMotion, 500);
+setInterval(sendLabP2p, 800);
+setInterval(pollLabSpectrum, 5000);
+setInterval(pollLabClusters, 3000);
 </script>
 </body>
 </html>
