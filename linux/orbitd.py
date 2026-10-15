@@ -286,9 +286,6 @@ def authenticate_client(handler, cfg):
         # the phone's public mobile address, and the computer would then send it the token in clear.
         client_info['ip'] = client_ip
         active_phone_state['ip'] = client_ip
-        if findmy_settings().get('walk_away_lock') and time.time() - getattr(WALK_AWAY, '_last_ble_trigger', 0) > 60:
-            WALK_AWAY._last_ble_trigger = time.time()
-            auth_mgr.broadcast_ndjson(json.dumps({"event": "ble_beacon", "on": True, "uuid": ORBIT_BLE_UUID}) + "\n")
     active_phone_state['client_name'] = client_info.get('client_name', 'Android Phone')
     active_phone_state['last_seen'] = time.time()
     active_phone_state['auth_token'] = token
@@ -5033,6 +5030,21 @@ def _wifi_interface():
 
 class WifiMotionMonitor:
     """Monitors line-of-sight Fresnel-zone signal variance to detect human motion tripwire."""
+
+    # --- Noise-adaptive detection tuning ---
+    # The trigger scales with each link's own measured noise floor instead of a
+    # single fixed dB, so a noisy/far Wi-Fi link stops false-firing and a clean
+    # link gets more sensitive.
+    THR_MIN = 1.5          # dB floor: RSSI is quantized to 1 dBm, smaller is noise
+    THR_MAX = 7.0          # dB ceiling: a very noisy link still has a reachable trigger
+    NOISE_K = 3.2          # sigma gate for the main (RSSI) path
+    MIMO_K = 3.0           # sigma gate for the spatial-diversity (antenna delta) path
+    MIMO_THR_MIN = 0.7
+    MIMO_THR_MAX = 2.5
+    MOTION_HOLD = 15.0     # seconds a disturbance keeps the zone "occupied"
+    EVENT_GAP = 3.0        # seconds of calm that close an active event
+    DEBOUNCE = 2           # consecutive agitated samples required to open an event
+
     def __init__(self):
         self.lock = threading.Lock()
         self.history = collections.deque(maxlen=60)  # last 15 seconds (sampled every 250ms)
@@ -5054,6 +5066,7 @@ class WifiMotionMonitor:
         self.active_event = None
         self.last_disturbance_time = 0.0
         self.event_counter = 0
+        self._consec_laptop = 0  # debounce counter for the laptop/room radar
 
         # Phone motion tracking (foreground active only; zero background battery drain)
         self.phone_history = collections.deque(maxlen=30)
@@ -5066,6 +5079,7 @@ class WifiMotionMonitor:
         self.phone_active_event = None
         self.phone_last_disturbance_time = 0.0
         self.phone_event_counter = 0
+        self._consec_phone = 0  # debounce counter for the phone/vicinity radar
 
         # Primary log path on laptop (~/.config/orbit/wifi_disturbance.log)
         self.log_file = os.path.join(ORBIT_CONFIG_DIR, 'wifi_disturbance.log')
@@ -5203,16 +5217,20 @@ class WifiMotionMonitor:
 
             vals = [s for _, s in self.phone_history]
             if len(vals) >= 4:
-                base_mean = sum(vals) / len(vals)
-                threshold = 1.8
-                spike = round(abs(val - base_mean), 2)
-                recent = vals[-10:]
-                rec_mean = sum(recent) / len(recent)
-                variance = round(math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent)), 2)
+                a = self._analyze(vals)
+                base_mean = a['base_mean']
+                threshold = a['threshold']
+                spike = a['spike']
+                variance = round(a['variance'], 2)
 
-                is_disturbed = (spike > threshold) or (variance > threshold)
+                # Debounce the vicinity radar the same way as the room radar.
+                if a['motion']:
+                    self._consec_phone += 1
+                else:
+                    self._consec_phone = 0
+                is_disturbed = self._consec_phone >= self.DEBOUNCE
                 if is_disturbed:
-                    if self.phone_active_event and (now - self.phone_last_disturbance_time < 3.0):
+                    if self.phone_active_event and (now - self.phone_last_disturbance_time < self.EVENT_GAP):
                         self.phone_active_event['peak_spike'] = max(self.phone_active_event['peak_spike'], spike)
                         self.phone_active_event['duration'] = round(now - self.phone_active_event['start_time'], 1)
                         self.phone_active_event['variance'] = max(self.phone_active_event['variance'], variance)
@@ -5244,7 +5262,7 @@ class WifiMotionMonitor:
                         # Note: Phone does not log to disk/background file to avoid battery drain
                     self.phone_last_disturbance_time = now
                 else:
-                    if self.phone_active_event and (now - self.phone_last_disturbance_time >= 3.0):
+                    if self.phone_active_event and (now - self.phone_last_disturbance_time >= self.EVENT_GAP):
                         self.phone_active_event = None
 
     def feed_vicinity_sample(self, val, label="Vicinity Link"):
@@ -5281,6 +5299,66 @@ class WifiMotionMonitor:
                 'tx_retries': self.tx_retries,
                 'age': round(now - self.last_desk_motion_ts, 1) if self.last_desk_motion_ts > 0 else 999.0
             }
+
+    @staticmethod
+    def _robust_sigma(vals):
+        """Per-sample RF noise estimate from consecutive first-differences.
+
+        Differencing cancels the slow baseline drift (and a sustained motion ramp)
+        that a plain standard deviation would soak up, so the adaptive threshold
+        tracks the quiet-link noise floor rather than the disturbance itself. Uses
+        the median of |delta| (robust to outlier spikes) rescaled to a Gaussian sigma.
+        """
+        n = len(vals)
+        if n < 4:
+            return 0.0
+        diffs = sorted(abs(vals[i] - vals[i - 1]) for i in range(1, n))
+        m = len(diffs)
+        med = diffs[m // 2] if m % 2 else (diffs[m // 2 - 1] + diffs[m // 2]) / 2.0
+        # median(|Δ|)/0.6745 -> sigma of the differences; /sqrt(2) undoes differencing
+        return (med / 0.6745) / 1.4142135623730951
+
+    def _analyze(self, vals, deltas=None):
+        """Noise-adaptive motion analysis shared by the laptop loop, the phone feed
+        and the status snapshot. The trigger scales with each link's measured noise
+        floor, so detection stays honest across clean and noisy Wi-Fi alike."""
+        n = len(vals)
+        cur = vals[-1] if n else -65
+        out = {
+            'base_mean': float(cur), 'variance': 0.0, 'baseline_std': 0.0,
+            'spike': 0.0, 'max_spike': 0.0, 'noise': 0.0, 'threshold': self.THR_MIN,
+            'rf_motion': False, 'mimo_var': 0.0, 'mimo_spike': 0.0,
+            'mimo_thr': self.MIMO_THR_MIN, 'mimo_motion': False, 'motion': False,
+        }
+        if n < 4:
+            return out
+
+        base_mean = sum(vals) / n
+        baseline_std = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / n)
+        recent = vals[-15:]
+        rec_mean = sum(recent) / len(recent)
+        variance = math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent))
+        noise = self._robust_sigma(vals)
+        threshold = min(self.THR_MAX, max(self.THR_MIN, round(self.NOISE_K * noise, 2)))
+        spike = round(abs(cur - base_mean), 2)
+        max_spike = round(max(abs(x - base_mean) for x in vals), 2)
+        rf_motion = (spike > threshold) or (variance > threshold)
+        out.update(base_mean=base_mean, variance=variance, baseline_std=baseline_std,
+                   spike=spike, max_spike=max_spike, noise=round(noise, 2),
+                   threshold=threshold, rf_motion=rf_motion)
+
+        if deltas and len(deltas) >= 4:
+            d_recent = deltas[-15:]
+            d_mean = sum(d_recent) / len(d_recent)
+            d_var = round(math.sqrt(sum((x - d_mean) ** 2 for x in d_recent) / len(d_recent)), 2)
+            d_spike = round(abs(deltas[-1] - d_mean), 2)
+            d_noise = self._robust_sigma(deltas)
+            d_thr = min(self.MIMO_THR_MAX, max(self.MIMO_THR_MIN, round(self.MIMO_K * d_noise, 2)))
+            mimo_motion = (d_spike > d_thr) or (d_var > d_thr)
+            out.update(mimo_var=d_var, mimo_spike=d_spike, mimo_thr=d_thr, mimo_motion=mimo_motion)
+
+        out['motion'] = out['rf_motion'] or out['mimo_motion']
+        return out
 
     def _loop(self):
         while True:
@@ -5345,38 +5423,35 @@ class WifiMotionMonitor:
                         vals = [s for _, s in self.history]
                         deltas = [d for _, _, _, _, d in self.mimo_history]
 
-                        if len(deltas) >= 4:
-                            d_recent = deltas[-15:]
-                            d_mean = sum(d_recent) / len(d_recent)
-                            d_var = round(math.sqrt(sum((x - d_mean) ** 2 for x in d_recent) / len(d_recent)), 2)
-                            d_spike = round(abs(delta - d_mean), 2)
-                            self.mimo_delta_variance = d_var
-                        else:
-                            d_var = 0.0
-                            d_spike = 0.0
-                            self.mimo_delta_variance = 0.0
+                        a = self._analyze(vals, deltas)
+                        self.mimo_delta_variance = a['mimo_var']
 
                         if len(vals) >= 4:
-                            base_mean = sum(vals) / len(vals)
-                            threshold = 1.8
-                            spike = round(abs(sig - base_mean), 2)
-                            recent = vals[-15:]
-                            rec_mean = sum(recent) / len(recent)
-                            variance = round(math.sqrt(sum((x - rec_mean) ** 2 for x in recent) / len(recent)), 2)
+                            base_mean = a['base_mean']
+                            threshold = a['threshold']
+                            spike = a['spike']
+                            variance = round(a['variance'], 2)
+                            d_spike = a['mimo_spike']
+                            d_var = a['mimo_var']
 
-                            # Physical RF dielectric scattering trigger (spatial delta ripple or main path ripple)
-                            rf_motion = (spike > threshold) or (variance > threshold) or (d_spike > 1.2) or (d_var > 0.45)
+                            # Debounce: a moving body agitates the channel for several
+                            # consecutive samples; a lone glitchy iw read does not.
+                            if a['motion']:
+                                self._consec_laptop += 1
+                            else:
+                                self._consec_laptop = 0
+                            rf_motion = self._consec_laptop >= self.DEBOUNCE
 
                             if rf_motion:
                                 self.last_desk_motion_ts = now
                                 self.desk_presence_state = "occupied"
-                            elif (now - self.last_desk_motion_ts) < 15.0:
+                            elif (now - self.last_desk_motion_ts) < self.MOTION_HOLD:
                                 self.desk_presence_state = "occupied"
                             else:
                                 self.desk_presence_state = "vacated"
 
                             if rf_motion:
-                                if self.active_event and (now - self.last_disturbance_time < 3.0):
+                                if self.active_event and (now - self.last_disturbance_time < self.EVENT_GAP):
                                     self.active_event['peak_spike'] = max(self.active_event['peak_spike'], max(spike, d_spike))
                                     self.active_event['duration'] = round(now - self.active_event['start_time'], 1)
                                     self.active_event['variance'] = max(self.active_event['variance'], max(variance, d_var))
@@ -5388,7 +5463,7 @@ class WifiMotionMonitor:
                                     ev = {
                                         'id': self.event_counter,
                                         'source': 'laptop',
-                                        'zone': 'Desk Radar' if (d_spike > 1.0 or d_var > 0.35) else 'Room',
+                                        'zone': 'Desk Radar' if a['mimo_motion'] else 'Room',
                                         'timestamp': now,
                                         'start_time': now,
                                         'time': t_str,
@@ -5410,7 +5485,7 @@ class WifiMotionMonitor:
                                     self._append_to_file(ev)
                                 self.last_disturbance_time = now
                             else:
-                                if self.active_event and (now - self.last_disturbance_time >= 3.0):
+                                if self.active_event and (now - self.last_disturbance_time >= self.EVENT_GAP):
                                     self._finalize_event_in_file(self.active_event)
                                     self.active_event = None
             except Exception:
@@ -5425,25 +5500,19 @@ class WifiMotionMonitor:
             cur_sig = self.current_signal if self.current_signal is not None else -60
             laptop_events = [ev for ev in self.events if (ev.get('timestamp') or 0.0) >= cutoff_ts]
             last_ev = laptop_events[-1] if laptop_events else None
-            threshold = 1.8
+
+            a = self._analyze(vals, [d for _, _, _, _, d in self.mimo_history])
+            threshold = a['threshold']
+            base_mean = a['base_mean'] if len(vals) >= 4 else cur_sig
+            variance = a['variance']
+            baseline = a['baseline_std']
+            spike = a['spike']
+            max_spike = a['max_spike']
+            motion = a['motion'] if len(vals) >= 4 else False
 
             if len(vals) < 4:
-                base_mean = cur_sig
-                variance = 0.0
-                baseline = 0.0
-                motion = False
-                spike = 0.0
-                max_spike = 0.0
-                hist = [{'t': t, 'dbm': s, 'env_upper': cur_sig + threshold, 'env_lower': cur_sig - threshold, 'spike': 0.0, 'is_spike': False} for t, s in self.history]
+                hist = [{'t': t, 'dbm': s, 'env_upper': round(cur_sig + threshold, 2), 'env_lower': round(cur_sig - threshold, 2), 'spike': 0.0, 'is_spike': False} for t, s in self.history]
             else:
-                recent = vals[-15:]
-                mean = sum(recent) / len(recent)
-                variance = math.sqrt(sum((x - mean) ** 2 for x in recent) / len(recent))
-                base_mean = sum(vals) / len(vals)
-                baseline = math.sqrt(sum((x - base_mean) ** 2 for x in vals) / len(vals))
-                motion = bool((abs(cur_sig - base_mean) > threshold) or (variance > threshold) or (self.mimo_delta_variance > 0.45))
-                spike = round(abs(cur_sig - base_mean), 2)
-                max_spike = round(max(abs(x - base_mean) for x in vals), 2)
                 hist = []
                 for t, s in self.history:
                     pt_spike = round(abs(s - base_mean), 2)
@@ -5499,33 +5568,27 @@ class WifiMotionMonitor:
 
             if phone_is_active:
                 p_cur_sig = self.phone_signal if self.phone_signal is not None else (phone_vals[-1] if phone_vals else -65)
+                pa = self._analyze(phone_vals)
+                p_threshold = pa['threshold']
+                p_base_mean = pa['base_mean'] if len(phone_vals) >= 4 else p_cur_sig
+                p_variance = pa['variance']
+                p_baseline = pa['baseline_std']
+                p_motion = pa['motion'] if len(phone_vals) >= 4 else False
+                p_spike = pa['spike']
+                p_max_spike = pa['max_spike']
                 if len(phone_vals) < 4:
-                    p_base_mean = p_cur_sig
-                    p_variance = 0.0
-                    p_baseline = 0.0
-                    p_motion = False
-                    p_spike = 0.0
-                    p_max_spike = 0.0
-                    p_hist = [{'t': t, 'dbm': s, 'env_upper': p_cur_sig + threshold, 'env_lower': p_cur_sig - threshold, 'spike': 0.0, 'is_spike': False} for t, s in self.phone_history]
+                    p_hist = [{'t': t, 'dbm': s, 'env_upper': round(p_cur_sig + p_threshold, 2), 'env_lower': round(p_cur_sig - p_threshold, 2), 'spike': 0.0, 'is_spike': False} for t, s in self.phone_history]
                 else:
-                    p_recent = phone_vals[-10:]
-                    p_mean = sum(p_recent) / len(p_recent)
-                    p_variance = math.sqrt(sum((x - p_mean) ** 2 for x in p_recent) / len(p_recent))
-                    p_base_mean = sum(phone_vals) / len(phone_vals)
-                    p_baseline = math.sqrt(sum((x - p_base_mean) ** 2 for x in phone_vals) / len(phone_vals))
-                    p_motion = bool((abs(p_cur_sig - p_base_mean) > threshold) or (p_variance > threshold))
-                    p_spike = round(abs(p_cur_sig - p_base_mean), 2)
-                    p_max_spike = round(max(abs(x - p_base_mean) for x in phone_vals), 2)
                     p_hist = []
                     for t, s in self.phone_history:
                         pt_spike = round(abs(s - p_base_mean), 2)
                         p_hist.append({
                             't': t,
                             'dbm': s,
-                            'env_upper': round(p_base_mean + threshold, 2),
-                            'env_lower': round(p_base_mean - threshold, 2),
+                            'env_upper': round(p_base_mean + p_threshold, 2),
+                            'env_lower': round(p_base_mean - p_threshold, 2),
                             'spike': pt_spike,
-                            'is_spike': pt_spike > threshold
+                            'is_spike': pt_spike > p_threshold
                         })
                 phone_status = {
                     'source': 'phone',
@@ -5536,12 +5599,12 @@ class WifiMotionMonitor:
                     'variance': round(p_variance, 2),
                     'motion_detected': p_motion,
                     'baseline': round(p_baseline, 2),
-                    'threshold': threshold,
+                    'threshold': p_threshold,
                     'spike': p_spike,
                     'max_spike': p_max_spike,
                     'envelope': {
-                        'upper': round(p_base_mean + threshold, 2),
-                        'lower': round(p_base_mean - threshold, 2)
+                        'upper': round(p_base_mean + p_threshold, 2),
+                        'lower': round(p_base_mean - p_threshold, 2)
                     },
                     'history': p_hist,
                     'target': {'ssid': self.phone_ssid or (self.connected_ssid if self.connected_ssid else 'Connected Wi-Fi'), 'bssid': self.phone_bssid, 'freq': self.phone_freq},
@@ -5560,7 +5623,7 @@ class WifiMotionMonitor:
                     'variance': 0.0,
                     'motion_detected': False,
                     'baseline': 0.0,
-                    'threshold': threshold,
+                    'threshold': self.THR_MIN,
                     'spike': 0.0,
                     'max_spike': 0.0,
                     'envelope': {'upper': None, 'lower': None},
@@ -5679,8 +5742,6 @@ def wifi_spectrum_data():
     now_ts = time.time()
     nearby_active = (now_ts < NEARBY.get('until', 0))
     nearby_recent = (now_ts - NEARBY.get('t', 0) < 60)
-    if findmy_settings().get('walk_away_lock'):
-        ORBIT_BLE.ensure_active()
 
     laptop_loc = None
     try:
@@ -6214,17 +6275,24 @@ SOUND_RANGER = SoundRanger()
 
 # ---- the walk-away lock ----
 class WalkAway:
-    """Locks this computer when the phone walks away: when the phone, after being on this
-    computer's network, is now only reachable through the internet; or when multiple Wi-Fi
-    scans from it in a row look nothing like what this computer sees and Bluetooth is not heard.
-    It never unlocks."""
+    """Locks this computer when the phone walks away, from the phone's Wi-Fi heartbeat alone (no
+    Bluetooth): when the phone, after being on this computer's network, is only reachable through
+    the internet; or when its heartbeats in a row show weak signal overlap with what this computer
+    sees — it isn't on the same access point, and shares no strong network. It never unlocks."""
     GRACE = 90            # seconds off the local network before it counts (a brief detour isn't leaving)
+    ANCHOR_TTL = 100      # s; while recently on the laptop's own access point, skip Bluetooth entirely
+    BT_SETTLE = 16        # s; let Bluetooth hear the phone before trusting its silence
+    BT_RECHECK = 90       # s; after Bluetooth confirms the phone is near, rest it this long (battery)
 
     def __init__(self):
         self.lan_at = self.tunnel_at = 0.0
         self.far = 0
         self.locked_episode = False
-        self._last_ble_trigger = 0.0
+        self.anchored_at = 0.0        # last time the phone shared the laptop's access point, strongly
+        self.bt_on = False            # Bluetooth powered for a proximity check right now
+        self.bt_on_since = 0.0
+        self.bt_asked_at = 0.0        # last time we asked the phone to advertise
+        self.bt_recheck_at = 0.0      # don't spend Bluetooth again until this time
 
     def contact(self, tunnel):
         now = time.time()
@@ -6235,12 +6303,13 @@ class WalkAway:
             if self.far == 0:
                 self.locked_episode = False
 
-    def scan(self, likeness, phone_ap_count=0, common_count=0, strong_count=0):
-        # Direct Bluetooth presence immediately resets distance counter
-        ble = ORBIT_BLE.phone_reading()
-        if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+    def scan(self, likeness, phone_ap_count=0, common_count=0, strong_count=0, anchored=False):
+        # On the same access point as the laptop, at a healthy signal: clearly nearby
+        if anchored:
             self.far = 0
-            self.locked_episode = False
+            self.anchored_at = time.time()
+            if self.lan_at >= self.tunnel_at:
+                self.locked_episode = False
             return
 
         if likeness is None:
@@ -6263,19 +6332,41 @@ class WalkAway:
             self.far += 1
 
     def away(self):
-        # Direct Bluetooth proximity overrides any Wi-Fi scan discrepancy
-        ble = ORBIT_BLE.phone_reading()
-        if ble.get('dbm') is not None and ble.get('age', 999) < 90:
-            self.far = 0
-            return False
-
-        # If confirmed far away by coordinates/fingerprint (> 50m) and Bluetooth is silent:
+        # Placed far by the fingerprint map (> 50 m): gone
         apart = NEARBY.get('apart')
         if apart is not None and apart > 50:
             return True
 
         left_network = self.lan_at > 0 and self.tunnel_at > self.lan_at + self.GRACE
         return left_network or self.far >= 2
+
+    def _bt_near(self):
+        """Is the phone's Bluetooth heard right now (truly within a room or so)?"""
+        ble = ORBIT_BLE.phone_reading()
+        return ble.get('dbm') is not None and ble.get('age', 999) < 90
+
+    def _bt_power(self, on):
+        """Turn Bluetooth on for a check, or off to save both devices' battery."""
+        if on:
+            if not self.bt_on:
+                self.bt_on = True
+                self.bt_on_since = time.time()
+            ORBIT_BLE.ensure_active()
+        elif self.bt_on:
+            self.bt_on = False
+            self.bt_on_since = 0.0
+            try:
+                ORBIT_BLE.advertise(False)
+                ORBIT_BLE.listen(False)
+            except Exception:
+                pass
+            auth_mgr.broadcast_ndjson(json.dumps({"event": "ble_beacon", "on": False}) + "\n")   # phone stops advertising too
+
+    def _ask_phone_advertise(self):
+        now = time.time()
+        if now - self.bt_asked_at > 120:
+            self.bt_asked_at = now
+            auth_mgr.broadcast_ndjson(json.dumps({"event": "ble_beacon", "on": True, "uuid": ORBIT_BLE_UUID}) + "\n")
 
     def loop(self):
         last_locked_state = None
@@ -6284,14 +6375,14 @@ class WalkAway:
             time.sleep(10)
             try:
                 if not findmy_settings().get('walk_away_lock'):
+                    self._bt_power(False)
                     continue
-                # Keep Bluetooth actively advertising and scanning for walk-away presence
-                ORBIT_BLE.ensure_active()
 
                 locked = is_pc_locked()
                 if locked is not False:          # locked already, or nobody logged in
                     self.locked_episode = True
                     last_locked_state = True
+                    self._bt_power(False)
                     continue
 
                 # The PC is unlocked! If it was previously locked, re-arm the walk-away monitor
@@ -6305,20 +6396,38 @@ class WalkAway:
                 if time.time() - unlocked_at < 20:
                     continue
 
-                if not self.away():
+                # Cheap Wi-Fi anchor: on the laptop's own access point, strongly → certainly near,
+                # so keep Bluetooth off. Only when that anchor is lost do we spend Bluetooth.
+                if time.time() - self.anchored_at < self.ANCHOR_TTL:
+                    self.far = 0
+                    self._bt_power(False)
                     continue
 
-                # Extra proximity safeguard: if Bluetooth is heard, do not lock
-                ble = ORBIT_BLE.phone_reading()
-                if ble.get('dbm') is not None and ble.get('age', 999) < 90:
+                # Resting Bluetooth between checks (it last heard the phone near): stay off a while.
+                if time.time() < self.bt_recheck_at:
+                    self._bt_power(False)
+                    continue
+
+                # Unanchored: Wi-Fi overlap alone can lie (same network, another building), so power
+                # Bluetooth briefly and let it be the arbiter of real proximity before any lock.
+                self._bt_power(True)
+                self._ask_phone_advertise()
+                if time.time() - self.bt_on_since < self.BT_SETTLE:
+                    continue                      # give Bluetooth a moment to hear the phone
+                if self._bt_near():
                     self.far = 0
+                    self.bt_recheck_at = time.time() + self.BT_RECHECK
+                    self._bt_power(False)         # confirmed near: rest Bluetooth
+                    continue
+                if not self.away():
                     continue
 
                 session = graphical_session()
                 subprocess.run(['loginctl', 'lock-session', session], timeout=5)
                 self.locked_episode = True
                 last_locked_state = True
-                sys.stderr.write("Find my: the phone walked away, locked this computer\n")
+                self._bt_power(False)
+                sys.stderr.write("Find my: the phone walked away (Wi-Fi and Bluetooth agree), locked this computer\n")
                 findmy_event('walk_away_lock', {}, notify=False)
                 auth_mgr.broadcast_ndjson(json.dumps({"event": "laptop_alert", "kind": "walk_away_lock",
                                                       "t": time.time()}) + "\n")
@@ -8936,7 +9045,14 @@ class AuthenticatorHandler(BaseHTTPRequestHandler):
             }
 
             if purpose == 'presence':
-                WALK_AWAY.scan(score, phone_ap_count=len(theirs), common_count=len(common_aps), strong_count=strong_count)
+                # Signal-strength anchor: the phone's connected access point (first entry it sends),
+                # seen strongly by both — the surest sign they're in the same place.
+                conn = phone_raw[0] if phone_raw else None
+                cb = _bssid(conn.get('bssid')) if isinstance(conn, dict) else None
+                cr = _num(conn.get('rssi'), -127, 0) if isinstance(conn, dict) else None
+                anchored = bool(cb and cb in mine and cr is not None and cr > -72 and mine[cb] > -75)
+                WALK_AWAY.scan(score, phone_ap_count=len(theirs), common_count=len(common_aps),
+                               strong_count=strong_count, anchored=anchored)
             NEARBY.update(
                 t=time.time(),
                 score=score,
