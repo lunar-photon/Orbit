@@ -10044,6 +10044,19 @@ def start_udp_discovery_server(port):
     t = threading.Thread(target=udp_loop, daemon=True)
     t.start()
 
+def get_broadcast_addresses():
+    broadcasts = set()
+    try:
+        out = subprocess.check_output(['ip', '-4', 'addr', 'show'], stderr=subprocess.DEVNULL).decode()
+        for line in out.splitlines():
+            m = re.search(r'inet\s+[0-9.]+/(\d+)\s+brd\s+([0-9.]+)', line)
+            if m:
+                broadcasts.add(m.group(2))
+    except Exception:
+        pass
+    broadcasts.add('255.255.255.255')
+    return list(broadcasts)
+
 def start_udp_beacon(port):
     def beacon_loop():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -10062,10 +10075,11 @@ def start_udp_beacon(port):
                     "local_url": f"http://{local_ip}:{port}"
                 }).encode('utf-8')
 
-                try:
-                    sock.sendto(beacon_data, ('255.255.255.255', port))
-                except Exception:
-                    pass
+                for bcast in get_broadcast_addresses():
+                    try:
+                        sock.sendto(beacon_data, (bcast, port))
+                    except Exception:
+                        pass
 
                 if gw and gw != '127.0.0.1':
                     try:
